@@ -27,6 +27,10 @@ on:
         description: ID of a run with voidgram-desktop-linux-generic (Linux build or repack, optional)
         required: false
         default: ''
+      macos_run:
+        description: ID of a run with voidgram-desktop-macos-universal (macOS build or "from a finished build", optional)
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -64,6 +68,13 @@ jobs:
           github-token: ${{ github.token }}
           name: voidgram-desktop-linux-generic
           path: artifact/linux
+      - if: inputs.macos_run != ''
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.macos_run }}
+          github-token: ${{ github.token }}
+          name: voidgram-desktop-macos-universal
+          path: artifact/macos
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -77,7 +88,7 @@ jobs:
           ipa=$(find artifact/ios -name '*.ipa' | head -n 1)
           test -n "$ipa" || { echo "::error::run $RUN_ID has no IPA"; exit 1; }
           cp "$ipa" "files/VoidGram-${VERSION}.ipa"
-          find artifact/windows artifact/arch artifact/linux -type f \( -name '*.zip' -o -name '*.tar.zst' -o -name '*.deb' -o -name '*.rpm' \) -exec cp {} files/ \; 2>/dev/null || true
+          find artifact/windows artifact/arch artifact/linux artifact/macos -type f \( -name '*.zip' -o -name '*.tar.zst' -o -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' \) -exec cp {} files/ \; 2>/dev/null || true
           # Generic tarballs carry their own install.sh; the release one is the current installer.
           if ls files/*.tar.zst files/*.deb files/*.rpm >/dev/null 2>&1; then
             cp desktop/install.sh files/install.sh
