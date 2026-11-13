@@ -110,4 +110,11 @@ jobs:
               echo "| $(basename "$f") | $(numfmt --to=iec --suffix=B "$(stat -c %s "$f")") | \`$(sha256sum "$f" | cut -d' ' -f1)\` |"
             done
           } > release-notes.md
-          gh release create "v${VERSION}" files/* --target "$GITHUB_SHA" --title "VoidGram ${VERSION}" --notes-file release-notes.md --latest
+          # A release that exists already (an earlier run of this workflow) gets the new files over the old ones and
+          # the new notes; otherwise it is created.
+          if gh release view "v${VERSION}" >/dev/null 2>&1; then
+            gh release upload "v${VERSION}" files/* --clobber
+            gh release edit "v${VERSION}" --title "VoidGram ${VERSION}" --notes-file release-notes.md --latest
+          else
+            gh release create "v${VERSION}" files/* --target "$GITHUB_SHA" --title "VoidGram ${VERSION}" --notes-file release-notes.md --latest
+          fi
