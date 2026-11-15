@@ -1,0 +1,92 @@
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
+index 9ed52bf6..05050709 100644
+--- a/submodules/SettingsUI/Sources/AyuSettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
+@@ -563,8 +563,14 @@ func ayuMessageShotSettingsController(context: AccountContext) -> ViewController
+ func ayuInterfacePageController(context: AccountContext, navigationOnly: Bool = false) -> ViewController {
+     let store = context.account.network.ayuGhostMode
+     var presentError: (() -> Void)?
++    var ayuPushBrowser: ((ViewController) -> Void)?
+     let tabBarLift = ValuePromise<Double>(min(48.0, max(0.0, (UserDefaults.standard.object(forKey: "ayu.tabBarLift") as? Double ?? 0.0))), ignoreRepeated: true)
+     let arguments = AyuSectionedArguments(open: { id in
++        if id == 57 {
++            // Telegram's own page: the in-app browser, Safari or an installed browser (Chrome, Firefox, Vivaldi, Brave, ...).
++            ayuPushBrowser?(webBrowserSettingsController(context: context))
++            return
++        }
+         if id == 51 {
+             let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
+             let alert = UIAlertController(title: ru ? "Расположение папок" : "Folder position", message: nil, preferredStyle: .alert)
+@@ -732,6 +738,7 @@ func ayuInterfacePageController(context: AccountContext, navigationOnly: Bool =
+             .toggle(5, 53, icon("hand.tap.fill", 0xAF52DE), ru ? "Редактировать двойным тапом" : "Double-tap to edit", nil, value.doubleTapToEdit),
+             .toggle(5, 54, icon("textformat", 0x5856D6), ru ? "Панель форматирования" : "Formatting toolbar", nil, value.formattingToolbar),
+             .link(5, 55, icon("arrow.up.and.down", 0x34C759), ru ? "Положение таббара" : "Tab bar position", "\(Int(lift)) pt"),
++            .link(5, 57, icon("safari.fill", 0x007AFF), ru ? "Открывать ссылки в" : "Open links in", ""),
+             .info(5, 56, ru ? "Изменения применяются при возвращении к списку чатов или повторном открытии чата. Положение таббара общее для всех аккаунтов; 0 — стандартная высота." : "Changes apply when returning to the chat list or reopening a chat. Tab bar position is shared across accounts; 0 is the default height.")
+         ]
+         entries.append(contentsOf: remainingEntries)
+@@ -743,6 +750,7 @@ func ayuInterfacePageController(context: AccountContext, navigationOnly: Bool =
+         return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
+     }
+     let controller = ItemListController(context: context, state: signal)
++    ayuPushBrowser = { [weak controller] in controller?.push($0) }
+     presentError = { [weak controller] in
+         let data = context.sharedContext.currentPresentationData.with { $0 }
+         controller?.present(textAlertController(context: context, title: "VoidGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить настройки." : "Settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsRows.swift b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
+index c50fd310..06b74c9e 100644
+--- a/submodules/SettingsUI/Sources/AyuSettingsRows.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
+@@ -134,7 +134,7 @@ enum AyuSettingsEntry: ItemListNodeEntry {
+ /// which the app reports to Telegram's servers.
+ /// Raised with every VoidGram update.
+ func ayuAppVersion() -> String {
+-    return "27.8.5"
++    return "27.8.6"
+ }
+ 
+ /// The version with the build number of this IPA, as the settings header shows it.
+diff --git a/submodules/TabBarUI/Sources/TabBarController.swift b/submodules/TabBarUI/Sources/TabBarController.swift
+index 0af69b12..679ad3c7 100644
+--- a/submodules/TabBarUI/Sources/TabBarController.swift
++++ b/submodules/TabBarUI/Sources/TabBarController.swift
+@@ -84,6 +84,9 @@ open class TabBarControllerImpl: ViewController, TabBarController {
+         }
+     }
+     
++    /// The bottom inset the last regular layout pass gave the current tab.
++    private var ayuLastBottomInset: CGFloat?
++
+     public var currentController: ViewController?
+     
+     override public var transitionNavigationBar: NavigationBar? {
+@@ -205,7 +208,9 @@ open class TabBarControllerImpl: ViewController, TabBarController {
+                         } else {
+                             tabBarHeight = 49.0 + bottomInset
+                         }
+-                        updatedLayout.intrinsicInsets.bottom = tabBarHeight
++                        // The inset the bar really takes (the floating bar, its lift and scale), as the regular
++                        // layout pass gives it: with 49 pt here the folders at the bottom dropped under the bar on each tap.
++                        updatedLayout.intrinsicInsets.bottom = strongSelf.ayuLastBottomInset ?? tabBarHeight
+                     }
+                     
+                     strongSelf.controllers[index].containerLayoutUpdated(updatedLayout, transition: .immediate)
+@@ -387,6 +392,9 @@ open class TabBarControllerImpl: ViewController, TabBarController {
+             var updatedLayout = layout
+             if !self.tabBarControllerNode.tabBarHidden, let bottomInset {
+                 updatedLayout.intrinsicInsets.bottom = bottomInset
++                self.ayuLastBottomInset = bottomInset
++            } else {
++                self.ayuLastBottomInset = nil
+             }
+             
+             currentController.containerLayoutUpdated(updatedLayout, transition: transition)
+@@ -415,7 +423,7 @@ open class TabBarControllerImpl: ViewController, TabBarController {
+                 tabBarHeight = 49.0 + bottomInset
+             }
+             if !self.tabBarControllerNode.tabBarHidden && self.tabBarControllerNode.sidePlacement(for: layout) == nil {
+-                updatedLayout.intrinsicInsets.bottom = tabBarHeight
++                updatedLayout.intrinsicInsets.bottom = self.ayuLastBottomInset ?? tabBarHeight
+             }
+             
+             currentController.containerLayoutUpdated(updatedLayout, transition: .immediate)
