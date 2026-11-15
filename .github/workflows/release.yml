@@ -13,7 +13,7 @@ on:
         description: VoidGram version, e.g. 27.8.3
         required: true
       run_id:
-        description: ID of the successful "Native iOS port" run whose IPA to publish (empty: a desktop-only release)
+        description: ID of the successful "Native iOS port" run whose IPA to publish (empty means a desktop-only release)
         required: false
         default: ''
       windows_run:
