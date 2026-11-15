@@ -357,56 +357,6 @@ h1, h2, h3, p { margin: 0; }
   .os-instructions::before { content: attr(data-os-panel); font-weight: 700; }
 }
 
-/* Product download header */
-.hero { display: block; padding-block: 68px 55px; }
-.hero-heading { display: flex; align-items: center; gap: 21px; }
-.app-icon { width: 80px; height: 80px; border-radius: 18px; flex: none; }
-h1 { font-size: 52px; font-weight: 620; letter-spacing: -2px; line-height: 1.15; }
-.platform-name { font-size: 15px; color: #a7aab3; margin-top: 6px; }
-.hero-description { max-width: 610px; font-size: 16px; line-height: 1.8; color: #bdc0c8; margin-top: 27px; }
-.hero-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 26px; }
-.release-note { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 12px; color: #969ca8; margin-top: 18px; }
-.release-note a { color: #bac0cb; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: #ffffff35; }
-.release-note a:hover { color: white; }
-.preparation { padding-block: 25px 30px; border-top: 1px solid var(--line); }
-.preparation h2 { font-size: 16px; margin: 0; letter-spacing: -.3px; }
-.site-header { position: relative; background: var(--bg); backdrop-filter: none; }
-.button:hover { transform: none; }
-.guide-content { box-shadow: none; }
-.step-link small { color: #a5aab4; }
-.section-heading h2, .faq-heading h2 { font-size: 30px; margin-top: 0; letter-spacing: -.8px; }
-.sidebar-label { font-size: 12px; letter-spacing: 0; }
-.schematic { background: #15171b; }
-.downloads-section { padding-top: 54px; }
-.faq-section { padding-bottom: 54px; }
-.site-footer { border-top: 1px solid var(--line); }
-@media (max-width: 760px) {
-  .hero { padding-block: 39px 32px; }
-  .hero-heading { gap: 17px; }
-  .app-icon { width: 68px; height: 68px; border-radius: 15px; }
-  h1 { font-size: 40px; letter-spacing: -1.5px; }
-  .platform-name { font-size: 13px; }
-  .hero-description { font-size: 15px; margin-top: 24px; }
-  .hero-actions { margin-top: 22px; }
-  .release-note { font-size: 11px; gap: 8px; }
-  .preparation { padding-block: 24px 29px; }
-  .preparation > div:first-child { margin-bottom: 0; }
-  .section-heading h2, .faq-heading h2 { font-size: 27px; }
-}
-@media (max-width: 420px) {
-  .hero-actions { align-items: stretch; }
-  .hero-actions .button { font-size: 12px; padding-inline: 13px; }
-  h1 { font-size: 36px; }
-  .app-icon { width: 62px; height: 62px; border-radius: 14px; }
-  .hero-heading { gap: 15px; }
-}
-@media print {
-  .hero { padding: 20px 0; }
-  h1 { color: #111; font-size: 32px; }
-  .hero-description, .platform-name, .release-note, .release-note a { color: #333; }
-  .release-note { display: none; }
-}
-
 /* Motion follows user actions. No perpetual or pointer-following animation. */
 .os-picker { position: relative; isolation: isolate; }
 .os-picker button { position: relative; z-index: 1; }

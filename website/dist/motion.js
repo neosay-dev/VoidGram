@@ -27,23 +27,23 @@
   let panelAnimation = null;
   let stepRevision = 0;
 
-  document.addEventListener('voidgram:beforestepchange', () => {
+  function captureCardHeight() {
     oldHeight = card.getBoundingClientRect().height;
     stepRevision++;
     cardAnimation?.cancel();
     panelAnimation?.cancel();
     card.classList.remove('is-changing');
-  });
-  document.addEventListener('voidgram:stepchange', event => {
+  }
+
+  function transitionContent(panel, direction = 1) {
     const revision = stepRevision;
-    const panel = event.detail.panel || document.querySelector(`[data-panel="${event.detail.to}"]`);
     const height = card.getBoundingClientRect().height;
     panelAnimation = animate(panel, [
-      { opacity: 0, transform: `translateX(${event.detail.to > event.detail.from ? 10 : -10}px)` },
+      { opacity: 0, transform: `translateX(${direction * 8}px)` },
       { opacity: 1, transform: 'translateX(0)' },
-    ], { duration: 190 });
+    ], { duration: 200 });
     if (oldHeight && Math.abs(height - oldHeight) > 1) {
-      cardAnimation = animate(card, [{ height: `${oldHeight}px` }, { height: `${height}px` }], { duration: 220 });
+      cardAnimation = animate(card, [{ height: `${oldHeight}px` }, { height: `${height}px` }], { duration: 240 });
       if (cardAnimation) {
         card.classList.add('is-changing');
         const settle = () => {
@@ -52,7 +52,19 @@
         cardAnimation.finished.then(settle, settle);
       }
     }
+  }
+
+  document.addEventListener('voidgram:beforestepchange', captureCardHeight);
+  document.addEventListener('voidgram:beforeoschange', captureCardHeight);
+  document.addEventListener('voidgram:stepchange', event => {
+    transitionContent(event.detail.panel, event.detail.to >= event.detail.from ? 1 : -1);
     placeThumb(false);
+  });
+  document.addEventListener('voidgram:screenshotopen', () => {
+    animate(document.getElementById('screenshot-dialog'), [
+      { opacity: 0, transform: 'translateY(8px) scale(.99)' },
+      { opacity: 1, transform: 'translateY(0) scale(1)' },
+    ], { duration: 180 });
   });
   // A late screenshot or viewport resize must never leave content clipped.
   function releaseCardHeight() {
@@ -75,7 +87,10 @@
     thumb.style.transform = `translateX(${button.offsetLeft}px)`;
     picker.classList.add('has-thumb');
   }
-  document.addEventListener('voidgram:oschange', () => placeThumb(true));
+  document.addEventListener('voidgram:oschange', () => {
+    transitionContent(document.querySelector('.os-instructions:not([hidden])'));
+    placeThumb(true);
+  });
   if (typeof ResizeObserver === 'function') new ResizeObserver(() => placeThumb(false)).observe(picker);
   else window.addEventListener('resize', () => placeThumb(false));
   placeThumb(false);

@@ -1,0 +1,122 @@
+/* Installation guide: monochrome VoidGram branding and shared component rhythm. */
+:root { --bg: #0a0a0c; --panel: #131316; --line: #ffffff16; --text: #ededf0; --muted: #aaaab3; --green: #d3d3dc; }
+.container { width: min(1120px, calc(100% - 80px)); }
+.site-header { height: 76px; position: relative; background: var(--bg); backdrop-filter: none; }
+.wordmark > span:not(.ios-label) { font-size: 20px; }
+.wordmark img { width: 32px; height: 32px; }
+.desktop-nav { gap: 30px; }
+.desktop-nav a { font-size: 12px; }
+.header-download { min-height: 40px; border-radius: 7px; }
+.guide-intro { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding-block: 44px 32px; border-bottom: 1px solid var(--line); }
+.intro-label { font-size: 12px; color: #a4a4af; margin-bottom: 10px; }
+h1 { font-size: clamp(34px, 4vw, 46px); font-weight: 550; letter-spacing: -1.6px; line-height: 1.2; }
+.intro-description { font-size: 14px; color: #aaaab4; margin-top: 12px; }
+.release-link { display: inline-flex; align-items: center; gap: 9px; font-size: 12px; color: #aaaab4; padding-block: 6px; white-space: nowrap; }
+.release-link:hover { color: #ededf0; }
+.guide-section { padding-block: 28px 36px; background: var(--bg); border-top: 0; }
+.guide-requirements { display: flex; flex-wrap: wrap; gap: 14px 26px; margin-bottom: 26px; color: #a3a3ae; font-size: 11px; }
+.guide-requirements > span { display: inline-flex; align-items: center; gap: 8px; }
+.guide-requirements .icon { width: 16px; height: 16px; color: #9c9ca8; }
+.guide-layout { grid-template-columns: 250px minmax(0, 1fr); gap: 32px; }
+.guide-sidebar { top: 28px; }
+.sidebar-label { font-size: 10px; letter-spacing: .06em; color: #8d8d9a; margin: 4px 0 16px; }
+.step-link { border-radius: 8px; padding: 12px 8px; }
+.step-link.is-active { background: #202024; border-color: #ffffff1c; }
+.step-link small { color: #91919f; }
+.step-number { color: #9898a6; }
+.guide-content { background: var(--panel); border-radius: 12px; padding: 30px 32px 20px; box-shadow: none; scroll-margin-top: 24px; }
+.step-panel h3 { font-size: 29px; font-weight: 550; }
+.step-lead, .instruction-list { color: #b1b1bd; font-size: 14px; line-height: 1.85; }
+.context-label, .step-overline, .download-note { color: #9999a8; }
+.button-primary { background: #e8e8ed; color: #17171c; border-color: #e8e8ed; }
+.button:hover { transform: none; }
+.button-primary:hover { background: #fff; }
+.os-picker { background: #0c0c0f; border-color: #ffffff16; }
+.os-thumb { background: #2a2a30; }
+.os-picker button[aria-pressed=true] { background: #2a2a30; }
+.inline-note { background: #ffffff03; border-left-color: #747481; color: #aaaab8; }
+.schematic { background: #101013; }
+.download-orbit, .floating-pill { display: none; }
+.download-tile, .ipa-file { transform: none; box-shadow: none; }
+.step-visual { border-color: #ffffff16; border-radius: 8px; background: #101013; }
+.visual-caption { background: #1b1b20; color: #a7a7b4; }
+.step-visual figcaption { background: #101013; color: #9999a8; }
+.renewal-note { background: #ffffff02; padding: 20px 24px; border-radius: 9px; }
+.renewal-note p { color: #a0a0af; }
+.downloads-section { padding-block: 40px 16px; }
+.section-heading h2, .faq-heading h2 { margin-top: 0; font-size: 27px; letter-spacing: -.8px; }
+.download-card, .voidgram-download-card { background: #101013; border-color: var(--line); border-radius: 10px; }
+.download-card { padding: 24px; }
+.download-card h3 { font-size: 23px; }
+.download-card p { color: #a0a0af; }
+.faq-section { padding-block: 38px 48px; }
+.faq-list p { color: #a4a4b1; }
+.site-footer { border-top: 1px solid var(--line); }
+.guide-intro, .guide-content { animation: guide-enter 280ms cubic-bezier(.22,.7,.3,1) both; }
+@keyframes guide-enter { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 1080px) {
+  .container { width: calc(100% - 56px); }
+  .guide-layout { grid-template-columns: 220px minmax(0, 1fr); gap: 24px; }
+  .guide-content { padding: 26px 24px 18px; }
+}
+@media (max-width: 760px) {
+  .container { width: calc(100% - 36px); }
+  .site-header { height: 68px; }
+  .desktop-nav { display: none; }
+  .header-download { font-size: 11px; gap: 10px; padding-inline: 12px; }
+  .guide-intro { padding-block: 28px 24px; gap: 16px; align-items: flex-start; }
+  .intro-description { font-size: 13px; max-width: 270px; }
+  .intro-label { font-size: 11px; }
+  .release-link { font-size: 10px; margin-top: 4px; gap: 6px; }
+  .guide-section { padding-block: 22px 26px; }
+  .guide-requirements { gap: 10px 18px; margin-bottom: 22px; font-size: 10px; }
+  .guide-layout { display: flex; gap: 18px; }
+  .guide-sidebar { position: static; }
+  .step-link { padding: 0; }
+  .step-link.is-active { background: #e1e1e8; border-color: #e1e1e8; }
+  .guide-content { padding: 22px 20px 16px; }
+  .step-panel h3 { font-size: 26px; }
+  .step-lead, .instruction-list { font-size: 13px; }
+  .renewal-note { padding: 18px; }
+  .downloads-section { padding-top: 30px; }
+  .download-card { padding: 22px; }
+  .faq-section { padding-top: 30px; }
+}
+@media (max-width: 420px) {
+  .guide-intro { flex-direction: column; gap: 10px; }
+  .release-link { margin: 0; }
+  .intro-description { max-width: none; }
+  .guide-content { padding-inline: 17px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .guide-intro, .guide-content { animation: none; }
+}
+@media print {
+  .guide-intro { padding-block: 15px; }
+  .intro-label, .intro-description, .release-link { color: #333; }
+  .guide-requirements, .method-picker { display: none; }
+  .guide-content, .guide-section { background: none; }
+  .guide-content { padding: 0; }
+}
+/* Install method: iLoader on a computer or a developer certificate from the Telegram bot. */
+.method-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; max-width: none; padding: 5px; margin: 0 0 24px; border: 1px solid #ffffff15; border-radius: 10px; background: #0c0d10; }
+.method-picker button { display: flex; align-items: center; gap: 12px; padding: 11px 14px; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 7px; color: #a9aeb9; transition: background .18s, color .18s; }
+.method-picker button:hover { color: #f1f2f5; }
+.method-picker button[aria-pressed=true] { background: #27272e; border-color: #ffffff16; color: white; box-shadow: 0 2px 6px #0003; }
+.method-picker .icon { width: 18px; height: 18px; flex: none; }
+.method-picker strong { display: block; font-size: 13px; font-weight: 550; line-height: 1.4; }
+.method-picker small { display: block; font-size: 11px; color: #939aa8; margin-top: 2px; }
+@media (max-width: 520px) {
+  .method-picker { grid-template-columns: 1fr; margin-top: 0; }
+}
+.method-picker button { position: relative; }
+.method-badge { margin-left: auto; padding: 3px 8px; border-radius: 999px; background: #e9eaed; color: #14161b; font-size: 10px; font-weight: 650; white-space: nowrap; }
+.price-table { width: 100%; max-width: 520px; margin-top: 18px; border-collapse: collapse; font-size: 14px; }
+.price-table th, .price-table td { padding: 11px 0; border-bottom: 1px solid var(--line); text-align: left; vertical-align: baseline; }
+.price-table th { font-weight: 550; color: #e1e4eb; }
+.price-table th small { display: block; font-size: 11px; font-weight: 400; color: var(--subtle); margin-top: 1px; }
+.price-table td { text-align: right; color: #c9ced8; white-space: nowrap; }
+.price-table td strong { color: #fff; font-weight: 600; }
+.price-table s { margin-left: 6px; color: #7f8592; font-size: 12px; }
+.price-footnote { margin-top: 14px; max-width: 620px; color: #9ba1ad; font-size: 12px; line-height: 1.8; }
+.step-visual[data-screenshot^="cert"] .screenshot-image { width: auto; max-width: 100%; margin-inline: auto; }

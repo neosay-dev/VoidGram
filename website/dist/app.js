@@ -60,10 +60,10 @@
     document.dispatchEvent(new CustomEvent('voidgram:progresschange'));
   }
 
-  function selectStep(step, { focus = false, scroll = false } = {}) {
+  function selectStep(step, { focus = false, scroll = false, transition = true } = {}) {
     if (!Number.isInteger(step) || step < 1 || step > panels.length) return;
     const from = current;
-    if (step !== from) document.dispatchEvent(new CustomEvent('voidgram:beforestepchange'));
+    if (step !== from && transition) document.dispatchEvent(new CustomEvent('voidgram:beforestepchange'));
     current = step;
     panels.forEach((panel, index) => { panel.hidden = index + 1 !== current; });
     stepLinks.forEach(link => {
@@ -75,7 +75,7 @@
     next.querySelector('span').textContent = current === panels.length ? 'Готово' : 'Дальше';
     next.querySelector('use').setAttribute('href', current === panels.length ? '#check' : '#arrow');
     updateProgress();
-    if (step !== from) document.dispatchEvent(new CustomEvent('voidgram:stepchange', { detail: { from, to: step, panel: panels[current - 1] } }));
+    if (step !== from && transition) document.dispatchEvent(new CustomEvent('voidgram:stepchange', { detail: { from, to: step, panel: panels[current - 1] } }));
     if (focus) {
       panels[current - 1].querySelector('h3').focus({ preventScroll: true });
       try { history.replaceState(null, '', `#${methods[method].hash}-${current}`); } catch { /* file:// previews can restrict history. */ }
@@ -161,6 +161,7 @@
         target.dataset.layout = img.dataset.layout;
         dialog.querySelector('p').textContent = value.caption || img.alt;
         dialog.showModal();
+        document.dispatchEvent(new CustomEvent('voidgram:screenshotopen'));
         const viewport = dialog.querySelector('.dialog-image-stage');
         viewport.scrollLeft = 0;
         viewport.scrollTop = 0;
@@ -201,6 +202,7 @@
   function selectOS(value) {
     if (!Object.prototype.hasOwnProperty.call(osOptions, value)) return;
     const changed = os !== value;
+    if (changed) document.dispatchEvent(new CustomEvent('voidgram:beforeoschange'));
     os = value;
     osButtons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.os === os)));
     document.querySelectorAll('[data-os-panel]').forEach(panel => { panel.hidden = panel.dataset.osPanel !== os; });
@@ -217,6 +219,9 @@
   function selectMethod(value, { scroll = false } = {}) {
     if (!Object.prototype.hasOwnProperty.call(methods, value)) return;
     const changed = method !== value;
+    const from = current;
+    const transition = changed || current !== 1;
+    if (transition) document.dispatchEvent(new CustomEvent('voidgram:beforestepchange'));
     method = value;
     completed = progress[method];
     panels = allPanels.filter(panel => methodOf(panel) === method);
@@ -224,10 +229,12 @@
     allStepLinks.forEach(link => { link.hidden = methodOf(link) !== method; });
     allPanels.forEach(panel => { if (methodOf(panel) !== method) panel.hidden = true; });
     document.querySelectorAll('.renewal-note[data-method]').forEach(note => { note.hidden = methodOf(note) !== method; });
+    document.querySelectorAll('[data-method-only]').forEach(element => { element.hidden = element.dataset.methodOnly !== method; });
     methodButtons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.methodChoice === method)));
     document.getElementById('completion-note').textContent = methods[method].done;
     current = 0;
-    selectStep(1, { scroll });
+    selectStep(1, { scroll, transition: false });
+    if (transition) document.dispatchEvent(new CustomEvent('voidgram:stepchange', { detail: { from, to: 1, panel: panels[0] } }));
     if (changed) save();
   }
 
