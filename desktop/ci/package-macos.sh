@@ -28,8 +28,13 @@ codesign --verify --deep --strict --verbose=2 "$app"
 
 ditto -c -k --sequesterRsrc --keepParent "$app" "$dist/voidgram-desktop-macos-universal.zip"
 ln -s /Applications "$stage/Applications"
-hdiutil create -ov -format UDZO -volname VoidGram -srcfolder "$stage" \
-  "$dist/voidgram-desktop-macos-universal.dmg"
+# hdiutil sometimes answers "Resource busy" on a CI runner (Spotlight holds the folder): try again.
+for attempt in 1 2 3 4 5; do
+  if hdiutil create -ov -format UDZO -volname VoidGram -srcfolder "$stage" \
+    "$dist/voidgram-desktop-macos-universal.dmg"; then break; fi
+  [ "$attempt" -lt 5 ] || { echo "hdiutil failed 5 times" >&2; exit 1; }
+  sleep 15
+done
 (
   cd "$dist"
   shasum -a 256 voidgram-desktop-macos-universal.zip voidgram-desktop-macos-universal.dmg > SHA256SUMS-macos.txt

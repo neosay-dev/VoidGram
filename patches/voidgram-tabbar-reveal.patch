@@ -1,0 +1,100 @@
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsRows.swift b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
+index 1cd378aa..c50fd310 100644
+--- a/submodules/SettingsUI/Sources/AyuSettingsRows.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
+@@ -134,7 +134,7 @@ enum AyuSettingsEntry: ItemListNodeEntry {
+ /// which the app reports to Telegram's servers.
+ /// Raised with every VoidGram update.
+ func ayuAppVersion() -> String {
+-    return "27.8.4"
++    return "27.8.5"
+ }
+ 
+ /// The version with the build number of this IPA, as the settings header shows it.
+diff --git a/submodules/TabBarUI/Sources/TabBarContollerNode.swift b/submodules/TabBarUI/Sources/TabBarContollerNode.swift
+index 9778ad7b..c83229eb 100644
+--- a/submodules/TabBarUI/Sources/TabBarContollerNode.swift
++++ b/submodules/TabBarUI/Sources/TabBarContollerNode.swift
+@@ -10,6 +10,9 @@ import TabBarLayout
+ import GlassControls
+ import LottieSettings
+ 
++/// The hidden tab bar is shown for a few seconds after a tap on its handle.
++private var ayuTabBarRevealed = false
++
+ final class TabBarControllerNode: ASDisplayNode {
+     private struct Params: Equatable {
+         let layout: ContainerViewLayout
+@@ -38,7 +41,7 @@ final class TabBarControllerNode: ASDisplayNode {
+             self.itemCount = itemCount
+             self.ayuLift = min(48.0, max(0.0, (UserDefaults.standard.object(forKey: "ayu.tabBarLift") as? Double ?? 0.0)))
+             self.ayuHideTitles = AyuAppearancePlus.hideTabTitles
+-            self.ayuHidden = AyuWhiteGram.hideBottomTabBar
++            self.ayuHidden = AyuWhiteGram.hideBottomTabBar && !ayuTabBarRevealed
+             self.ayuScale = AyuWhiteGram.tabBarScale
+             self.ayuWidth = AyuWhiteGram.tabBarWidth
+         }
+@@ -198,6 +201,32 @@ final class TabBarControllerNode: ASDisplayNode {
+         self.disabledOverlayNode.view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.disabledTapGesture(_:))))
+     }
+     
++    private var ayuRevealHandle: UIView?
++    private var ayuRevealTimer: Foundation.Timer?
++
++    @objc private func ayuRevealTapped() {
++        self.ayuSetRevealed(true)
++        self.ayuRevealTimer?.invalidate()
++        self.ayuRevealTimer = Foundation.Timer.scheduledTimer(withTimeInterval: 6.0, repeats: false, block: { [weak self] _ in
++            if let self {
++                self.ayuSetRevealed(false)
++            } else {
++                ayuTabBarRevealed = false
++            }
++        })
++    }
++
++    /// Lays the bar out again with the same layout; the tab's own bottom inset stays as it was, so the list doesn't jump.
++    private func ayuSetRevealed(_ value: Bool) {
++        ayuTabBarRevealed = value
++        guard let previous = self.layoutResult?.params else {
++            return
++        }
++        let params = Params(layout: previous.layout, toolbar: previous.toolbar, isTabBarHidden: previous.isTabBarHidden, currentControllerSearchState: previous.currentControllerSearchState, itemCount: previous.itemCount)
++        let _ = self.updateImpl(params: params, transition: .animated(duration: 0.25, curve: .easeInOut))
++        self.layoutResult = LayoutResult(params: params, bottomInset: self.layoutResult?.bottomInset)
++    }
++
+     @objc private func disabledTapGesture(_ recognizer: UITapGestureRecognizer) {
+         if case .ended = recognizer.state {
+             self.disabledPressed()
+@@ -409,6 +438,30 @@ final class TabBarControllerNode: ASDisplayNode {
+         
+         tabBarFrameTransition.updateFrame(node: self.disabledOverlayNode, frame: tabBarFrame)
+ 
++        // A hidden tab bar leaves no way to Settings: a small handle at the bottom shows the bar for a few seconds.
++        if AyuWhiteGram.hideBottomTabBar && !ayuTabBarRevealed && sidePlacement == nil && params.toolbar == nil && !params.isTabBarHidden {
++            let handle: UIView
++            if let current = self.ayuRevealHandle {
++                handle = current
++            } else {
++                handle = UIView()
++                let pill = UIView(frame: CGRect(x: 22.0, y: 10.0, width: 44.0, height: 5.0))
++                pill.layer.cornerRadius = 2.5
++                pill.isUserInteractionEnabled = false
++                pill.tag = 1
++                handle.addSubview(pill)
++                handle.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.ayuRevealTapped)))
++                self.ayuRevealHandle = handle
++                self.view.addSubview(handle)
++            }
++            handle.viewWithTag(1)?.backgroundColor = self.theme.rootController.tabBar.textColor.withAlphaComponent(0.45)
++            let bottom = params.layout.insets(options: []).bottom
++            handle.frame = CGRect(x: floor((params.layout.size.width - 88.0) * 0.5), y: params.layout.size.height - bottom - 26.0, width: 88.0, height: 26.0)
++            handle.isHidden = false
++        } else {
++            self.ayuRevealHandle?.isHidden = true
++        }
++
+         if let classicTabBar = self.classicTabBar {
+             let usesClassic = sidePlacement == nil
+             self.tabBarView.view?.isHidden = usesClassic
