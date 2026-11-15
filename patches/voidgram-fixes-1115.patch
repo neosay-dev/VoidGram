@@ -1,8 +1,31 @@
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-index 9ed52bf6..05050709 100644
+index 9ed52bf6..ddc4b7f5 100644
 --- a/submodules/SettingsUI/Sources/AyuSettingsController.swift
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -563,8 +563,14 @@ func ayuMessageShotSettingsController(context: AccountContext) -> ViewController
+@@ -181,8 +181,20 @@ func ayuPresentAppIcons(context: AccountContext) {
+     let choices = AyuAppIconCatalog.presets.map { preset in
+         AyuAppIconChoice(name: preset.name, title: ru ? preset.russianTitle : preset.title, image: UIImage(bundleImageName: preset.assetName))
+     }
+-    let picker = AyuAppIconPickerController(choices: choices, selected: context.sharedContext.applicationBindings.getAlternateIconName(), russian: ru, change: { name, completion in
+-        context.sharedContext.applicationBindings.requestSetAlternateIconName(name, completion)
++    // An iOS older than 26 cannot draw the Icon Composer icons: the build adds PNG copies as `<Name>Legacy`
++    // (ci/legacy_icons.py), asked for when the first name is refused.
++    var selected = context.sharedContext.applicationBindings.getAlternateIconName()
++    if let current = selected, current.hasSuffix("Legacy") {
++        selected = String(current.dropLast("Legacy".count))
++    }
++    let picker = AyuAppIconPickerController(choices: choices, selected: selected, russian: ru, change: { name, completion in
++        context.sharedContext.applicationBindings.requestSetAlternateIconName(name, { success in
++            if success || name == nil {
++                completion(success)
++            } else if let name {
++                context.sharedContext.applicationBindings.requestSetAlternateIconName(name + "Legacy", completion)
++            }
++        })
+     })
+     let navigation = UINavigationController(rootViewController: picker)
+     navigation.overrideUserInterfaceStyle = data.theme.overallDarkAppearance ? .dark : .light
+@@ -563,8 +575,14 @@ func ayuMessageShotSettingsController(context: AccountContext) -> ViewController
  func ayuInterfacePageController(context: AccountContext, navigationOnly: Bool = false) -> ViewController {
      let store = context.account.network.ayuGhostMode
      var presentError: (() -> Void)?
@@ -17,15 +40,15 @@ index 9ed52bf6..05050709 100644
          if id == 51 {
              let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
              let alert = UIAlertController(title: ru ? "Расположение папок" : "Folder position", message: nil, preferredStyle: .alert)
-@@ -732,6 +738,7 @@ func ayuInterfacePageController(context: AccountContext, navigationOnly: Bool =
-             .toggle(5, 53, icon("hand.tap.fill", 0xAF52DE), ru ? "Редактировать двойным тапом" : "Double-tap to edit", nil, value.doubleTapToEdit),
+@@ -733,6 +751,7 @@ func ayuInterfacePageController(context: AccountContext, navigationOnly: Bool =
              .toggle(5, 54, icon("textformat", 0x5856D6), ru ? "Панель форматирования" : "Formatting toolbar", nil, value.formattingToolbar),
              .link(5, 55, icon("arrow.up.and.down", 0x34C759), ru ? "Положение таббара" : "Tab bar position", "\(Int(lift)) pt"),
-+            .link(5, 57, icon("safari.fill", 0x007AFF), ru ? "Открывать ссылки в" : "Open links in", ""),
              .info(5, 56, ru ? "Изменения применяются при возвращении к списку чатов или повторном открытии чата. Положение таббара общее для всех аккаунтов; 0 — стандартная высота." : "Changes apply when returning to the chat list or reopening a chat. Tab bar position is shared across accounts; 0 is the default height.")
++            .link(5, 57, icon("safari.fill", 0x007AFF), ru ? "Открывать ссылки в" : "Open links in", ""),
          ]
          entries.append(contentsOf: remainingEntries)
-@@ -743,6 +750,7 @@ func ayuInterfacePageController(context: AccountContext, navigationOnly: Bool =
+         if navigationOnly {
+@@ -743,6 +762,7 @@ func ayuInterfacePageController(context: AccountContext, navigationOnly: Bool =
          return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
      }
      let controller = ItemListController(context: context, state: signal)
@@ -90,3 +113,31 @@ index 0af69b12..679ad3c7 100644
              }
              
              currentController.containerLayoutUpdated(updatedLayout, transition: .immediate)
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenItemSectionContainerNode.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenItemSectionContainerNode.swift
+index 5daf9ed3..efc53024 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenItemSectionContainerNode.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenItemSectionContainerNode.swift
+@@ -133,14 +133,21 @@ final class PeerInfoScreenItemSectionContainerNode: ASDisplayNode {
+             let radius: CGFloat = 26.0
+             let panel = CGRect(x: 0.0, y: contentWithBackgroundOffset, width: width, height: max(0.0, contentWithBackgroundHeight - contentWithBackgroundOffset))
+             let path = UIBezierPath(rect: CGRect(x: 0.0, y: -1000.0, width: width, height: 1000.0 + panel.minY))
+-            path.append(UIBezierPath(roundedRect: panel, cornerRadius: min(radius, panel.height / 2.0)))
++            if panel.height / 2.0 <= radius {
++                // A one-row section is a full pill. UIBezierPath's rounded rect is a different, wider shape at
++                // this radius, and the row's own corners showed as dark slivers beside it (My Profile in Settings):
++                // true half-circles cut them.
++                path.append(UIBezierPath(cgPath: CGPath(roundedRect: panel, cornerWidth: panel.height / 2.0, cornerHeight: panel.height / 2.0, transform: nil)))
++            } else {
++                path.append(UIBezierPath(roundedRect: panel, cornerRadius: radius))
++            }
+             path.append(UIBezierPath(rect: CGRect(x: 0.0, y: panel.maxY, width: width, height: max(0.0, contentHeight - panel.maxY) + 1000.0)))
+             let mask = (self.itemContainerNode.layer.mask as? CAShapeLayer) ?? CAShapeLayer()
+             mask.path = path.cgPath
+             self.itemContainerNode.layer.mask = mask
+             self.backgroundNode.cornerRadius = min(radius, panel.height / 2.0)
+             if #available(iOS 13.0, *) {
+-                self.backgroundNode.layer.cornerCurve = .continuous
++                self.backgroundNode.layer.cornerCurve = panel.height / 2.0 <= radius ? .circular : .continuous
+             }
+         } else {
+             self.itemContainerNode.layer.mask = nil

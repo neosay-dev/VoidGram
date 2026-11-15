@@ -13,6 +13,7 @@ import sys
 import zipfile
 from build_logging import run_logged_build
 import python_support
+import legacy_icons
 
 parser = argparse.ArgumentParser()
 parser.add_argument("source", type=Path)
@@ -106,6 +107,11 @@ if not ipa.is_file():
 python_manifest = None
 if python_archive is not None:
     python_manifest = python_support.package(ipa, python_archive, port_root / "runtime", args.configuration)
+
+# iOS older than 26 cannot draw the Icon Composer icons: PNG copies under `<Name>Legacy`.
+if args.phase == "port":
+    legacy = legacy_icons.package(ipa, source, port_root / "assets/branding/voidgram")
+    print(f"Legacy launcher icons: {len(legacy)}")
 
 with zipfile.ZipFile(ipa) as archive:
     bundle_bytes = sum(item.file_size for item in archive.infolist())
