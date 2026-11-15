@@ -13,8 +13,9 @@ on:
         description: VoidGram version, e.g. 27.8.3
         required: true
       run_id:
-        description: ID of the successful "Native iOS port" run whose IPA to publish
-        required: true
+        description: ID of the successful "Native iOS port" run whose IPA to publish (empty: a desktop-only release)
+        required: false
+        default: ''
       windows_run:
         description: ID of a "VoidGram Desktop (Windows)" run (optional)
         required: false
@@ -41,7 +42,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: actions/download-artifact@v4
+      - if: inputs.run_id != ''
+        uses: actions/download-artifact@v4
         with:
           run-id: ${{ inputs.run_id }}
           github-token: ${{ github.token }}
@@ -85,9 +87,11 @@ jobs:
           notes="docs/releases/v${VERSION}.md"
           test -f "$notes" || { echo "::error::$notes is missing"; exit 1; }
           mkdir -p files
-          ipa=$(find artifact/ios -name '*.ipa' | head -n 1)
-          test -n "$ipa" || { echo "::error::run $RUN_ID has no IPA"; exit 1; }
-          cp "$ipa" "files/VoidGram-${VERSION}.ipa"
+          if [ -n "$RUN_ID" ]; then
+            ipa=$(find artifact/ios -name '*.ipa' | head -n 1)
+            test -n "$ipa" || { echo "::error::run $RUN_ID has no IPA"; exit 1; }
+            cp "$ipa" "files/VoidGram-${VERSION}.ipa"
+          fi
           find artifact/windows artifact/arch artifact/linux artifact/macos -type f \( -name '*.zip' -o -name '*.tar.zst' -o -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' \) -exec cp {} files/ \; 2>/dev/null || true
           # Generic tarballs carry their own install.sh; the release one is the current installer.
           if ls files/*.tar.zst files/*.deb files/*.rpm >/dev/null 2>&1; then
@@ -95,14 +99,19 @@ jobs:
             chmod +x files/install.sh
           fi
           ls -la files
-          sha=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}" --jq .head_sha)
-          number=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}" --jq .run_number)
+          if [ -n "$RUN_ID" ]; then
+            sha=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}" --jq .head_sha)
+            number=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}" --jq .run_number)
+            footer="iOS: unsigned IPA, build ${number}, commit \`${sha}\`"
+          else
+            footer="Desktop only: no iOS build in this release."
+          fi
           {
             cat "$notes"
             echo
             echo "---"
             echo
-            echo "iOS: unsigned IPA, build ${number}, commit \`${sha}\`"
+            echo "$footer"
             echo
             echo "| File | Size | SHA-256 |"
             echo "|---|---|---|"

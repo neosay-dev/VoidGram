@@ -1,0 +1,52 @@
+diff --git a/submodules/Display/Source/AyuAppearancePlus.swift b/submodules/Display/Source/AyuAppearancePlus.swift
+index 80088cf..877b024 100644
+--- a/submodules/Display/Source/AyuAppearancePlus.swift
++++ b/submodules/Display/Source/AyuAppearancePlus.swift
+@@ -97,7 +97,8 @@ public enum AyuAppearancePlus {
+ 
+     /// The pre-Liquid-Glass look: a full-width opaque tab bar and Telegram's flat glass.
+     public static var classicDesign: Bool {
+-        get { return UserDefaults.standard.bool(forKey: classicDesignKey) }
++        // The classic Telegram design is hidden for now; it always stays off.
++        get { return false }
+         set { set(newValue, forKey: classicDesignKey) }
+     }
+ 
+diff --git a/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
+index 3e2896f..888934b 100644
+--- a/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
++++ b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
+@@ -143,7 +143,6 @@ func ayuAppearancePlusController(context: AccountContext) -> ViewController {
+             .header(2, 10, ru ? "ЖИДКОЕ СТЕКЛО" : "LIQUID GLASS"),
+             .toggle(2, AyuAppearancePlusRow.telegramGlass.rawValue, symbol("drop.fill", 0x32ADE6), ru ? "Стекло Telegram" : "Telegram glass", ru ? (systemGlassAvailable ? "Выключено — системное стекло iOS" : "Системное стекло требует iOS 26") : (systemGlassAvailable ? "Off: the system iOS glass" : "System glass needs iOS 26"), AyuAppearancePlus.glassStyle == .telegram),
+             .header(3, 20, ru ? "ДИЗАЙН" : "DESIGN"),
+-            .toggle(3, AyuAppearancePlusRow.classicDesign.rawValue, symbol("clock.arrow.circlepath", 0xFF2D55), ru ? "Старый дизайн Telegram" : "Classic Telegram design", ru ? "Как Telegram до Liquid Glass: полная нижняя панель и плоские панели без стекла" : "Telegram before Liquid Glass: full-width tab bar and flat panels without glass", AyuAppearancePlus.classicDesign),
+             .toggle(3, AyuAppearancePlusRow.noGlass.rawValue, symbol("square.slash", 0x8E8E93), ru ? "Без стекла" : "No glass", ru ? "Плоские панели везде: папки, чаты, настройки, кнопки" : "Flat panels everywhere: folders, chats, settings, buttons", AyuAppearancePlus.noGlass),
+             .toggle(3, AyuAppearancePlusRow.blurGlass.rawValue, symbol("aqi.medium", 0x32ADE6), ru ? "Размытие вместо стекла" : "Blur instead of glass", ru ? "Панели и кнопки размывают то, что под ними, без эффекта стекла" : "Panels and buttons blur what is under them, without the glass effect", AyuAppearancePlus.blurGlass),
+             .link(3, AyuAppearancePlusRow.slowMotion.rawValue, symbol("tortoise.fill", 0x34C759), ru ? "Slow-Motion анимаций" : "Animation slow motion", AyuAppearancePlus.slowMotionFactor > 1.0 ? String(format: "%.0f×", AyuAppearancePlus.slowMotionFactor) : (ru ? "выкл." : "off")),
+diff --git a/submodules/SettingsUI/Sources/AyuCategoriesController.swift b/submodules/SettingsUI/Sources/AyuCategoriesController.swift
+index 8ccd2f4..d70e0a8 100644
+--- a/submodules/SettingsUI/Sources/AyuCategoriesController.swift
++++ b/submodules/SettingsUI/Sources/AyuCategoriesController.swift
+@@ -125,7 +125,7 @@ func ayuCategoryItems(_ category: AyuCategory) -> [AyuCategoryItem] {
+             AyuCategoryItem(id: 32, symbol: "list.bullet.rectangle.fill", color: 0x34C759, titleRu: "Список чатов", titleEn: "Chat list", subtitleRu: "Строки, свайпы, аватары и папки", subtitleEn: "Rows, swipes, avatars and folders", open: page { ayuWhiteGramController(context: $0, groups: [.interface], title: ayuIsRussian($0) ? "Список чатов" : "Chat list") }),
+             AyuCategoryItem(id: 33, symbol: "dock.rectangle", color: 0x5856D6, titleRu: "Панели", titleEn: "Panels", subtitleRu: "Таб-бар, поле ввода и навигация", subtitleEn: "Tab bar, input field and navigation", open: page { ayuWhiteGramController(context: $0, groups: [.tabBar], title: ayuIsRussian($0) ? "Панели" : "Panels") }),
+             AyuCategoryItem(id: 34, symbol: "slider.horizontal.3", color: 0x5856D6, titleRu: "Навигация и редактор", titleEn: "Navigation and composer", subtitleRu: "", subtitleEn: "", open: page { ayuInterfacePageController(context: $0, navigationOnly: true) }),
+-            AyuCategoryItem(id: 35, symbol: "paintbrush.pointed.fill", color: 0xFF2D55, titleRu: "Панели, стекло и эффекты", titleEn: "Tabs, glass & effects", subtitleRu: "Вкладки, старый дизайн, анимации и снег", subtitleEn: "Tabs, classic design, animations and snow", open: page { ayuAppearancePlusController(context: $0) }),
++            AyuCategoryItem(id: 35, symbol: "paintbrush.pointed.fill", color: 0xFF2D55, titleRu: "Панели, стекло и эффекты", titleEn: "Tabs, glass & effects", subtitleRu: "Вкладки, анимации и снег", subtitleEn: "Tabs, animations and snow", open: page { ayuAppearancePlusController(context: $0) }),
+             AyuCategoryItem(id: 36, symbol: "drop.halffull", color: 0x32ADE6, titleRu: "Стекло и пузыри", titleEn: "Glass and bubbles", subtitleRu: "", subtitleEn: "", open: page { ayuGlassController(context: $0) }),
+             AyuCategoryItem(id: 37, symbol: "paintpalette.fill", color: 0xAF52DE, titleRu: "Темы, цвета и бейджи", titleEn: "Themes, colours & badges", subtitleRu: "Готовые палитры, фон чата и свои цвета", subtitleEn: "Palettes, chat background and custom colours", open: page { ayuCustomizationController(context: $0) }),
+             AyuCategoryItem(id: 38, symbol: "square.grid.2x2.fill", color: 0xFF9500, titleRu: "Иконки и бейдж", titleEn: "Icons & badge", subtitleRu: "Иконка приложения, цветные или монохромные значки", subtitleEn: "App icon, coloured or monochrome glyphs", open: page { ayuIconsController(context: $0) }),
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsRows.swift b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
+index d8578d7..1cd378a 100644
+--- a/submodules/SettingsUI/Sources/AyuSettingsRows.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
+@@ -134,7 +134,7 @@ enum AyuSettingsEntry: ItemListNodeEntry {
+ /// which the app reports to Telegram's servers.
+ /// Raised with every VoidGram update.
+ func ayuAppVersion() -> String {
+-    return "27.8.3"
++    return "27.8.4"
+ }
+ 
+ /// The version with the build number of this IPA, as the settings header shows it.
