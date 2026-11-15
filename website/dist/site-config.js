@@ -3,8 +3,8 @@
 // Update this block when a new IPA is published. All other download links use latest.
 window.AYU_SITE = Object.freeze({
   release: {
-    label: '27.8.3 · 107 МБ',
-    ipa: 'https://github.com/neosay-dev/VoidGram/releases/download/v27.8.3/VoidGram-27.8.3.ipa',
+    label: '27.8.6 · 108 МБ',
+    ipa: 'https://github.com/neosay-dev/VoidGram/releases/download/v27.8.6/VoidGram-27.8.6.ipa',
     checkedOn: '2026-11-15',
   },
   // A step accepts one screenshot or an array with labels for the image picker.
