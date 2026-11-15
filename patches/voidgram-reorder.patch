@@ -158,12 +158,13 @@ index 888934bd..5db910e3 100644
          entries.append(.link(5, AyuAppearancePlusRow.effect.rawValue, symbol("snowflake", 0x5AC8FA), ru ? "Эффект поверх Telegram" : "Effect over Telegram", AyuOverlayEffects.effect.title(ru)))
 diff --git a/submodules/SettingsUI/Sources/AyuReorderController.swift b/submodules/SettingsUI/Sources/AyuReorderController.swift
 new file mode 100644
-index 00000000..60a7b90a
+index 00000000..e1289471
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuReorderController.swift
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,165 @@
 +import Foundation
 +import UIKit
++import Display
 +
 +/// A list whose rows are dragged into a new order, with the system's own reordering (the grip at the
 +/// right, rows making room as one is carried). A row moves only inside its section.
@@ -326,6 +327,21 @@ index 00000000..60a7b90a
 +        changed: { AyuSettingsVisibility.order = $0 }
 +    )
 +}
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
+index ddc4b7f5..a19e4727 100644
+--- a/submodules/SettingsUI/Sources/AyuSettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
+@@ -750,8 +750,8 @@ func ayuInterfacePageController(context: AccountContext, navigationOnly: Bool =
+             .toggle(5, 53, icon("hand.tap.fill", 0xAF52DE), ru ? "Редактировать двойным тапом" : "Double-tap to edit", nil, value.doubleTapToEdit),
+             .toggle(5, 54, icon("textformat", 0x5856D6), ru ? "Панель форматирования" : "Formatting toolbar", nil, value.formattingToolbar),
+             .link(5, 55, icon("arrow.up.and.down", 0x34C759), ru ? "Положение таббара" : "Tab bar position", "\(Int(lift)) pt"),
+-            .info(5, 56, ru ? "Изменения применяются при возвращении к списку чатов или повторном открытии чата. Положение таббара общее для всех аккаунтов; 0 — стандартная высота." : "Changes apply when returning to the chat list or reopening a chat. Tab bar position is shared across accounts; 0 is the default height.")
+-            .link(5, 57, icon("safari.fill", 0x007AFF), ru ? "Открывать ссылки в" : "Open links in", ""),
++            .info(5, 56, ru ? "Изменения применяются при возвращении к списку чатов или повторном открытии чата. Положение таббара общее для всех аккаунтов; 0 — стандартная высота." : "Changes apply when returning to the chat list or reopening a chat. Tab bar position is shared across accounts; 0 is the default height."),
++            .link(5, 57, icon("safari.fill", 0x007AFF), ru ? "Открывать ссылки в" : "Open links in", "")
+         ]
+         entries.append(contentsOf: remainingEntries)
+         if navigationOnly {
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
 index e6780b8c..b0955d08 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
