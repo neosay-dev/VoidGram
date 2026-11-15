@@ -92,8 +92,6 @@
 }
 .method-picker button { position: relative; }
 .method-badge { margin-left: auto; padding: 3px 8px; border-radius: 999px; background: #e9eaed; color: #14161b; font-size: 10px; font-weight: 650; white-space: nowrap; }
-.sale-note { margin-top: 22px; padding: 14px 17px; border: 1px solid #ffffff1f; border-radius: 8px; background: #ffffff06; color: #b5bbc7; font-size: 13px; line-height: 1.8; }
-.sale-note strong { display: block; color: #f1f2f5; font-weight: 600; }
 .price-table { width: 100%; max-width: 520px; margin-top: 18px; border-collapse: collapse; font-size: 14px; }
 .price-table th, .price-table td { padding: 11px 0; border-bottom: 1px solid var(--line); text-align: left; vertical-align: baseline; }
 .price-table th { font-weight: 550; color: #e1e4eb; }
@@ -103,3 +101,6 @@
 .price-table s { margin-left: 6px; color: #7f8592; font-size: 12px; }
 .price-footnote { margin-top: 14px; max-width: 620px; color: #9ba1ad; font-size: 12px; line-height: 1.8; }
 .step-visual[data-screenshot^="cert"] .screenshot-image { width: auto; max-width: 100%; margin-inline: auto; }
+.feature-list dd a { color: #f1f2f5; text-decoration: underline; text-underline-offset: 3px; }
+.feature-list dd code { display: inline-block; margin-top: 6px; padding: 6px 10px; border: 1px solid #ffffff1f; border-radius: 6px; font-size: 12px; color: #d7dae1; overflow-wrap: anywhere; }
+.hero-actions { flex-wrap: wrap; row-gap: 14px; }

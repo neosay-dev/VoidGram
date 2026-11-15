@@ -242,11 +242,6 @@
   document.documentElement.classList.add('js-ready');
   document.querySelector('.step-controls').hidden = false;
   document.querySelector('.method-picker').hidden = false;
-  // The 11.11 sale ends at the end of 11 November, Moscow time; regular prices come back on their own.
-  if (Date.now() >= Date.parse('2026-11-12T00:00:00+03:00')) {
-    document.querySelectorAll('[data-sale]').forEach(element => { element.hidden = true; });
-    document.querySelectorAll('[data-regular]').forEach(element => { element.hidden = false; });
-  }
   if (config.release?.ipa) document.querySelectorAll('[data-ipa-link]').forEach(link => { link.href = config.release.ipa; });
   if (config.release?.label) document.querySelectorAll('[data-release-label]').forEach(label => { label.textContent = config.release.label; });
   document.querySelectorAll('.step-visual:not([data-screenshot="iloader"])').forEach(showScreenshot);

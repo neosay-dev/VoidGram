@@ -3,9 +3,9 @@
 // Update this block when a new IPA is published. All other download links use latest.
 window.AYU_SITE = Object.freeze({
   release: {
-    label: '27.0.2 · 149 МБ',
-    ipa: 'https://github.com/neosay-dev/VoidGram/releases/download/build-88-branch/AyuGramm-IOS-27.0.2.ipa',
-    checkedOn: '2026-11-01',
+    label: '27.8.3 · 107 МБ',
+    ipa: 'https://github.com/neosay-dev/VoidGram/releases/download/v27.8.3/VoidGram-27.8.3.ipa',
+    checkedOn: '2026-11-15',
   },
   // A step accepts one screenshot or an array with labels for the image picker.
   // Online images keep their source link; the guide falls back to a diagram offline.
