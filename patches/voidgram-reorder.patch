@@ -1,0 +1,380 @@
+diff --git a/submodules/Display/Source/AyuSettingsVisibility.swift b/submodules/Display/Source/AyuSettingsVisibility.swift
+index 9809f9ba..e21c7cda 100644
+--- a/submodules/Display/Source/AyuSettingsVisibility.swift
++++ b/submodules/Display/Source/AyuSettingsVisibility.swift
+@@ -52,6 +52,39 @@ public enum AyuSettingsVisibility {
+         }
+     }
+ 
++    private static let orderKey = "ayu.appearance.settingsRowsOrder"
++
++    /// The rows' keys in the order chosen in Appearance+ ("Settings rows order"); empty: Telegram's own order.
++    public static var order: [String] {
++        get { return UserDefaults.standard.stringArray(forKey: orderKey) ?? [] }
++        set {
++            if newValue.isEmpty || newValue == self.rows.map({ $0.key }) {
++                UserDefaults.standard.removeObject(forKey: orderKey)
++            } else {
++                UserDefaults.standard.set(newValue, forKey: orderKey)
++            }
++            NotificationCenter.default.post(name: AyuAppearancePlus.didChangeNotification, object: nil)
++        }
++    }
++
++    /// The rows of one section in the chosen order. A row moves only inside its section; rows the list
++    /// doesn't name keep their place after the named ones.
++    public static func arranged<T>(section: Int, items: [T], id: (T) -> AnyHashable) -> [T] {
++        let order = self.order
++        guard !order.isEmpty else { return items }
++        let ranked = items.enumerated().map { index, item -> (Int, Int, T) in
++            let itemId = id(item)
++            let row = self.rows.first(where: { row in
++                row.section == section && (itemId == AnyHashable(Int(row.itemId)) || itemId == AnyHashable(row.itemId))
++            })
++            if let row, let rank = order.firstIndex(of: row.key) {
++                return (rank, index, item)
++            }
++            return (Int.max, index, item)
++        }
++        return ranked.sorted(by: { $0.0 != $1.0 ? $0.0 < $1.0 : $0.1 < $1.1 }).map { $0.2 }
++    }
++
+     /// Whether the Settings row at (section, item id) is hidden.
+     public static func isHidden(section: Int, itemId: AnyHashable) -> Bool {
+         let hidden = self.hiddenKeys
+diff --git a/submodules/Display/Source/AyuTabOrder.swift b/submodules/Display/Source/AyuTabOrder.swift
+new file mode 100644
+index 00000000..e5315f46
+--- /dev/null
++++ b/submodules/Display/Source/AyuTabOrder.swift
+@@ -0,0 +1,47 @@
++import Foundation
++
++/// The order of the tab bar's tabs, set in Appearance+ ("Tab order"). Tabs the list doesn't name
++/// (plugin tabs) stay just before Settings.
++public enum AyuTabOrder {
++    public static let defaultOrder: [String] = ["contacts", "calls", "chats", "news", "settings"]
++
++    private static let defaultsKey = "ayu.appearance.tabOrder"
++
++    /// Every known tab once: the saved order first, then any tab it lacks, in the default order.
++    public static var order: [String] {
++        get {
++            var result: [String] = []
++            for id in UserDefaults.standard.stringArray(forKey: defaultsKey) ?? [] where defaultOrder.contains(id) && !result.contains(id) {
++                result.append(id)
++            }
++            for id in defaultOrder where !result.contains(id) {
++                result.append(id)
++            }
++            return result
++        }
++        set {
++            if newValue == defaultOrder {
++                UserDefaults.standard.removeObject(forKey: defaultsKey)
++            } else {
++                UserDefaults.standard.set(newValue, forKey: defaultsKey)
++            }
++            NotificationCenter.default.post(name: AyuAppearancePlus.didChangeNotification, object: nil)
++        }
++    }
++
++    /// `items` in the chosen order; `id` names a tab, or is nil for a tab the list doesn't know.
++    public static func arranged<T>(_ items: [T], id: (T) -> String?) -> [T] {
++        let order = self.order
++        guard order != defaultOrder else {
++            return items
++        }
++        let settingsRank = Double(order.firstIndex(of: "settings") ?? order.count)
++        let ranked = items.enumerated().map { index, item -> (Double, Int, T) in
++            if let name = id(item), let rank = order.firstIndex(of: name) {
++                return (Double(rank), index, item)
++            }
++            return (settingsRank - 0.5, index, item)
++        }
++        return ranked.sorted(by: { $0.0 != $1.0 ? $0.0 < $1.0 : $0.1 < $1.1 }).map { $0.2 }
++    }
++}
+diff --git a/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
+index 888934bd..5db910e3 100644
+--- a/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
++++ b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
+@@ -7,6 +7,7 @@ import TelegramPresentationData
+ import PresentationDataUtils
+ import ItemListUI
+ import AccountContext
++import ChatListUI
+ 
+ // Settings → AyuGram → Appearance+: tab bar contents, glass renderer and the classic
+ // (pre-Liquid-Glass) design. Tab changes apply at once; glass and design after relaunch.
+@@ -23,7 +24,10 @@ private enum AyuAppearancePlusRow: Int32 {
+     case glowingReactions = 26
+     case swipeMenu = 27
+     case relaunchInfo = 30
++    case tabOrder = 5
++    case folderOrder = 6
+     case settingsRows = 35
++    case settingsOrder = 36
+     case reset = 41
+     case effectsHeader = 50
+     case effect = 51
+@@ -87,6 +91,20 @@ func ayuAppearancePlusController(context: AccountContext) -> ViewController {
+             push?(ayuSettingsVisibilityController(context: context))
+             return
+         }
++        if id == AyuAppearancePlusRow.tabOrder.rawValue || id == AyuAppearancePlusRow.settingsOrder.rawValue {
++            let data = context.sharedContext.currentPresentationData.with { $0 }
++            let russian = data.strings.baseLanguageCode.hasPrefix("ru")
++            let list = id == AyuAppearancePlusRow.tabOrder.rawValue ? ayuTabOrderController(russian: russian) : ayuSettingsRowsOrderController(russian: russian)
++            let navigation = UINavigationController(rootViewController: list)
++            navigation.overrideUserInterfaceStyle = data.theme.overallDarkAppearance ? .dark : .light
++            context.sharedContext.applicationBindings.presentNativeController(navigation)
++            return
++        }
++        if id == AyuAppearancePlusRow.folderOrder.rawValue {
++            // Telegram's own Chat Folders page: Edit there drags the folders.
++            push?(chatListFilterPresetListController(context: context, mode: .default))
++            return
++        }
+         if id == AyuAppearancePlusRow.slowMotion.rawValue {
+             let steps = AyuAppearancePlus.slowMotionSteps
+             let current = AyuAppearancePlus.slowMotionFactor
+@@ -140,6 +158,8 @@ func ayuAppearancePlusController(context: AccountContext) -> ViewController {
+             .toggle(1, AyuAppearancePlusRow.hideCalls.rawValue, symbol("phone.fill", 0x34C759), ru ? "Скрыть «Звонки»" : "Hide Calls", nil, AyuAppearancePlus.hideCallsTab),
+             .toggle(1, AyuAppearancePlusRow.hideTitles.rawValue, symbol("textformat", 0x5856D6), ru ? "Скрыть подписи вкладок" : "Hide tab titles", nil, AyuAppearancePlus.hideTabTitles),
+             .info(1, 4, ru ? "«Чаты» и «Настройки» скрыть нельзя. Подъём панели настраивается в разделе «Навигация и редактор»." : "Chats and Settings cannot be hidden. The bar's lift is in Navigation and composer."),
++            .link(1, AyuAppearancePlusRow.tabOrder.rawValue, symbol("arrow.left.arrow.right", 0x007AFF), ru ? "Порядок вкладок" : "Tab order", ""),
++            .link(1, AyuAppearancePlusRow.folderOrder.rawValue, symbol("folder.fill", 0x32ADE6), ru ? "Порядок папок" : "Folder order", ""),
+             .header(2, 10, ru ? "ЖИДКОЕ СТЕКЛО" : "LIQUID GLASS"),
+             .toggle(2, AyuAppearancePlusRow.telegramGlass.rawValue, symbol("drop.fill", 0x32ADE6), ru ? "Стекло Telegram" : "Telegram glass", ru ? (systemGlassAvailable ? "Выключено — системное стекло iOS" : "Системное стекло требует iOS 26") : (systemGlassAvailable ? "Off: the system iOS glass" : "System glass needs iOS 26"), AyuAppearancePlus.glassStyle == .telegram),
+             .header(3, 20, ru ? "ДИЗАЙН" : "DESIGN"),
+@@ -154,6 +174,7 @@ func ayuAppearancePlusController(context: AccountContext) -> ViewController {
+         }
+         entries.append(.header(4, 34, ru ? "НАСТРОЙКИ" : "SETTINGS"))
+         entries.append(.link(4, AyuAppearancePlusRow.settingsRows.rawValue, symbol("list.bullet.rectangle.fill", 0x8E8E93), ru ? "Пункты в Настройках" : "Settings rows", AyuSettingsVisibility.hiddenKeys.isEmpty ? "" : (ru ? "скрыто \(AyuSettingsVisibility.hiddenKeys.count)" : "\(AyuSettingsVisibility.hiddenKeys.count) hidden")))
++        entries.append(.link(4, AyuAppearancePlusRow.settingsOrder.rawValue, symbol("arrow.up.arrow.down", 0x34C759), ru ? "Порядок пунктов в Настройках" : "Settings rows order", AyuSettingsVisibility.order.isEmpty ? "" : (ru ? "изменён" : "changed")))
+         entries.append(.link(4, AyuAppearancePlusRow.reset.rawValue, symbol("arrow.counterclockwise", 0xFF3B30), ru ? "Сбросить оформление" : "Reset appearance", ""))
+         entries.append(.header(5, AyuAppearancePlusRow.effectsHeader.rawValue, ru ? "ЭФФЕКТЫ" : "EFFECTS"))
+         entries.append(.link(5, AyuAppearancePlusRow.effect.rawValue, symbol("snowflake", 0x5AC8FA), ru ? "Эффект поверх Telegram" : "Effect over Telegram", AyuOverlayEffects.effect.title(ru)))
+diff --git a/submodules/SettingsUI/Sources/AyuReorderController.swift b/submodules/SettingsUI/Sources/AyuReorderController.swift
+new file mode 100644
+index 00000000..60a7b90a
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuReorderController.swift
+@@ -0,0 +1,164 @@
++import Foundation
++import UIKit
++
++/// A list whose rows are dragged into a new order, with the system's own reordering (the grip at the
++/// right, rows making room as one is carried). A row moves only inside its section.
++final class AyuReorderController: UITableViewController {
++    struct Row {
++        let key: String
++        let title: String
++    }
++    struct Section {
++        let title: String?
++        var rows: [Row]
++    }
++
++    private var sections: [Section]
++    private let initial: [Section]
++    private let russian: Bool
++    private let footer: String?
++    private let changed: ([String]) -> Void
++
++    /// `initial` is the order "Reset" returns to; `changed` gets every row's key, section after section.
++    init(title: String, sections: [Section], initial: [Section], footer: String?, russian: Bool, changed: @escaping ([String]) -> Void) {
++        self.sections = sections
++        self.initial = initial
++        self.footer = footer
++        self.russian = russian
++        self.changed = changed
++        super.init(style: .insetGrouped)
++        self.title = title
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        self.tableView.register(UITableViewCell.self, forCellReuseIdentifier: "row")
++        self.tableView.isEditing = true
++        self.tableView.allowsSelectionDuringEditing = false
++        self.navigationItem.leftBarButtonItem = UIBarButtonItem(title: self.russian ? "Сбросить" : "Reset", style: .plain, target: self, action: #selector(self.reset))
++        self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
++    }
++
++    @objc private func done() {
++        self.dismiss(animated: true)
++    }
++
++    @objc private func reset() {
++        self.sections = self.initial
++        self.tableView.reloadData()
++        self.changed(self.sections.flatMap { $0.rows.map { $0.key } })
++    }
++
++    override func numberOfSections(in tableView: UITableView) -> Int {
++        return self.sections.count
++    }
++
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
++        return self.sections[section].rows.count
++    }
++
++    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
++        return self.sections[section].title
++    }
++
++    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
++        return section == self.sections.count - 1 ? self.footer : nil
++    }
++
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        let cell = tableView.dequeueReusableCell(withIdentifier: "row", for: indexPath)
++        cell.textLabel?.text = self.sections[indexPath.section].rows[indexPath.row].title
++        cell.textLabel?.font = .preferredFont(forTextStyle: .body)
++        cell.textLabel?.adjustsFontForContentSizeCategory = true
++        cell.showsReorderControl = true
++        cell.selectionStyle = .none
++        return cell
++    }
++
++    override func tableView(_ tableView: UITableView, editingStyleForRowAt indexPath: IndexPath) -> UITableViewCell.EditingStyle {
++        return .none
++    }
++
++    override func tableView(_ tableView: UITableView, shouldIndentWhileEditingRowAt indexPath: IndexPath) -> Bool {
++        return false
++    }
++
++    override func tableView(_ tableView: UITableView, canMoveRowAt indexPath: IndexPath) -> Bool {
++        return self.sections[indexPath.section].rows.count > 1
++    }
++
++    override func tableView(_ tableView: UITableView, targetIndexPathForMoveFromRowAt sourceIndexPath: IndexPath, toProposedIndexPath proposedDestinationIndexPath: IndexPath) -> IndexPath {
++        if proposedDestinationIndexPath.section == sourceIndexPath.section {
++            return proposedDestinationIndexPath
++        }
++        // Carried past its section's edge: the row stops at that edge.
++        let last = self.sections[sourceIndexPath.section].rows.count - 1
++        return IndexPath(row: proposedDestinationIndexPath.section < sourceIndexPath.section ? 0 : last, section: sourceIndexPath.section)
++    }
++
++    override func tableView(_ tableView: UITableView, moveRowAt sourceIndexPath: IndexPath, to destinationIndexPath: IndexPath) {
++        guard sourceIndexPath.section == destinationIndexPath.section else {
++            return
++        }
++        let row = self.sections[sourceIndexPath.section].rows.remove(at: sourceIndexPath.row)
++        self.sections[sourceIndexPath.section].rows.insert(row, at: destinationIndexPath.row)
++        self.changed(self.sections.flatMap { $0.rows.map { $0.key } })
++    }
++}
++
++/// Appearance+ > Tab order.
++func ayuTabOrderController(russian: Bool) -> UIViewController {
++    let titles: [String: (String, String)] = [
++        "contacts": ("Контакты", "Contacts"), "calls": ("Звонки", "Calls"), "chats": ("Чаты", "Chats"),
++        "news": ("Новости", "News"), "settings": ("Настройки", "Settings")
++    ]
++    let rows: ([String]) -> [AyuReorderController.Row] = { keys in
++        return keys.map { key in
++            AyuReorderController.Row(key: key, title: russian ? (titles[key]?.0 ?? key) : (titles[key]?.1 ?? key))
++        }
++    }
++    return AyuReorderController(
++        title: russian ? "Порядок вкладок" : "Tab order",
++        sections: [AyuReorderController.Section(title: nil, rows: rows(AyuTabOrder.order))],
++        initial: [AyuReorderController.Section(title: nil, rows: rows(AyuTabOrder.defaultOrder))],
++        footer: russian ? "Потяни за ручку справа. Порядок меняется сразу; скрытые вкладки остаются скрытыми, вкладки плагинов стоят перед «Настройками»." : "Drag the grip at the right. The order changes at once; hidden tabs stay hidden, plugin tabs sit before Settings.",
++        russian: russian,
++        changed: { AyuTabOrder.order = $0 }
++    )
++}
++
++/// Appearance+ > Settings rows order: the main Settings page's rows, grouped as the page groups them.
++func ayuSettingsRowsOrderController(russian: Bool) -> UIViewController {
++    let sections: ([String]) -> [AyuReorderController.Section] = { order in
++        var result: [(Int, [AyuSettingsVisibility.Row])] = []
++        for row in AyuSettingsVisibility.rows {
++            if let index = result.firstIndex(where: { $0.0 == row.section }) {
++                result[index].1.append(row)
++            } else {
++                result.append((row.section, [row]))
++            }
++        }
++        return result.map { _, rows in
++            let sorted = rows.enumerated().sorted(by: { lhs, rhs in
++                let left = order.firstIndex(of: lhs.element.key) ?? (order.count + lhs.offset)
++                let right = order.firstIndex(of: rhs.element.key) ?? (order.count + rhs.offset)
++                return left < right
++            }).map { $0.element }
++            return AyuReorderController.Section(title: nil, rows: sorted.map { row in
++                AyuReorderController.Row(key: row.key, title: russian ? row.titleRu : row.titleEn)
++            })
++        }
++    }
++    return AyuReorderController(
++        title: russian ? "Порядок пунктов" : "Rows order",
++        sections: sections(AyuSettingsVisibility.order),
++        initial: sections([]),
++        footer: russian ? "Пункт двигается внутри своей группы, как группы стоят на странице «Настройки»." : "A row moves inside its group, as the groups stand on the Settings page.",
++        russian: russian,
++        changed: { AyuSettingsVisibility.order = $0 }
++    )
++}
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
+index e6780b8c..b0955d08 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
+@@ -365,7 +365,7 @@ func settingsItems(data: PeerInfoScreenData?, context: AccountContext, presentat
+     for section in SettingsSection.allCases {
+         // AyuGram Appearance+: rows the user chose to hide.
+         if let sectionItems = items[section]?.filter({ !AyuSettingsVisibility.isHidden(section: section.rawValue, itemId: $0.id) }), !sectionItems.isEmpty {
+-            result.append((section, sectionItems))
++            result.append((section, AyuSettingsVisibility.arranged(section: section.rawValue, items: sectionItems, id: { $0.id })))
+         }
+     }
+     return result
+diff --git a/submodules/TelegramUI/Sources/TelegramRootController.swift b/submodules/TelegramUI/Sources/TelegramRootController.swift
+index 356586f6..3e8618f0 100644
+--- a/submodules/TelegramUI/Sources/TelegramRootController.swift
++++ b/submodules/TelegramUI/Sources/TelegramRootController.swift
+@@ -281,9 +281,17 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
+         accountSettingsController.parentController = self
+         controllers.append(contentsOf: self.ayuPluginTabs())
+         controllers.append(accountSettingsController)
++        controllers = AyuTabOrder.arranged(controllers, id: { controller in
++            if controller === contactsController { return "contacts" }
++            if controller === callListController { return "calls" }
++            if controller === chatListController { return "chats" }
++            if controller === newsController { return "news" }
++            if controller === accountSettingsController { return "settings" }
++            return nil
++        })
+                 
+         let chatsIndex = controllers.firstIndex(where: { $0 === chatListController }) ?? 0
+-        tabBarController.setControllers(controllers, selectedIndex: restoreSettignsController != nil ? (controllers.count - 1) : chatsIndex)
++        tabBarController.setControllers(controllers, selectedIndex: restoreSettignsController != nil ? (controllers.firstIndex(where: { $0 === accountSettingsController }) ?? (controllers.count - 1)) : chatsIndex)
+         
+         self.contactsController = contactsController
+         self.callListController = callListController
+@@ -332,6 +340,15 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
+         }
+         controllers.append(contentsOf: self.ayuPluginTabs())
+         controllers.append(self.accountSettingsController!)
++        controllers = AyuTabOrder.arranged(controllers, id: { [weak self] controller in
++            guard let self else { return nil }
++            if controller === self.contactsController { return "contacts" }
++            if controller === self.callListController { return "calls" }
++            if controller === self.chatListController { return "chats" }
++            if controller === self.newsController { return "news" }
++            if controller === self.accountSettingsController { return "settings" }
++            return nil
++        })
+ 
+         // A removed selected tab would otherwise fall back to index 0 (Contacts): select Chats instead.
+         var selectedIndex: Int?
