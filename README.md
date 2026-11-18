@@ -4,6 +4,10 @@ VoidGram (formerly AyuGramm-IOS) is an unofficial Telegram client for iOS.
 
 <img src="assets/branding/voidgram/VoidGram-icon.svg" width="128" alt="VoidGram logo">
 
+**⚠️ YOU MUST READ THE [USER AGREEMENT](USER_AGREEMENT.md) BEFORE USING VOIDGRAM. If you do not read it, that is not our fault — it is the fault of the users who did not read it.**
+
+**⚠️ ВЫ ОБЯЗАНЫ ПРОЧИТАТЬ [ПОЛЬЗОВАТЕЛЬСКОЕ СОГЛАШЕНИЕ](USER_AGREEMENT.md) ПЕРЕД ИСПОЛЬЗОВАНИЕМ VOIDGRAM. Если вы его не прочитали — это не наша вина, а вина пользователей, которые его не прочитали.**
+
 The maintainer reports testing the app on an iPhone.
 
 An unofficial native Telegram-iOS adaptation with AyuGram-inspired features. [Release 3](https://github.com/neosay-dev/VoidGram/releases/tag/v0.3.0-preview) is available as **AyuGramm-IOS.ipa**. See the [complete Release 3 changelog](docs/releases/v0.3.0.md) for additions, fixes, installation and verification status. [Previous releases](https://github.com/neosay-dev/VoidGram/releases) remain available.
@@ -144,7 +148,7 @@ Based on [Telegram-iOS](https://github.com/TelegramMessenger/Telegram-iOS). Feat
 
 Planning, feature scope, limitations and verification are recorded in the accompanying Markdown documents. Read their current status before treating a feature as tested.
 
-The authors are not responsible for any crashes, errors, or other issues. By installing the client, you acknowledge that you are aware of all the rules for using the application.
+The authors are not responsible for any crashes, errors, or other issues. By installing the client, you acknowledge that you are aware of all the rules for using the application. See the [User Agreement](USER_AGREEMENT.md): the authors take no responsibility for preserving deleted or view-once messages, and you must tell the people you talk to that you use VoidGram.
 
 Camera Flip native adapter and the supplied five-plugin dependency inventory: [bridge status](docs/ANDROID_PLUGIN_BRIDGES.md). Source changes require a new native build; the published IPA is unchanged.
 
