@@ -263,5 +263,9 @@
   "submodules/Display/Source/AyuNameStyling.swift",
   "submodules/SettingsUI/Sources/AyuAvatarFramePicker.swift",
   "submodules/TelegramUI/Components/Chat/ChatMessageSwipeToReplyNode/Sources/AyuSwipeMenu.swift",
-  "submodules/TelegramUI/Sources/ChatControllerAyuSwipeMenu.swift"
+  "submodules/TelegramUI/Sources/ChatControllerAyuSwipeMenu.swift",
+  "submodules/AuthorizationUI/Sources/AyuAgreementView.swift",
+  "submodules/TelegramCore/Sources/AyuGram/AyuVideoNoteFlash.swift",
+  "submodules/TelegramCore/Sources/AyuGram/AyuVoidGramNotice.swift",
+  "submodules/TelegramUI/Sources/AyuVoidGramNoticeSender.swift"
 ]

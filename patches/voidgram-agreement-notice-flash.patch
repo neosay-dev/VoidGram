@@ -1,0 +1,895 @@
+diff --git a/submodules/AuthorizationUI/Sources/AuthorizationSequencePhoneEntryController.swift b/submodules/AuthorizationUI/Sources/AuthorizationSequencePhoneEntryController.swift
+index 5da5f202..8ad39430 100644
+--- a/submodules/AuthorizationUI/Sources/AuthorizationSequencePhoneEntryController.swift
++++ b/submodules/AuthorizationUI/Sources/AuthorizationSequencePhoneEntryController.swift
+@@ -355,19 +355,38 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
+     }
+     
+     private var animatingIn = false
++    
++    /// Sign-in only (not Change Number): the VoidGram agreement covers this screen until it is accepted.
++    private var ayuNeedsAgreement: Bool {
++        return self.account != nil && !AyuAgreementView.isAccepted
++    }
++    
++    private func ayuActivateInput() {
++        if self.ayuNeedsAgreement {
++            return
++        }
++        self.controllerNode.activateInput()
++    }
++    
+     override public func viewWillAppear(_ animated: Bool) {
+         super.viewWillAppear(animated)
+         
++        if self.ayuNeedsAgreement {
++            AyuAgreementView.presentIfNeeded(in: self.view, accepted: { [weak self] in
++                self?.controllerNode.activateInput()
++            })
++        }
++        
+         if self.shouldAnimateIn {
+             self.animatingIn = true
+             if let (buttonFrame, buttonTitle, animationSnapshot, textSnapshot) = self.transitionInArguments {
+                 self.controllerNode.willAnimateIn(buttonFrame: buttonFrame, buttonTitle: buttonTitle, animationSnapshot: animationSnapshot, textSnapshot: textSnapshot)
+             }
+             Queue.mainQueue().justDispatch {
+-                self.controllerNode.activateInput()
++                self.ayuActivateInput()
+             }
+         } else {
+-            self.controllerNode.activateInput()
++            self.ayuActivateInput()
+         }
+     }
+     
+@@ -375,7 +394,7 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
+         super.viewDidAppear(animated)
+         
+         if !self.animatingIn {
+-            self.controllerNode.activateInput()
++            self.ayuActivateInput()
+         }
+     }
+     
+diff --git a/submodules/AuthorizationUI/Sources/AyuAgreementView.swift b/submodules/AuthorizationUI/Sources/AyuAgreementView.swift
+new file mode 100644
+index 00000000..d018a49e
+--- /dev/null
++++ b/submodules/AuthorizationUI/Sources/AyuAgreementView.swift
+@@ -0,0 +1,220 @@
++import Foundation
++import UIKit
++import Display
++
++/// VoidGram's user agreement. It covers the phone number screen until the user scrolls the text
++/// to the very end and taps "I agree"; an account that was already signed in before this screen
++/// existed sees it once over the app (AppDelegate). The text mirrors USER_AGREEMENT.md.
++public final class AyuAgreementView: UIView, UIScrollViewDelegate {
++    private static let acceptedKey = "voidgram.agreement.accepted.v2"
++
++    public static var isAccepted: Bool {
++        return UserDefaults.standard.bool(forKey: acceptedKey)
++    }
++
++    /// Covers `container` with the agreement unless it was accepted. `accepted` runs after the tap.
++    @discardableResult
++    public static func presentIfNeeded(in container: UIView, accepted: (() -> Void)? = nil) -> AyuAgreementView? {
++        if isAccepted {
++            return nil
++        }
++        if let existing = container.subviews.first(where: { $0 is AyuAgreementView }) as? AyuAgreementView {
++            container.bringSubviewToFront(existing)
++            return existing
++        }
++        let view = AyuAgreementView(frame: container.bounds)
++        view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
++        view.accepted = accepted
++        container.addSubview(view)
++        return view
++    }
++
++    private let ru: Bool
++    private let titleLabel = UILabel()
++    private let scrollView = UIScrollView()
++    private let textLabel = UILabel()
++    private let hintLabel = UILabel()
++    private let button = UIButton(type: .custom)
++    private var reachedEnd = false
++    private var accepted: (() -> Void)?
++
++    override init(frame: CGRect) {
++        self.ru = Locale.preferredLanguages.first?.hasPrefix("ru") ?? false
++        super.init(frame: frame)
++
++        self.backgroundColor = .black
++
++        self.titleLabel.text = self.ru ? "Пользовательское соглашение" : "User Agreement"
++        self.titleLabel.font = Font.semibold(22.0)
++        self.titleLabel.textColor = .white
++        self.titleLabel.textAlignment = .center
++        self.titleLabel.numberOfLines = 0
++        self.addSubview(self.titleLabel)
++
++        self.scrollView.delegate = self
++        self.scrollView.indicatorStyle = .white
++        self.scrollView.alwaysBounceVertical = true
++        self.addSubview(self.scrollView)
++
++        self.textLabel.numberOfLines = 0
++        self.textLabel.attributedText = AyuAgreementView.attributedText(ru: self.ru)
++        self.scrollView.addSubview(self.textLabel)
++
++        self.hintLabel.text = self.ru ? "Долистайте соглашение до конца, чтобы принять его" : "Scroll the agreement to the end to accept it"
++        self.hintLabel.font = Font.regular(13.0)
++        self.hintLabel.textColor = UIColor(white: 1.0, alpha: 0.55)
++        self.hintLabel.textAlignment = .center
++        self.hintLabel.numberOfLines = 0
++        self.addSubview(self.hintLabel)
++
++        self.button.setTitle(self.ru ? "Согласиться" : "I agree", for: .normal)
++        self.button.titleLabel?.font = Font.semibold(17.0)
++        self.button.setTitleColor(.black, for: .normal)
++        self.button.backgroundColor = .white
++        self.button.layer.cornerRadius = 14.0
++        self.button.addTarget(self, action: #selector(self.acceptPressed), for: .touchUpInside)
++        self.addSubview(self.button)
++        self.updateButton()
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    private static func attributedText(ru: Bool) -> NSAttributedString {
++        let result = NSMutableAttributedString()
++        let paragraph = NSMutableParagraphStyle()
++        paragraph.lineSpacing = 3.0
++        paragraph.paragraphSpacing = 10.0
++        let body: [NSAttributedString.Key: Any] = [.font: Font.regular(15.0), .foregroundColor: UIColor(white: 1.0, alpha: 0.86), .paragraphStyle: paragraph]
++        let bold: [NSAttributedString.Key: Any] = [.font: Font.semibold(15.0), .foregroundColor: UIColor.white, .paragraphStyle: paragraph]
++        for (index, block) in agreementBlocks(ru: ru).enumerated() {
++            if index != 0 {
++                result.append(NSAttributedString(string: "\n", attributes: body))
++            }
++            result.append(NSAttributedString(string: block.0, attributes: block.1 ? bold : body))
++        }
++        return result
++    }
++
++    /// (text, is heading or emphasis)
++    private static func agreementBlocks(ru: Bool) -> [(String, Bool)] {
++        if ru {
++            return [
++                ("Устанавливая, запуская или иным образом используя VoidGram, вы подтверждаете, что полностью прочитали это соглашение, поняли его и принимаете все его условия. Если вы не согласны — не используйте приложение.", true),
++                ("1. Общие положения", true),
++                ("1.1. VoidGram — неофициальный клиент Telegram. Он не связан с Telegram FZ-LLC, Telegram Messenger Inc. или авторами AyuGram и не одобрен ими.", false),
++                ("1.2. Приложение распространяется «как есть», без каких-либо гарантий — явных или подразумеваемых.", false),
++                ("1.3. Непрочтение соглашения не освобождает от его условий. Если вы его не прочитали, ответственность за это и за все последствия лежит на вас, а не на авторах VoidGram.", false),
++                ("2. Законное использование", true),
++                ("2.1. Я обязуюсь не использовать VoidGram в незаконных целях: для слежки за людьми без их ведома, преследования, шантажа, мошенничества, рассылки спама, распространения чужих личных данных, интимных материалов без согласия или любого другого контента, запрещённого законом.", false),
++                ("2.2. Я сам отвечаю за соблюдение законов своей страны о защите персональных данных, тайне переписки и приватности, а также Условий использования Telegram.", false),
++                ("3. Удалённые и одноразовые сообщения", true),
++                ("3.1. Авторы VoidGram НИГДЕ и НИ ПРИ КАКИХ обстоятельствах НЕ берут на себя ответственность за сохранение удалённых сообщений, одноразовых (самоуничтожающихся) сообщений и медиа, истории правок и любых других данных.", true),
++                ("3.2. Функции сохранения работают «как есть». Данные могут не сохраниться или пропасть в любой момент (ошибки, обновления, переустановка, очистка архива, ограничения iOS).", false),
++                ("4. Предупреждение собеседника", true),
++                ("4.1. Я обязан предупредить друга или любого человека, с которым общаюсь, что использую VoidGram: клиент может сохранять удалённые и одноразовые сообщения и скрывать статус «в сети», прочтение и набор текста.", false),
++                ("4.2. Поэтому в каждом личном чате с человеком VoidGram один раз отправляет и закрепляет сообщение: «Я использую VoidGram — я не гарантирую шифрование нашей переписки и не советую кидать интимные фото или что-то ещё.» Оно отправляется, когда я впервые пишу в этот чат из VoidGram. Пока я пользуюсь VoidGram, это сообщение нельзя удалить или открепить; если его открепят, VoidGram закрепит его снова.", false),
++                ("4.3. Вся ответственность за неуведомление собеседника и за его претензии лежит на мне.", false),
++                ("5. Ограничение ответственности", true),
++                ("5.1. Авторы не отвечают за сбои, ошибки, потерю данных, блокировку или ограничение аккаунта Telegram и любой прямой или косвенный ущерб от использования приложения.", false),
++                ("5.2. Некоторые функции (например, Ghost Mode) противоречат Условиям использования Telegram API. Вы используете их на свой страх и риск.", false),
++                ("5.3. Сторонние плагины вы устанавливаете сами; авторы не отвечают за них.", false),
++                ("6. Изменения", true),
++                ("6.1. Авторы могут менять соглашение в любое время. Актуальная версия — файл USER_AGREEMENT.md в репозитории VoidGram. Продолжая пользоваться приложением, вы принимаете актуальную версию.", false),
++                ("Нажимая «Согласиться», я подтверждаю, что прочитал соглашение целиком, не собираюсь использовать VoidGram незаконно и принимаю все условия выше.", true)
++            ]
++        } else {
++            return [
++                ("By installing, launching or otherwise using VoidGram you confirm that you have read this agreement in full, understood it and accept all of its terms. If you do not agree, do not use the app.", true),
++                ("1. General", true),
++                ("1.1. VoidGram is an unofficial Telegram client. It is not affiliated with or endorsed by Telegram FZ-LLC, Telegram Messenger Inc. or the AyuGram authors.", false),
++                ("1.2. The app is provided \"as is\", without warranty of any kind, express or implied.", false),
++                ("1.3. Not having read this agreement does not exempt you from it. If you did not read it, that is your responsibility, not the fault of the VoidGram authors.", false),
++                ("2. Lawful use", true),
++                ("2.1. I will not use VoidGram for anything illegal: watching people without their knowledge, stalking, blackmail, fraud, spam, spreading other people's personal data or intimate material without consent, or any other content the law forbids.", false),
++                ("2.2. I am responsible for following my country's laws on personal data, private correspondence and privacy, and Telegram's Terms of Service.", false),
++                ("3. Deleted and view-once messages", true),
++                ("3.1. The VoidGram authors NOWHERE and under NO circumstances take responsibility for preserving deleted messages, view-once / self-destructing messages and media, edit history or any other data.", true),
++                ("3.2. Saving features work \"as is\". Data may not be saved or may be lost at any time (bugs, updates, reinstalling, clearing the archive, iOS limits).", false),
++                ("4. Telling the other person", true),
++                ("4.1. I must tell my friend or anyone I talk to that I use VoidGram: the client can keep deleted and view-once messages and hide online status, read receipts and typing.", false),
++                ("4.2. That is why VoidGram sends and pins one message in every private chat with a person: \"I use VoidGram — I do not guarantee the encryption of our conversation and do not recommend sending intimate photos or anything else.\" It is sent the first time I write in that chat from VoidGram. While I use VoidGram, it cannot be deleted or unpinned; if it is unpinned, VoidGram pins it again.", false),
++                ("4.3. I alone am responsible for not telling the other person and for any claims they make.", false),
++                ("5. Limitation of liability", true),
++                ("5.1. The authors are not liable for crashes, errors, data loss, Telegram account bans or restrictions, or any direct or indirect damage from using the app.", false),
++                ("5.2. Some features (e.g. Ghost Mode) conflict with the Telegram API Terms. You use them at your own risk.", false),
++                ("5.3. You install third-party plugins yourself; the authors are not responsible for them.", false),
++                ("6. Changes", true),
++                ("6.1. The authors may change this agreement at any time. The current version is USER_AGREEMENT.md in the VoidGram repository. Continuing to use the app means you accept the current version.", false),
++                ("By tapping \"I agree\" I confirm that I have read the whole agreement, will not use VoidGram illegally and accept all of the terms above.", true)
++            ]
++        }
++    }
++
++    private func updateButton() {
++        self.button.isEnabled = self.reachedEnd
++        self.button.alpha = self.reachedEnd ? 1.0 : 0.35
++        self.hintLabel.alpha = self.reachedEnd ? 0.0 : 1.0
++    }
++
++    private func checkReachedEnd() {
++        if self.reachedEnd || self.scrollView.bounds.height <= 0.0 {
++            return
++        }
++        let bottom = self.scrollView.contentOffset.y + self.scrollView.bounds.height - self.scrollView.adjustedContentInset.bottom
++        if bottom >= self.scrollView.contentSize.height - 4.0 {
++            self.reachedEnd = true
++            UIView.animate(withDuration: 0.2, animations: {
++                self.updateButton()
++            })
++        }
++    }
++
++    public func scrollViewDidScroll(_ scrollView: UIScrollView) {
++        self.checkReachedEnd()
++    }
++
++    @objc private func acceptPressed() {
++        guard self.reachedEnd else {
++            return
++        }
++        UserDefaults.standard.set(true, forKey: AyuAgreementView.acceptedKey)
++        let accepted = self.accepted
++        UIView.animate(withDuration: 0.25, animations: {
++            self.alpha = 0.0
++        }, completion: { _ in
++            self.removeFromSuperview()
++            accepted?()
++        })
++    }
++
++    override public func layoutSubviews() {
++        super.layoutSubviews()
++
++        let insets = self.safeAreaInsets
++        let side: CGFloat = 20.0
++        let width = self.bounds.width - side * 2.0 - insets.left - insets.right
++        let left = side + insets.left
++
++        let titleSize = self.titleLabel.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
++        self.titleLabel.frame = CGRect(x: left, y: insets.top + 16.0, width: width, height: ceil(titleSize.height))
++
++        let buttonHeight: CGFloat = 50.0
++        let buttonY = self.bounds.height - max(insets.bottom, 16.0) - 8.0 - buttonHeight
++        self.button.frame = CGRect(x: left, y: buttonY, width: width, height: buttonHeight)
++
++        let hintSize = self.hintLabel.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
++        self.hintLabel.frame = CGRect(x: left, y: buttonY - 8.0 - ceil(hintSize.height), width: width, height: ceil(hintSize.height))
++
++        let scrollTop = self.titleLabel.frame.maxY + 14.0
++        let scrollBottom = self.hintLabel.frame.minY - 10.0
++        self.scrollView.frame = CGRect(x: left, y: scrollTop, width: width, height: max(0.0, scrollBottom - scrollTop))
++        let textSize = self.textLabel.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
++        self.textLabel.frame = CGRect(x: 0.0, y: 0.0, width: width, height: ceil(textSize.height))
++        self.scrollView.contentSize = CGSize(width: width, height: ceil(textSize.height) + 8.0)
++
++        // On a large screen the whole text may fit: then there is nothing to scroll.
++        self.checkReachedEnd()
++    }
++}
+diff --git a/submodules/SettingsUI/Sources/AyuChatOptionsController.swift b/submodules/SettingsUI/Sources/AyuChatOptionsController.swift
+index 99cbe6ef..0b75f4ac 100644
+--- a/submodules/SettingsUI/Sources/AyuChatOptionsController.swift
++++ b/submodules/SettingsUI/Sources/AyuChatOptionsController.swift
+@@ -26,6 +26,7 @@ private struct AyuOptionsArguments {
+     let openRule: (Int) -> Void
+     let addRule: () -> Void
+     let clear: () -> Void
++    let pickFlashColor: () -> Void
+ }
+ 
+ private enum AyuOptionsEntry: ItemListNodeEntry {
+@@ -37,17 +38,18 @@ private enum AyuOptionsEntry: ItemListNodeEntry {
+     case addRule(Int32, String)
+     case clear(Int32, String)
+     case info(Int32, Int32, String)
++    case flashColor(Int32, Int32, String, String)
+ 
+     var section: ItemListSectionId {
+         switch self {
+-        case let .header(section, _, _), let .toggle(section, _, _, _, _), let .chat(section, _, _), let .rule(section, _, _), let .addRule(section, _), let .clear(section, _), let .info(section, _, _):
++        case let .header(section, _, _), let .toggle(section, _, _, _, _), let .chat(section, _, _), let .rule(section, _, _), let .addRule(section, _), let .clear(section, _), let .info(section, _, _), let .flashColor(section, _, _, _):
+             return section
+         }
+     }
+ 
+     var stableId: Int32 {
+         switch self {
+-        case let .header(_, id, _), let .toggle(_, id, _, _, _), let .chat(_, id, _), let .info(_, id, _):
++        case let .header(_, id, _), let .toggle(_, id, _, _, _), let .chat(_, id, _), let .info(_, id, _), let .flashColor(_, id, _, _):
+             return id
+         case let .rule(_, index, _):
+             return 1000 + Int32(index)
+@@ -69,6 +71,7 @@ private enum AyuOptionsEntry: ItemListNodeEntry {
+         case let (.addRule(ls, lt), .addRule(rs, rt)): return ls == rs && lt == rt
+         case let (.clear(ls, lt), .clear(rs, rt)): return ls == rs && lt == rt
+         case let (.info(ls, li, lt), .info(rs, ri, rt)): return ls == rs && li == ri && lt == rt
++        case let (.flashColor(ls, li, lt, lv), .flashColor(rs, ri, rt, rv)): return ls == rs && li == ri && lt == rt && lv == rv
+         default: return false
+         }
+     }
+@@ -91,6 +94,8 @@ private enum AyuOptionsEntry: ItemListNodeEntry {
+             return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: title, kind: .destructive, alignment: .natural, sectionId: self.section, style: .blocks, action: arguments.clear)
+         case let .info(_, _, text):
+             return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
++        case let .flashColor(_, _, title, value):
++            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: title, label: value, sectionId: self.section, style: .blocks, action: { arguments.pickFlashColor() })
+         }
+     }
+ }
+@@ -103,6 +108,9 @@ public func ayuChatOptionsController(context: AccountContext, regex: Bool, initi
+     var presentError: ((String) -> Void)?
+     var confirmClear: (() -> Void)?
+     var editRule: ((Int?, String) -> Void)?
++    var pickFlashColor: (() -> Void)?
++    // The flash colour lives in UserDefaults; bump this to redraw the row.
++    let flashColorRevision = ValuePromise<Int>(0, ignoreRepeated: false)
+     let ruleIcons: [Int32: UIImage?] = [
+         0: AyuSettingsIcons.glyph("AyuGram/Filter", color: UIColor(rgb: 0xFF3B30), side: 20.0),
+         1: AyuSettingsIcons.symbol("bubble.left.and.bubble.right.fill", color: UIColor(rgb: 0x007AFF)),
+@@ -139,10 +147,10 @@ public func ayuChatOptionsController(context: AccountContext, regex: Bool, initi
+         editRule?(index, patterns[index])
+     }, addRule: {
+         editRule?(nil, "")
+-    }, clear: { confirmClear?() })
+-    let signal = combineLatest(context.sharedContext.presentationData, store.signal)
++    }, clear: { confirmClear?() }, pickFlashColor: { pickFlashColor?() })
++    let signal = combineLatest(context.sharedContext.presentationData, store.signal, flashColorRevision.get())
+     |> deliverOnMainQueue
+-    |> map { presentationData, settings -> (ItemListControllerState, (ItemListNodeState, Any)) in
++    |> map { presentationData, settings, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+         var entries: [AyuOptionsEntry] = []
+         if regex {
+@@ -179,6 +187,8 @@ public func ayuChatOptionsController(context: AccountContext, regex: Bool, initi
+             entries.append(.toggle(3, 30, nil, AyuStrings.previewVideoNotes.text(ru), media.previewRound))
+             entries.append(.chat(3, 31, chatPreview([ChatPreviewMessageItem(outgoing: true, reply: nil, text: "", nameColor: .preset(.blue), backgroundEmojiId: nil, ayuMedia: .videoNote)], nil)))
+             entries.append(.info(3, 32, AyuStrings.previewRecordingNotSentOnceReview.text(ru)))
++            entries.append(.flashColor(4, 40, ru ? "Цвет вспышки кружков" : "Video message flash colour", AyuVideoNoteFlash.current.title(ru: ru)))
++            entries.append(.info(4, 41, ru ? "Цвет экрана, который подсвечивает лицо при записи кружка на фронтальную камеру со вспышкой. Долгое нажатие на кнопку вспышки во время записи переключает цвет." : "The screen colour that lights your face when recording a video message with the front camera and the flash on. A long press on the flash button while recording switches the colour."))
+         }
+         let data = ItemListPresentationData(presentationData)
+         let title = regex ? AyuStrings.filters.text(ru) : AyuStrings.sendingOptions.text(ru)
+@@ -232,6 +242,20 @@ public func ayuChatOptionsController(context: AccountContext, regex: Bool, initi
+         alert.addAction(UIAlertAction(title: AyuStrings.cancel.text(ru), style: .cancel))
+         context.sharedContext.applicationBindings.presentNativeController(alert)
+     }
++    pickFlashColor = {
++        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let sheet = UIAlertController(title: ru ? "Цвет вспышки кружков" : "Video message flash colour", message: nil, preferredStyle: .alert)
++        let current = AyuVideoNoteFlash.current
++        for option in AyuVideoNoteFlash.options {
++            let title = option == current ? "✓ " + option.title(ru: ru) : option.title(ru: ru)
++            sheet.addAction(UIAlertAction(title: title, style: .default, handler: { _ in
++                AyuVideoNoteFlash.current = option
++                flashColorRevision.set(Int.random(in: 1 ... Int.max))
++            }))
++        }
++        sheet.addAction(UIAlertAction(title: AyuStrings.cancel.text(ru), style: .cancel))
++        context.sharedContext.applicationBindings.presentNativeController(sheet)
++    }
+     confirmClear = { [weak controller] in
+         let data = context.sharedContext.currentPresentationData.with { $0 }
+         let ru = data.strings.baseLanguageCode.hasPrefix("ru")
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuVideoNoteFlash.swift b/submodules/TelegramCore/Sources/AyuGram/AyuVideoNoteFlash.swift
+new file mode 100644
+index 00000000..24c851b1
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuVideoNoteFlash.swift
+@@ -0,0 +1,39 @@
++import Foundation
++
++/// Colour of the screen flash used by the front camera while recording a round video message
++/// (VideoMessageCameraScreen). Chosen in Settings → VoidGram → Sending Options.
++public enum AyuVideoNoteFlash {
++    public struct Option: Equatable {
++        public let id: String
++        public let rgb: UInt32
++        public let titleRu: String
++        public let titleEn: String
++
++        public func title(ru: Bool) -> String {
++            return ru ? self.titleRu : self.titleEn
++        }
++    }
++
++    public static let options: [Option] = [
++        Option(id: "white", rgb: 0xffffff, titleRu: "Белый", titleEn: "White"),
++        Option(id: "warm", rgb: 0xffed8c, titleRu: "Тёплый", titleEn: "Warm"),
++        Option(id: "cold", rgb: 0x8cdfff, titleRu: "Холодный", titleEn: "Cold"),
++        Option(id: "pink", rgb: 0xffa8d8, titleRu: "Розовый", titleEn: "Pink"),
++        Option(id: "peach", rgb: 0xffc29e, titleRu: "Персиковый", titleEn: "Peach"),
++        Option(id: "green", rgb: 0xb4ffb0, titleRu: "Зелёный", titleEn: "Green"),
++        Option(id: "violet", rgb: 0xc9b0ff, titleRu: "Фиолетовый", titleEn: "Violet"),
++        Option(id: "red", rgb: 0xff8c8c, titleRu: "Красный", titleEn: "Red")
++    ]
++
++    private static let defaultsKey = "voidgram.videoNoteFlashColor"
++
++    public static var current: Option {
++        get {
++            let id = UserDefaults.standard.string(forKey: defaultsKey) ?? "white"
++            return options.first(where: { $0.id == id }) ?? options[0]
++        }
++        set {
++            UserDefaults.standard.set(newValue.id, forKey: defaultsKey)
++        }
++    }
++}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuVoidGramNotice.swift b/submodules/TelegramCore/Sources/AyuGram/AyuVoidGramNotice.swift
+new file mode 100644
+index 00000000..7f0ac0f5
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuVoidGramNotice.swift
+@@ -0,0 +1,149 @@
++import Foundation
++import Postbox
++import SwiftSignalKit
++
++/// The "I use VoidGram" notice: sent once and pinned in every private chat with a person
++/// (TelegramUI/AyuVoidGramNoticeSender.swift). While VoidGram runs, the notice cannot be
++/// deleted or unpinned from this client: `_internal_deleteMessagesInteractively` drops its id
++/// and `_internal_requestUpdatePinnedMessage` refuses to unpin it; "Unpin all" pins it again.
++public enum AyuVoidGramNotice {
++    public static let text = "Я использую VoidGram — я не гарантирую шифрование нашей переписки и не советую кидать интимные фото или что-то ещё.\n\nI use VoidGram — I do not guarantee the encryption of our conversation and do not recommend sending intimate photos or anything else."
++
++    private static let defaultsKey = "voidgram.notice.v1"
++    private static let lock = NSLock()
++    private static var loaded = false
++    /// "account:peer" → cloud message id of the notice in that chat.
++    private static var ids: [String: Int32] = [:]
++    /// "peer:message" for every notice of every account on this device.
++    private static var protected = Set<String>()
++
++    private static func key(_ accountPeerId: PeerId, _ peerId: PeerId) -> String {
++        return "\(accountPeerId.toInt64()):\(peerId.toInt64())"
++    }
++
++    private static func protectedKey(_ id: MessageId) -> String {
++        return "\(id.peerId.toInt64()):\(id.id)"
++    }
++
++    private static func loadIfNeeded() {
++        if loaded {
++            return
++        }
++        loaded = true
++        if let stored = UserDefaults.standard.dictionary(forKey: defaultsKey) {
++            for (key, value) in stored {
++                if let number = value as? NSNumber {
++                    ids[key] = number.int32Value
++                }
++            }
++        }
++        rebuildProtected()
++    }
++
++    private static func rebuildProtected() {
++        protected = Set(ids.compactMap { key, messageId -> String? in
++            guard let peer = key.split(separator: ":").last else {
++                return nil
++            }
++            return "\(peer):\(messageId)"
++        })
++    }
++
++    private static func save() {
++        UserDefaults.standard.set(ids.mapValues { NSNumber(value: $0) }, forKey: defaultsKey)
++    }
++
++    public static func isNoticeText(_ text: String) -> Bool {
++        return text == AyuVoidGramNotice.text
++    }
++
++    public static func noticeMessageId(accountPeerId: PeerId, peerId: PeerId) -> MessageId? {
++        lock.lock()
++        defer { lock.unlock() }
++        loadIfNeeded()
++        guard let id = ids[key(accountPeerId, peerId)] else {
++            return nil
++        }
++        return MessageId(peerId: peerId, namespace: Namespaces.Message.Cloud, id: id)
++    }
++
++    public static func setNoticeMessageId(_ id: MessageId, accountPeerId: PeerId) {
++        lock.lock()
++        defer { lock.unlock() }
++        loadIfNeeded()
++        ids[key(accountPeerId, id.peerId)] = id.id
++        rebuildProtected()
++        save()
++    }
++
++    /// The notice was deleted on the server (by the other person or another client).
++    public static func forgetNotice(accountPeerId: PeerId, peerId: PeerId) {
++        lock.lock()
++        defer { lock.unlock() }
++        loadIfNeeded()
++        ids.removeValue(forKey: key(accountPeerId, peerId))
++        rebuildProtected()
++        save()
++    }
++
++    public static func isProtected(_ id: MessageId) -> Bool {
++        guard id.namespace == Namespaces.Message.Cloud, id.peerId.namespace == Namespaces.Peer.CloudUser else {
++            return false
++        }
++        lock.lock()
++        defer { lock.unlock() }
++        loadIfNeeded()
++        return protected.contains(protectedKey(id))
++    }
++
++    public static func removingProtected(_ messageIds: [MessageId]) -> [MessageId] {
++        return messageIds.filter { !isProtected($0) }
++    }
++
++    public enum Plan {
++        case skip
++        case repin(MessageId)
++        case adopt(MessageId)
++        case send
++    }
++
++    private static func isEligible(peer: Peer?, accountPeerId: PeerId) -> Bool {
++        guard let user = peer as? TelegramUser, user.id.namespace == Namespaces.Peer.CloudUser else {
++            return false
++        }
++        if user.id == accountPeerId || user.botInfo != nil || user.flags.contains(.isSupport) || user.isDeleted {
++            return false
++        }
++        // Telegram's service notifications account.
++        if user.id.id._internalGetInt64Value() == 777000 {
++            return false
++        }
++        return true
++    }
++
++    /// What the chat with `peerId` needs: nothing, the notice pinned again, an existing notice
++    /// remembered (after a reinstall), or a new notice (only when `allowSend`).
++    public static func plan(account: Account, peerId: PeerId, allowSend: Bool) -> Signal<Plan, NoError> {
++        let accountPeerId = account.peerId
++        return account.postbox.transaction { transaction -> Plan in
++            guard isEligible(peer: transaction.getPeer(peerId), accountPeerId: accountPeerId) else {
++                return .skip
++            }
++            let cachedData = transaction.getPeerCachedData(peerId: peerId) as? CachedUserData
++            if let noticeId = noticeMessageId(accountPeerId: accountPeerId, peerId: peerId) {
++                if let message = transaction.getMessage(noticeId) {
++                    return message.tags.contains(.pinned) ? .skip : .repin(noticeId)
++                }
++                if cachedData?.pinnedMessageId == noticeId {
++                    return .skip
++                }
++                // Deleted on the server (by the other person or another client).
++                forgetNotice(accountPeerId: accountPeerId, peerId: peerId)
++            }
++            if let pinnedId = cachedData?.pinnedMessageId, let message = transaction.getMessage(pinnedId), !message.flags.contains(.Incoming), isNoticeText(message.text) {
++                return .adopt(pinnedId)
++            }
++            return allowSend ? .send : .skip
++        }
++    }
++}
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/DeleteMessagesInteractively.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/DeleteMessagesInteractively.swift
+index 25aa6980..33a69f4f 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/DeleteMessagesInteractively.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/DeleteMessagesInteractively.swift
+@@ -10,6 +10,8 @@ private enum EphemeralDeleteMessageRequest {
+ }
+ 
+ func _internal_deleteMessagesInteractively(account: Account, messageIds: [MessageId], type: InteractiveMessagesDeletionType, deleteAllInGroup: Bool = false) -> Signal<Void, NoError> {
++    // The pinned "I use VoidGram" notice cannot be deleted from VoidGram.
++    let messageIds = AyuVoidGramNotice.removingProtected(messageIds)
+     return account.postbox.transaction { transaction -> [EphemeralDeleteMessageRequest] in
+         var ephemeralRequests: [EphemeralDeleteMessageRequest] = []
+         for messageId in messageIds where messageId.namespace == Namespaces.Message.EphemeralLocal || messageId.namespace == Namespaces.Message.WelcomeMessageCloud {
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift
+index 626b4573..d72f4d55 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift
+@@ -259,7 +259,20 @@ public extension TelegramEngine {
+         }
+ 
+         public func requestUnpinAllMessages(peerId: PeerId, threadId: Int64?) -> Signal<Never, UpdatePinnedMessageError> {
+-            return _internal_requestUnpinAllMessages(account: self.account, peerId: peerId, threadId: threadId)
++            let account = self.account
++            // "Unpin all" in a private chat pins the "I use VoidGram" notice again.
++            let repinNotice: Signal<Never, UpdatePinnedMessageError> = deferred {
++                guard threadId == nil, let noticeId = AyuVoidGramNotice.noticeMessageId(accountPeerId: account.peerId, peerId: peerId) else {
++                    return .complete()
++                }
++                return _internal_requestUpdatePinnedMessage(account: account, peerId: peerId, update: .pin(id: noticeId, silent: true, forThisPeerOnlyIfPossible: false))
++                |> ignoreValues
++                |> `catch` { _ -> Signal<Never, UpdatePinnedMessageError> in
++                    return .complete()
++                }
++            }
++            return _internal_requestUnpinAllMessages(account: account, peerId: peerId, threadId: threadId)
++            |> then(repinNotice)
+         }
+ 
+         public func fetchChannelReplyThreadMessage(messageId: MessageId, atMessageId: MessageId?) -> Signal<ChatReplyThreadMessage, FetchChannelReplyThreadMessageError> {
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/UpdatePinnedMessage.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/UpdatePinnedMessage.swift
+index 7be9b02e..c8aef6e5 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/UpdatePinnedMessage.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/UpdatePinnedMessage.swift
+@@ -15,6 +15,10 @@ public enum PinnedMessageUpdate {
+ }
+ 
+ func _internal_requestUpdatePinnedMessage(account: Account, peerId: PeerId, update: PinnedMessageUpdate) -> Signal<Void, UpdatePinnedMessageError> {
++    // The "I use VoidGram" notice stays pinned while VoidGram is used.
++    if case let .clear(id) = update, AyuVoidGramNotice.isProtected(id) {
++        return .fail(.generic)
++    }
+     return account.postbox.transaction { transaction -> (Peer?, CachedPeerData?) in
+         return (transaction.getPeer(peerId), transaction.getPeerCachedData(peerId: peerId))
+     }
+diff --git a/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift b/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift
+index dcc5bc5b..660104fd 100644
+--- a/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift
++++ b/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift
+@@ -343,6 +343,17 @@ private final class VideoMessageCameraScreenComponent: CombinedComponent {
+             }
+         }
+         
++        func cycleAyuFlashColor() {
++            let options = AyuVideoNoteFlash.options
++            let index = options.firstIndex(of: AyuVideoNoteFlash.current) ?? 0
++            AyuVideoNoteFlash.current = options[(index + 1) % options.count]
++            self.hapticFeedback.impact(.light)
++            if let controller = self.getController(), controller.cameraState.flashMode != .on {
++                self.toggleFlashMode()
++            }
++            self.updated(transition: .easeInOut(duration: 0.2))
++        }
++        
+         func toggleFlashMode() {
+             guard let controller = self.getController(), let camera = controller.camera else {
+                 return
+@@ -605,7 +616,7 @@ private final class VideoMessageCameraScreenComponent: CombinedComponent {
+                         height: max(abs(frontFlashPosition.y), abs(context.availableSize.height - frontFlashPosition.y)) * 2.0
+                     )
+                     let frontFlash = frontFlash.update(
+-                        component: Image(image: state.image(.flashImage, theme: environment.theme), tintColor: component.cameraState.flashTint.color, contentMode: .scaleAspectFill),
++                        component: Image(image: state.image(.flashImage, theme: environment.theme), tintColor: UIColor(rgb: AyuVideoNoteFlash.current.rgb), contentMode: .scaleAspectFill),
+                         availableSize: frontFlashSize,
+                         transition: .easeInOut(duration: 0.2)
+                     )
+@@ -720,6 +731,13 @@ private final class VideoMessageCameraScreenComponent: CombinedComponent {
+                                         flashAction.invoke(Void())
+                                     }
+                                 }
++                            },
++                            longTapAction: { [weak state] in
++                                // VoidGram: a long press picks the next flash colour (also in Sending Options).
++                                guard let state else {
++                                    return
++                                }
++                                state.cycleAyuFlashColor()
+                             }
+                         ),
+                         availableSize: availableSize,
+diff --git a/submodules/TelegramUI/Sources/AppDelegate.swift b/submodules/TelegramUI/Sources/AppDelegate.swift
+index 01b5ff6e..9cc513f8 100644
+--- a/submodules/TelegramUI/Sources/AppDelegate.swift
++++ b/submodules/TelegramUI/Sources/AppDelegate.swift
+@@ -1513,6 +1513,8 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+                     AyuDeveloperOverlays.shared.attach(to: self.mainWindow.hostView.containerView)
+                     AyuToast.shared.attach(to: self.mainWindow.hostView.containerView)
+                     AyuOverlayEffects.shared.attach(to: self.mainWindow.hostView.containerView)
++                    // Accounts signed in before the agreement existed accept it once here.
++                    AyuAgreementView.presentIfNeeded(in: self.mainWindow.hostView.containerView)
+                     AyuScriptRuntime.shared.toastHandler = { text in
+                         AyuToast.shared.show(text)
+                     }
+diff --git a/submodules/TelegramUI/Sources/AyuVoidGramNoticeSender.swift b/submodules/TelegramUI/Sources/AyuVoidGramNoticeSender.swift
+new file mode 100644
+index 00000000..751660f2
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuVoidGramNoticeSender.swift
+@@ -0,0 +1,106 @@
++import Foundation
++import SwiftSignalKit
++import TelegramCore
++import AccountContext
++
++/// Sends and pins the "I use VoidGram" notice (TelegramCore/AyuVoidGramNotice.swift) in private
++/// chats with people: once per chat, the first time the user sends something there from
++/// VoidGram, so old and new chats are covered without a mass mailing. Bots, Saved Messages,
++/// Telegram's service account, deleted accounts, secret chats, groups and channels are skipped.
++/// Opening a chat pins the notice again if it was unpinned elsewhere.
++enum AyuVoidGramNoticeSender {
++    private static var inFlight = Set<String>()
++
++    private static func key(_ context: AccountContext, _ peerId: EnginePeer.Id) -> String {
++        return "\(context.account.peerId.toInt64()):\(peerId.toInt64())"
++    }
++
++    private static func pin(context: AccountContext, id: EngineMessage.Id) {
++        let _ = context.engine.messages.requestUpdatePinnedMessage(peerId: id.peerId, update: .pin(id: id, silent: true, forThisPeerOnlyIfPossible: false)).startStandalone()
++    }
++
++    /// Called by the chat before the user's own messages are enqueued. `proceed` runs on the
++    /// main queue after the notice (if any) is queued, so the notice goes out first.
++    static func beforeSending(context: AccountContext, peerId: EnginePeer.Id, messages: [EnqueueMessage], proceed: @escaping () -> Void) {
++        let isScheduled = messages.contains(where: { message in
++            if case let .message(_, attributes, _, _, _, _, _, _, _, _) = message {
++                return attributes.contains(where: { $0 is OutgoingScheduleInfoMessageAttribute })
++            }
++            return false
++        })
++        let key = self.key(context, peerId)
++        if peerId.namespace != Namespaces.Peer.CloudUser || isScheduled || inFlight.contains(key) {
++            proceed()
++            return
++        }
++        inFlight.insert(key)
++        let _ = (AyuVoidGramNotice.plan(account: context.account, peerId: peerId, allowSend: true)
++        |> deliverOnMainQueue).startStandalone(next: { plan in
++            switch plan {
++            case .skip:
++                inFlight.remove(key)
++            case let .repin(id):
++                inFlight.remove(key)
++                pin(context: context, id: id)
++            case let .adopt(id):
++                inFlight.remove(key)
++                AyuVoidGramNotice.setNoticeMessageId(id, accountPeerId: context.account.peerId)
++            case .send:
++                send(context: context, peerId: peerId, key: key)
++            }
++            proceed()
++        })
++    }
++
++    /// Opening a chat: pin the notice again if it was unpinned. Never sends a new one.
++    static func chatOpened(context: AccountContext, peerId: EnginePeer.Id) {
++        guard peerId.namespace == Namespaces.Peer.CloudUser, !inFlight.contains(key(context, peerId)) else {
++            return
++        }
++        let _ = (AyuVoidGramNotice.plan(account: context.account, peerId: peerId, allowSend: false)
++        |> deliverOnMainQueue).startStandalone(next: { plan in
++            switch plan {
++            case let .repin(id):
++                pin(context: context, id: id)
++            case let .adopt(id):
++                AyuVoidGramNotice.setNoticeMessageId(id, accountPeerId: context.account.peerId)
++            case .skip, .send:
++                break
++            }
++        })
++    }
++
++    private static func send(context: AccountContext, peerId: EnginePeer.Id, key: String) {
++        let correlationId = Int64.random(in: 1 ... Int64.max)
++        let delivered = context.account.pendingMessageManager.deliveredMessageEvents(peerId: peerId)
++        |> mapToSignal { _ -> Signal<EngineMessage.Id, NoError> in
++            if let id = context.engine.messages.synchronouslyLookupCorrelationId(correlationId: correlationId) {
++                return .single(id)
++            }
++            return .complete()
++        }
++        |> take(1)
++        |> timeout(300.0, queue: .mainQueue(), alternate: .complete())
++        |> deliverOnMainQueue
++
++        // Subscribe before enqueueing, so the delivery event cannot be missed.
++        let _ = delivered.startStandalone(next: { id in
++            AyuVoidGramNotice.setNoticeMessageId(id, accountPeerId: context.account.peerId)
++            pin(context: context, id: id)
++        }, completed: {
++            inFlight.remove(key)
++        })
++
++        let _ = enqueueMessages(account: context.account, peerId: peerId, messages: [
++            .message(text: AyuVoidGramNotice.text, attributes: [], inlineStickers: [:], mediaReference: nil, threadId: nil, replyToMessageId: nil, replyToStoryId: nil, localGroupingKey: nil, correlationId: correlationId, bubbleUpEmojiOrStickersets: [])
++        ]).startStandalone()
++    }
++
++    static func isLocked(_ id: EngineMessage.Id) -> Bool {
++        return AyuVoidGramNotice.isProtected(id)
++    }
++
++    static func lockedText(ru: Bool) -> String {
++        return ru ? "Сообщение «Я использую VoidGram» нельзя удалить или открепить, пока вы пользуетесь VoidGram." : "The \"I use VoidGram\" message cannot be deleted or unpinned while you use VoidGram."
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
+index d916dd55..6ac69aac 100644
+--- a/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
+@@ -3390,6 +3390,12 @@ extension ChatControllerImpl {
+                 }
+             }
+         }, unpinMessage: { [weak self] id, askForConfirmation, contextController in
++            if AyuVoidGramNoticeSender.isLocked(id), let strongSelf = self {
++                let ru = strongSelf.presentationData.strings.baseLanguageCode.hasPrefix("ru")
++                contextController?.dismiss(completion: nil)
++                strongSelf.present(UndoOverlayController(presentationData: strongSelf.presentationData, content: .info(title: nil, text: AyuVoidGramNoticeSender.lockedText(ru: ru), timeout: nil, customUndoText: nil), elevatedLayout: false, action: { _ in return false }), in: .current)
++                return
++            }
+             let impl: () -> Void = {
+                 guard let strongSelf = self else {
+                     return
+diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
+index bcac5f1a..b35cf944 100644
+--- a/submodules/TelegramUI/Sources/ChatController.swift
++++ b/submodules/TelegramUI/Sources/ChatController.swift
+@@ -7960,6 +7960,9 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+             // Code plugins: `ayu.on('chatOpen', ({ peerId }) => …)`.
+             AyuScriptRuntime.shared.emit("chatOpen", ["peerId": String(peerId.toInt64())])
+             AyuPluginChatTracker.current = self
++            if case .peer = self.chatLocation {
++                AyuVoidGramNoticeSender.chatOpened(context: self.context, peerId: peerId)
++            }
+             // Peer archive: keep a snapshot so a saved ID still resolves after deletion.
+             let archive = AyuPeerArchive.shared(accountPeerId: self.context.account.peerId.toInt64())
+             let _ = (self.context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: peerId))
+@@ -9467,13 +9470,24 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+                 
+                 let transformedMessages = self.transformEnqueueMessages(messages, postpone: postpone)
+                 let multiReplyTargets = self.takeMultiReplyTargets(transformedMessages)
+-                let _ = (enqueueMessages(account: self.context.account, peerId: peerId, messages: transformedMessages)
+-                |> deliverOnMainQueue).startStandalone(next: { [weak self] messageIds in
+-                    self?.registerMultiReplies(multiReplyTargets, messageIds: messageIds)
+-                    if let strongSelf = self, strongSelf.presentationInterfaceState.subject != .scheduledMessages {
+-                        strongSelf.chatDisplayNode.historyNode.scrollToEndOfHistory()
++                let enqueue: () -> Void = { [weak self] in
++                    guard let self else {
++                        return
+                     }
+-                })
++                    let _ = (enqueueMessages(account: self.context.account, peerId: peerId, messages: transformedMessages)
++                    |> deliverOnMainQueue).startStandalone(next: { [weak self] messageIds in
++                        self?.registerMultiReplies(multiReplyTargets, messageIds: messageIds)
++                        if let strongSelf = self, strongSelf.presentationInterfaceState.subject != .scheduledMessages {
++                            strongSelf.chatDisplayNode.historyNode.scrollToEndOfHistory()
++                        }
++                    })
++                }
++                // The first message in a private chat is preceded by the pinned "I use VoidGram" notice.
++                if case .peer = self.chatLocation, !isScheduledMessages {
++                    AyuVoidGramNoticeSender.beforeSending(context: self.context, peerId: peerId, messages: transformedMessages, proceed: enqueue)
++                } else {
++                    enqueue()
++                }
+                 
+                 donateSendMessageIntent(account: self.context.account, sharedContext: self.context.sharedContext, intentContext: .chat, peerIds: [peerId])
+                 
+diff --git a/submodules/TelegramUI/Sources/ChatControllerAdminBanUsers.swift b/submodules/TelegramUI/Sources/ChatControllerAdminBanUsers.swift
+index c28e8e2d..d448b8af 100644
+--- a/submodules/TelegramUI/Sources/ChatControllerAdminBanUsers.swift
++++ b/submodules/TelegramUI/Sources/ChatControllerAdminBanUsers.swift
+@@ -452,6 +452,20 @@ extension ChatControllerImpl {
+     }
+     
+     func presentDeleteMessageOptions(messageIds: Set<EngineMessage.Id>, options: ChatAvailableMessageActionOptions, contextController: ContextControllerProtocol?, sourceView: UIView? = nil, completion: @escaping (ContextMenuActionResult) -> Void) {
++        // The pinned "I use VoidGram" notice cannot be deleted; the other selected messages can.
++        let lockedIds = messageIds.filter { AyuVoidGramNoticeSender.isLocked($0) }
++        if !lockedIds.isEmpty {
++            let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
++            self.present(UndoOverlayController(presentationData: self.presentationData, content: .info(title: nil, text: AyuVoidGramNoticeSender.lockedText(ru: ru), timeout: nil, customUndoText: nil), elevatedLayout: false, action: { _ in return false }), in: .current)
++            let remaining = messageIds.subtracting(lockedIds)
++            if remaining.isEmpty {
++                contextController?.dismiss(completion: nil)
++                completion(.default)
++                return
++            }
++            self.presentDeleteMessageOptions(messageIds: remaining, options: options, contextController: contextController, sourceView: sourceView, completion: completion)
++            return
++        }
+         let _ = (self.context.engine.data.get(
+             EngineDataMap(messageIds.map(TelegramEngine.EngineData.Item.Messages.Message.init(id:)))
+         )
