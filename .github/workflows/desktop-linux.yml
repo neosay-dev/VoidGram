@@ -168,6 +168,9 @@ jobs:
           test -n "$TDESKTOP_API_ID" && test -n "$TDESKTOP_API_HASH" \
             || { echo "::error::Set TELEGRAM_API_ID and TELEGRAM_API_HASH in the repository Actions secrets."; exit 1; }
           cd src
+          # The image's default Python is 3.11 (Dockerfile alternatives); CMake would otherwise pick
+          # python3.12, whose pyexpat does not load against the image's libexpat and breaks the
+          # AppStream changelog step.
           # The image's flags turn on LTO, whose final link needs more than the runner's 16 GB (lto1 is
           # killed): the client is built and linked without it. The libraries stay as they were built.
           no_lto() { docker run --rm $IMAGE_TAG printenv "$1" 2>/dev/null | sed -e 's/-flto=auto//g' -e 's/-ffat-lto-objects//g'; }
@@ -186,7 +189,8 @@ jobs:
             -D TDESKTOP_API_ID=$TDESKTOP_API_ID \
             -D TDESKTOP_API_HASH=$TDESKTOP_API_HASH \
             -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON \
-            -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON
+            -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON \
+            -D Python3_EXECUTABLE=/usr/bin/python3.11
 
       # Kept as soon as it is built, so a packaging mistake never costs another compile.
       - uses: actions/upload-artifact@v4
