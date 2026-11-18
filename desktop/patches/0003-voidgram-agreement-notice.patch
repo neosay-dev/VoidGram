@@ -1,0 +1,694 @@
+diff --git a/Telegram/CMakeLists.txt b/Telegram/CMakeLists.txt
+index ab073f1..fd8fe20 100644
+--- a/Telegram/CMakeLists.txt
++++ b/Telegram/CMakeLists.txt
+@@ -153,6 +153,10 @@ set(ayugram_files
+         voidgram/voidgram_look_box.h
+         voidgram/voidgram_profile_box.cpp
+         voidgram/voidgram_profile_box.h
++        voidgram/voidgram_agreement.cpp
++        voidgram/voidgram_agreement.h
++        voidgram/voidgram_notice.cpp
++        voidgram/voidgram_notice.h
+         ayu/ui/ayu_logo.cpp
+         ayu/ui/ayu_logo.h
+         ayu/ui/toasts.cpp
+diff --git a/Telegram/SourceFiles/apiwrap.cpp b/Telegram/SourceFiles/apiwrap.cpp
+index 8bf7053..503c1b9 100644
+--- a/Telegram/SourceFiles/apiwrap.cpp
++++ b/Telegram/SourceFiles/apiwrap.cpp
+@@ -113,6 +113,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
+ #include "ayu/ayu_worker.h"
+ #include "ayu/utils/telegram_helpers.h"
+ #include "ayu/features/forward/ayu_forward.h"
++#include "voidgram/voidgram_notice.h"
+ 
+ 
+ namespace {
+@@ -3814,6 +3815,8 @@ mtpRequestId ApiWrap::requestGlobalMedia(
+ }
+ 
+ void ApiWrap::sendAction(const SendAction &action) {
++	// VoidGram: the first message in a private chat is preceded by the pinned notice.
++	VoidGram::NoticeBeforeSend(action);
+ 	if (!action.options.scheduled
+ 		&& !action.options.shortcutId
+ 		&& !action.replaceMediaOf) {
+diff --git a/Telegram/SourceFiles/history/history_item.cpp b/Telegram/SourceFiles/history/history_item.cpp
+index 3f9ecd1..fe15a6b 100644
+--- a/Telegram/SourceFiles/history/history_item.cpp
++++ b/Telegram/SourceFiles/history/history_item.cpp
+@@ -88,6 +88,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
+ #include "ayu/features/message_shot/message_shot.h"
+ #include "ayu/utils/telegram_helpers.h"
+ #include "ui/emoji_config.h"
++#include "voidgram/voidgram_notice.h"
+ 
+ 
+ namespace {
+@@ -3198,6 +3199,9 @@ void HistoryItem::setRealId(MsgId newId) {
+ bool HistoryItem::canPin() const {
+ 	if (_deleted) {
+ 		return false;
++	} else if (VoidGram::IsNoticeItem(this)) {
++		// The "I use VoidGram" notice stays pinned while VoidGram is used.
++		return false;
+ 	}
+ 
+ 	if (!isRegular() || isService()) {
+@@ -3324,6 +3328,9 @@ bool HistoryItem::allowsMediaDownloadControls() const {
+ bool HistoryItem::canDelete() const {
+ 	if (isSponsored()) {
+ 		return false;
++	} else if (VoidGram::IsNoticeItem(this)) {
++		// The "I use VoidGram" notice cannot be deleted while VoidGram is used.
++		return false;
+ 	} else if (isEphemeral()) {
+ 		return false;
+ 	} else if (IsStoryMsgId(id)) {
+@@ -3363,6 +3370,9 @@ bool HistoryItem::canDelete() const {
+ }
+ 
+ bool HistoryItem::canDeleteForEveryone(TimeId now) const {
++	if (VoidGram::IsNoticeItem(this)) {
++		return false;
++	}
+ 	const auto peer = _history->peer;
+ 	const auto &config = _history->session().serverConfig();
+ 	const auto messageToMyself = peer->isSelf();
+diff --git a/Telegram/SourceFiles/history/history_widget.cpp b/Telegram/SourceFiles/history/history_widget.cpp
+index 520fd33..092ebaf 100644
+--- a/Telegram/SourceFiles/history/history_widget.cpp
++++ b/Telegram/SourceFiles/history/history_widget.cpp
+@@ -224,6 +224,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
+ #include "ayu/features/message_shot/message_shot.h"
+ #include "ayu/features/forward/ayu_forward.h"
+ #include "boxes/abstract_box.h"
++#include "voidgram/voidgram_notice.h"
+ 
+ 
+ namespace {
+@@ -3513,6 +3514,7 @@ void HistoryWidget::showHistory(
+ 
+ 		setupTranslateBar();
+ 		setupPinnedTracker();
++		VoidGram::NoticeChatOpened(_history);
+ 		setupGroupCallBar();
+ 		setupRequestsBar();
+ 		checkMessagesTTL();
+diff --git a/Telegram/SourceFiles/intro/intro_widget.cpp b/Telegram/SourceFiles/intro/intro_widget.cpp
+index 7679784..edef7c8 100644
+--- a/Telegram/SourceFiles/intro/intro_widget.cpp
++++ b/Telegram/SourceFiles/intro/intro_widget.cpp
+@@ -49,6 +49,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
+ 
+ // AyuGram includes
+ #include "boxes/about_box.h"
++#include "voidgram/voidgram_agreement.h"
+ 
+ 
+ namespace Intro {
+@@ -124,6 +125,11 @@ Widget::Widget(
+ 	setupStep();
+ 	fixOrder();
+ 
++	// VoidGram: the user agreement comes before the phone number.
++	crl::on_main(this, [=] {
++		VoidGram::ShowAgreementIfNeeded(controller);
++	});
++
+ 	if (_account->mtp().isTestMode()) {
+ 		_testModeLabel.create(
+ 			this,
+diff --git a/Telegram/SourceFiles/voidgram/voidgram_agreement.cpp b/Telegram/SourceFiles/voidgram/voidgram_agreement.cpp
+new file mode 100644
+index 0000000..ae7e426
+--- /dev/null
++++ b/Telegram/SourceFiles/voidgram/voidgram_agreement.cpp
+@@ -0,0 +1,202 @@
++// This file is part of VoidGram for Desktop, a fork of AyuGram Desktop.
++// It is licensed under GPLv3 with the same exceptions as the rest of the code.
++#include "voidgram/voidgram_agreement.h"
++
++#include "core/application.h"
++#include "lang/lang_keys.h"
++#include "settings.h"
++#include "styles/style_layers.h"
++#include "base/weak_qptr.h"
++#include "ui/layers/generic_box.h"
++#include "ui/rp_widget.h"
++#include "ui/qt_object_factory.h"
++#include "ui/text/text_utilities.h"
++#include "ui/widgets/buttons.h"
++#include "ui/widgets/labels.h"
++#include "ui/widgets/scroll_area.h"
++#include "window/window_controller.h"
++
++#include <QtCore/QFile>
++#include <QtCore/QDir>
++
++namespace VoidGram {
++namespace {
++
++constexpr auto kTextHeight = 420;
++
++[[nodiscard]] QString MarkerPath() {
++	return cWorkingDir() + u"tdata/voidgram_agreement_v2"_q;
++}
++
++[[nodiscard]] bool Russian() {
++	return Lang::Id().startsWith(u"ru"_q)
++		|| Lang::Id().startsWith(u"uk"_q)
++		|| Lang::Id().startsWith(u"be"_q);
++}
++
++struct Block {
++	const char *text;
++	bool bold;
++};
++
++constexpr Block kRussian[] = {
++	{ "Устанавливая, запуская или иным образом используя VoidGram, вы подтверждаете, что полностью прочитали это соглашение, поняли его и принимаете все его условия. Если вы не согласны — не используйте приложение.", true },
++	{ "1. Общие положения", true },
++	{ "1.1. VoidGram — неофициальный клиент Telegram. Он не связан с Telegram FZ-LLC, Telegram Messenger Inc. или авторами AyuGram и не одобрен ими.", false },
++	{ "1.2. Приложение распространяется «как есть», без каких-либо гарантий — явных или подразумеваемых.", false },
++	{ "1.3. Непрочтение соглашения не освобождает от его условий. Если вы его не прочитали, ответственность за это и за все последствия лежит на вас, а не на авторах VoidGram.", false },
++	{ "2. Законное использование", true },
++	{ "2.1. Я обязуюсь не использовать VoidGram в незаконных целях: для слежки за людьми без их ведома, преследования, шантажа, мошенничества, рассылки спама, распространения чужих личных данных, интимных материалов без согласия или любого другого контента, запрещённого законом.", false },
++	{ "2.2. Я сам отвечаю за соблюдение законов своей страны о защите персональных данных, тайне переписки и приватности, а также Условий использования Telegram.", false },
++	{ "3. Удалённые и одноразовые сообщения", true },
++	{ "3.1. Авторы VoidGram НИГДЕ и НИ ПРИ КАКИХ обстоятельствах НЕ берут на себя ответственность за сохранение удалённых сообщений, одноразовых (самоуничтожающихся) сообщений и медиа, истории правок и любых других данных.", true },
++	{ "3.2. Функции сохранения работают «как есть». Данные могут не сохраниться или пропасть в любой момент (ошибки, обновления, переустановка, очистка архива).", false },
++	{ "4. Предупреждение собеседника", true },
++	{ "4.1. Я обязан предупредить друга или любого человека, с которым общаюсь, что использую VoidGram: клиент может сохранять удалённые и одноразовые сообщения и скрывать статус «в сети», прочтение и набор текста.", false },
++	{ "4.2. Поэтому в каждом личном чате с человеком VoidGram один раз отправляет и закрепляет сообщение: «Я использую VoidGram — я не гарантирую шифрование нашей переписки и не советую кидать интимные фото или что-то ещё.» Оно отправляется, когда я впервые пишу в этот чат из VoidGram. Пока я пользуюсь VoidGram, это сообщение нельзя удалить или открепить; если его открепят, VoidGram закрепит его снова.", false },
++	{ "4.3. Вся ответственность за неуведомление собеседника и за его претензии лежит на мне.", false },
++	{ "5. Ограничение ответственности", true },
++	{ "5.1. Авторы не отвечают за сбои, ошибки, потерю данных, блокировку или ограничение аккаунта Telegram и любой прямой или косвенный ущерб от использования приложения.", false },
++	{ "5.2. Некоторые функции (например, Ghost Mode) противоречат Условиям использования Telegram API. Вы используете их на свой страх и риск.", false },
++	{ "5.3. Сторонние плагины вы устанавливаете сами; авторы не отвечают за них.", false },
++	{ "6. Изменения", true },
++	{ "6.1. Авторы могут менять соглашение в любое время. Актуальная версия — файл USER_AGREEMENT.md в репозитории VoidGram. Продолжая пользоваться приложением, вы принимаете актуальную версию.", false },
++	{ "Нажимая «Согласиться», я подтверждаю, что прочитал соглашение целиком, не собираюсь использовать VoidGram незаконно и принимаю все условия выше.", true },
++};
++
++constexpr Block kEnglish[] = {
++	{ "By installing, launching or otherwise using VoidGram you confirm that you have read this agreement in full, understood it and accept all of its terms. If you do not agree, do not use the app.", true },
++	{ "1. General", true },
++	{ "1.1. VoidGram is an unofficial Telegram client. It is not affiliated with or endorsed by Telegram FZ-LLC, Telegram Messenger Inc. or the AyuGram authors.", false },
++	{ "1.2. The app is provided \"as is\", without warranty of any kind, express or implied.", false },
++	{ "1.3. Not having read this agreement does not exempt you from it. If you did not read it, that is your responsibility, not the fault of the VoidGram authors.", false },
++	{ "2. Lawful use", true },
++	{ "2.1. I will not use VoidGram for anything illegal: watching people without their knowledge, stalking, blackmail, fraud, spam, spreading other people's personal data or intimate material without consent, or any other content the law forbids.", false },
++	{ "2.2. I am responsible for following my country's laws on personal data, private correspondence and privacy, and Telegram's Terms of Service.", false },
++	{ "3. Deleted and view-once messages", true },
++	{ "3.1. The VoidGram authors NOWHERE and under NO circumstances take responsibility for preserving deleted messages, view-once / self-destructing messages and media, edit history or any other data.", true },
++	{ "3.2. Saving features work \"as is\". Data may not be saved or may be lost at any time (bugs, updates, reinstalling, clearing the archive).", false },
++	{ "4. Telling the other person", true },
++	{ "4.1. I must tell my friend or anyone I talk to that I use VoidGram: the client can keep deleted and view-once messages and hide online status, read receipts and typing.", false },
++	{ "4.2. That is why VoidGram sends and pins one message in every private chat with a person: \"I use VoidGram — I do not guarantee the encryption of our conversation and do not recommend sending intimate photos or anything else.\" It is sent the first time I write in that chat from VoidGram. While I use VoidGram, it cannot be deleted or unpinned; if it is unpinned, VoidGram pins it again.", false },
++	{ "4.3. I alone am responsible for not telling the other person and for any claims they make.", false },
++	{ "5. Limitation of liability", true },
++	{ "5.1. The authors are not liable for crashes, errors, data loss, Telegram account bans or restrictions, or any direct or indirect damage from using the app.", false },
++	{ "5.2. Some features (e.g. Ghost Mode) conflict with the Telegram API Terms. You use them at your own risk.", false },
++	{ "5.3. You install third-party plugins yourself; the authors are not responsible for them.", false },
++	{ "6. Changes", true },
++	{ "6.1. The authors may change this agreement at any time. The current version is USER_AGREEMENT.md in the VoidGram repository. Continuing to use the app means you accept the current version.", false },
++	{ "By clicking \"I agree\" I confirm that I have read the whole agreement, will not use VoidGram illegally and accept all of the terms above.", true },
++};
++
++[[nodiscard]] TextWithEntities AgreementText() {
++	auto result = TextWithEntities();
++	const auto ru = Russian();
++	const auto append = [&](const Block &block) {
++		if (!result.text.isEmpty()) {
++			result.append(u"\n\n"_q);
++		}
++		const auto text = QString::fromUtf8(block.text);
++		result.append(block.bold
++			? Ui::Text::Bold(text)
++			: TextWithEntities{ text });
++	};
++	if (ru) {
++		for (const auto &block : kRussian) {
++			append(block);
++		}
++	} else {
++		for (const auto &block : kEnglish) {
++			append(block);
++		}
++	}
++	return result;
++}
++
++void MarkAccepted() {
++	QDir().mkpath(cWorkingDir() + u"tdata"_q);
++	auto file = QFile(MarkerPath());
++	if (file.open(QIODevice::WriteOnly)) {
++		file.write("accepted\n");
++	}
++}
++
++void AgreementBox(not_null<Ui::GenericBox*> box) {
++	const auto ru = Russian();
++	box->setTitle(rpl::single(ru
++		? u"Пользовательское соглашение"_q
++		: u"User Agreement"_q));
++	box->setWidth(st::boxWideWidth);
++	box->setCloseByEscape(false);
++	box->setCloseByOutsideClick(false);
++
++	// GenericBox rows are RpWidgets; the scroll area lives inside a fixed-height one.
++	const auto holder = box->addRow(
++		object_ptr<Ui::RpWidget>(box),
++		style::margins(
++			st::boxRowPadding.left(),
++			0,
++			st::boxRowPadding.right() / 2,
++			0));
++	holder->resize(holder->width(), kTextHeight);
++	const auto scroll = Ui::CreateChild<Ui::ScrollArea>(
++		holder,
++		st::boxScroll);
++	const auto label = scroll->setOwnedWidget(object_ptr<Ui::FlatLabel>(
++		scroll,
++		rpl::single(AgreementText()),
++		st::boxLabel));
++	holder->widthValue() | rpl::on_next([=](int width) {
++		holder->resize(width, kTextHeight);
++		scroll->setGeometry(0, 0, width, kTextHeight);
++		label->resizeToWidth(width - st::boxRowPadding.right() / 2);
++	}, holder->lifetime());
++
++	const auto reached = box->lifetime().make_state<rpl::variable<bool>>(
++		false);
++	const auto check = [=] {
++		if (reached->current() || label->height() <= 0) {
++			return;
++		}
++		if (scroll->scrollTop() >= scroll->scrollTopMax() - 4) {
++			*reached = true;
++		}
++	};
++	rpl::merge(
++		scroll->scrolls(),
++		scroll->innerResizes(),
++		scroll->heightValue() | rpl::to_empty
++	) | rpl::on_next(check, box->lifetime());
++
++	box->addButton(reached->value() | rpl::map([=](bool done) {
++		return done
++			? (ru ? u"Согласиться"_q : u"I agree"_q)
++			: (ru ? u"Долистайте до конца"_q : u"Scroll to the end"_q);
++	}), [=] {
++		if (!reached->current()) {
++			return;
++		}
++		MarkAccepted();
++		box->closeBox();
++	});
++	box->addLeftButton(
++		rpl::single(ru ? u"Выйти"_q : u"Quit"_q),
++		[] { Core::Quit(); });
++}
++
++} // namespace
++
++bool AgreementAccepted() {
++	return QFile::exists(MarkerPath());
++}
++
++void ShowAgreementIfNeeded(not_null<Window::Controller*> window) {
++	// One box at a time, even when several accounts start together.
++	static auto current = base::weak_qptr<Ui::GenericBox>();
++	if (AgreementAccepted() || current) {
++		return;
++	}
++	current = window->show(Box(AgreementBox), Ui::LayerOption::KeepOther);
++}
++
++} // namespace VoidGram
+diff --git a/Telegram/SourceFiles/voidgram/voidgram_agreement.h b/Telegram/SourceFiles/voidgram/voidgram_agreement.h
+new file mode 100644
+index 0000000..9a78ab8
+--- /dev/null
++++ b/Telegram/SourceFiles/voidgram/voidgram_agreement.h
+@@ -0,0 +1,18 @@
++// This file is part of VoidGram for Desktop, a fork of AyuGram Desktop.
++// It is licensed under GPLv3 with the same exceptions as the rest of the code.
++#pragma once
++
++namespace Window {
++class Controller;
++} // namespace Window
++
++namespace VoidGram {
++
++// The user agreement (USER_AGREEMENT.md). It is shown over the sign-in screen before the phone
++// number, and over the chats once after an update for accounts signed in before it existed.
++// It can be accepted only after scrolling the text to the very end; until then the box cannot be
++// closed (the other button quits the app).
++[[nodiscard]] bool AgreementAccepted();
++void ShowAgreementIfNeeded(not_null<Window::Controller*> window);
++
++} // namespace VoidGram
+diff --git a/Telegram/SourceFiles/voidgram/voidgram_notice.cpp b/Telegram/SourceFiles/voidgram/voidgram_notice.cpp
+new file mode 100644
+index 0000000..a7d7ee3
+--- /dev/null
++++ b/Telegram/SourceFiles/voidgram/voidgram_notice.cpp
+@@ -0,0 +1,260 @@
++// This file is part of VoidGram for Desktop, a fork of AyuGram Desktop.
++// It is licensed under GPLv3 with the same exceptions as the rest of the code.
++#include "voidgram/voidgram_notice.h"
++
++#include "api/api_common.h"
++#include "apiwrap.h"
++#include "data/data_peer.h"
++#include "data/data_session.h"
++#include "data/data_user.h"
++#include "history/history.h"
++#include "history/history_item.h"
++#include "history/view/history_view_element.h"
++#include "main/main_session.h"
++#include "settings.h"
++
++#include <QtCore/QDir>
++#include <QtCore/QFile>
++#include <QtCore/QJsonDocument>
++#include <QtCore/QJsonObject>
++
++namespace VoidGram {
++namespace {
++
++// The same text as the iPhone app (AyuVoidGramNotice.swift), so either client recognises it.
++constexpr auto kText = "Я использую VoidGram — я не гарантирую шифрование нашей переписки и не советую кидать интимные фото или что-то ещё.\n\nI use VoidGram — I do not guarantee the encryption of our conversation and do not recommend sending intimate photos or anything else.";
++
++struct State {
++	bool loaded = false;
++	// "account peer:chat peer" -> message id of the notice in that chat.
++	base::flat_map<QString, int64> ids;
++	base::flat_set<QString> inFlight;
++	// Local id of a notice being sent -> its chat, per session.
++	base::flat_map<not_null<Main::Session*>, base::flat_map<MsgId, PeerId>> pending;
++	base::flat_set<not_null<Main::Session*>> watched;
++};
++
++[[nodiscard]] State &Get() {
++	static auto result = State();
++	return result;
++}
++
++[[nodiscard]] QString Text() {
++	return QString::fromUtf8(kText);
++}
++
++[[nodiscard]] QString Path() {
++	return cWorkingDir() + u"tdata/voidgram_notice.json"_q;
++}
++
++[[nodiscard]] QString Key(not_null<Main::Session*> session, PeerId peer) {
++	return QString::number(session->userPeerId().value)
++		+ ':'
++		+ QString::number(peer.value);
++}
++
++void Load() {
++	auto &state = Get();
++	if (state.loaded) {
++		return;
++	}
++	state.loaded = true;
++	auto file = QFile(Path());
++	if (!file.open(QIODevice::ReadOnly)) {
++		return;
++	}
++	const auto object = QJsonDocument::fromJson(file.readAll()).object();
++	for (auto i = object.begin(); i != object.end(); ++i) {
++		state.ids[i.key()] = int64(i.value().toDouble());
++	}
++}
++
++void Save() {
++	auto object = QJsonObject();
++	for (const auto &[key, id] : Get().ids) {
++		object.insert(key, double(id));
++	}
++	QDir().mkpath(cWorkingDir() + u"tdata"_q);
++	auto file = QFile(Path());
++	if (file.open(QIODevice::WriteOnly)) {
++		file.write(QJsonDocument(object).toJson(QJsonDocument::Compact));
++	}
++}
++
++[[nodiscard]] MsgId StoredId(not_null<Main::Session*> session, PeerId peer) {
++	Load();
++	const auto &ids = Get().ids;
++	const auto i = ids.find(Key(session, peer));
++	return (i != ids.end()) ? MsgId(i->second) : MsgId();
++}
++
++void Remember(not_null<Main::Session*> session, PeerId peer, MsgId id) {
++	Load();
++	Get().ids[Key(session, peer)] = id.bare;
++	Save();
++}
++
++void Forget(not_null<Main::Session*> session, PeerId peer) {
++	Load();
++	Get().ids.remove(Key(session, peer));
++	Save();
++}
++
++[[nodiscard]] bool Eligible(not_null<PeerData*> peer) {
++	const auto user = peer->asUser();
++	return user
++		&& !user->isSelf()
++		&& !user->isBot()
++		&& !user->isServiceUser()
++		&& !user->isInaccessible();
++}
++
++void Pin(not_null<PeerData*> peer, MsgId id) {
++	const auto session = &peer->session();
++	session->api().request(MTPmessages_UpdatePinnedMessage(
++		MTP_flags(MTPmessages_UpdatePinnedMessage::Flag::f_silent),
++		peer->input(),
++		MTP_int(id)
++	)).done([=](const MTPUpdates &result) {
++		session->api().applyUpdates(result);
++	}).send();
++}
++
++// After a reinstall, or when the other VoidGram client already sent it.
++[[nodiscard]] HistoryItem *FindLoadedNotice(not_null<History*> history) {
++	const auto text = Text();
++	for (const auto &block : history->blocks) {
++		for (const auto &view : block->messages) {
++			const auto item = view->data();
++			if (item->out()
++				&& item->isRegular()
++				&& item->originalText().text == text) {
++				return item;
++			}
++		}
++	}
++	return nullptr;
++}
++
++void Watch(not_null<Main::Session*> session) {
++	auto &state = Get();
++	if (!state.watched.emplace(session).second) {
++		return;
++	}
++	session->data().itemIdChanged(
++	) | rpl::on_next([=](const Data::Session::IdChange &change) {
++		auto &state = Get();
++		auto &pending = state.pending[session];
++		const auto i = pending.find(change.oldId);
++		if (i == pending.end() || i->second != change.newId.peer) {
++			return;
++		}
++		pending.erase(i);
++		const auto peer = session->data().peer(change.newId.peer);
++		Remember(session, peer->id, change.newId.msg);
++		state.inFlight.remove(Key(session, peer->id));
++		Pin(peer, change.newId.msg);
++	}, session->lifetime());
++	session->lifetime().add([=] {
++		auto &state = Get();
++		state.watched.remove(session);
++		state.pending.remove(session);
++	});
++}
++
++// Pins the stored notice again if needed. Returns false when there is none.
++bool EnsurePinned(not_null<History*> history) {
++	const auto peer = history->peer;
++	const auto session = &history->session();
++	const auto id = StoredId(session, peer->id);
++	if (!id) {
++		if (const auto item = FindLoadedNotice(history)) {
++			Remember(session, peer->id, item->id);
++			if (!item->isPinned()) {
++				Pin(peer, item->id);
++			}
++			return true;
++		}
++		return false;
++	}
++	if (const auto item = session->data().message(peer->id, id)) {
++		if (!item->isPinned()) {
++			Pin(peer, id);
++		}
++		return true;
++	}
++	// Not loaded here: ask the server. If it was deleted (by the other person or another
++	// client), forget it and the next message sends a new one.
++	const auto key = Key(session, peer->id);
++	auto &state = Get();
++	if (state.inFlight.contains(key)) {
++		return true;
++	}
++	state.inFlight.emplace(key);
++	session->api().requestMessageData(peer, id, crl::guard(session, [=] {
++		Get().inFlight.remove(key);
++		if (const auto item = session->data().message(peer->id, id)) {
++			if (!item->isPinned()) {
++				Pin(peer, id);
++			}
++		} else {
++			Forget(session, peer->id);
++		}
++	}));
++	return true;
++}
++
++} // namespace
++
++void NoticeBeforeSend(const Api::SendAction &action) {
++	if (action.options.scheduled
++		|| action.options.shortcutId
++		|| action.replaceMediaOf
++		|| action.replyTo.topicRootId) {
++		return;
++	}
++	const auto history = action.history;
++	const auto peer = history->peer;
++	if (!Eligible(peer)) {
++		return;
++	}
++	const auto session = &history->session();
++	const auto key = Key(session, peer->id);
++	auto &state = Get();
++	if (state.inFlight.contains(key) || EnsurePinned(history)) {
++		return;
++	}
++	state.inFlight.emplace(key);
++	Watch(session);
++
++	// Sent before the user's own message (this runs from ApiWrap::sendAction).
++	const auto localId = session->data().nextLocalMessageId();
++	state.pending[session][localId] = peer->id;
++	auto message = Api::MessageToSend(Api::SendAction(history));
++	message.textWithTags = TextWithTags{ Text() };
++	message.action.clearDraft = false;
++	session->api().sendMessage(std::move(message), localId);
++}
++
++void NoticeChatOpened(not_null<History*> history) {
++	const auto peer = history->peer;
++	if (!Eligible(peer)) {
++		return;
++	}
++	const auto key = Key(&history->session(), peer->id);
++	if (!Get().inFlight.contains(key)) {
++		EnsurePinned(history);
++	}
++}
++
++bool IsNoticeItem(not_null<const HistoryItem*> item) {
++	if (!item->isRegular() || !item->history()->peer->isUser()) {
++		return false;
++	}
++	const auto id = StoredId(
++		&item->history()->session(),
++		item->history()->peer->id);
++	return id && (item->id == id);
++}
++
++} // namespace VoidGram
+diff --git a/Telegram/SourceFiles/voidgram/voidgram_notice.h b/Telegram/SourceFiles/voidgram/voidgram_notice.h
+new file mode 100644
+index 0000000..dcf8066
+--- /dev/null
++++ b/Telegram/SourceFiles/voidgram/voidgram_notice.h
+@@ -0,0 +1,23 @@
++// This file is part of VoidGram for Desktop, a fork of AyuGram Desktop.
++// It is licensed under GPLv3 with the same exceptions as the rest of the code.
++#pragma once
++
++class History;
++class HistoryItem;
++
++namespace Api {
++struct SendAction;
++} // namespace Api
++
++namespace VoidGram {
++
++// The "I use VoidGram" notice: sent once and pinned (silently, for both sides) in every private
++// chat with a person, the first time the user sends something there from VoidGram. Bots, Saved
++// Messages, Telegram's service account, deleted accounts, groups and channels are skipped.
++// While VoidGram runs, the notice cannot be deleted or unpinned (HistoryItem::canDelete/canPin),
++// and opening the chat or "Unpin all" pins it again.
++void NoticeBeforeSend(const Api::SendAction &action);
++void NoticeChatOpened(not_null<History*> history);
++[[nodiscard]] bool IsNoticeItem(not_null<const HistoryItem*> item);
++
++} // namespace VoidGram
+diff --git a/Telegram/SourceFiles/window/window_peer_menu.cpp b/Telegram/SourceFiles/window/window_peer_menu.cpp
+index 32b4fa1..f5a0526 100644
+--- a/Telegram/SourceFiles/window/window_peer_menu.cpp
++++ b/Telegram/SourceFiles/window/window_peer_menu.cpp
+@@ -144,6 +144,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
+ #include "styles/style_ayu_icons.h"
+ #include "ayu/ui/context_menu/context_menu.h"
+ #include "ayu/features/forward/ayu_forward.h"
++#include "voidgram/voidgram_notice.h"
+ 
+ 
+ namespace Window {
+@@ -4269,6 +4270,8 @@ void UnpinAllMessages(
+ 					self(self);
+ 				} else {
+ 					history->unpinMessagesFor(topicRootId, monoforumPeerId);
++					// VoidGram: the notice is pinned again.
++					VoidGram::NoticeChatOpened(history);
+ 				}
+ 			}).send();
+ 		};
+diff --git a/Telegram/SourceFiles/window/window_session_controller.cpp b/Telegram/SourceFiles/window/window_session_controller.cpp
+index 6b6b7f8..0c558c3 100644
+--- a/Telegram/SourceFiles/window/window_session_controller.cpp
++++ b/Telegram/SourceFiles/window/window_session_controller.cpp
+@@ -132,6 +132,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
+ 
+ // AyuGram includes
+ #include "ayu/ayu_settings.h"
++#include "voidgram/voidgram_agreement.h"
+ 
+ 
+ namespace Window {
+@@ -1797,6 +1798,11 @@ SessionController::SessionController(
+ 		}).send();
+ 	});
+ #endif
++	// VoidGram: after an update, accounts signed in before the agreement existed accept it
++	// before they see their chats.
++	crl::on_main(this, [=] {
++		VoidGram::ShowAgreementIfNeeded(_window);
++	});
+ }
+ 
+ bool SessionController::skipNonPremiumLimitToast(bool download) const {

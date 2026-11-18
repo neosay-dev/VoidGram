@@ -14,6 +14,22 @@ An unofficial native Telegram-iOS adaptation with AyuGram-inspired features. [Re
 
 Release 3 source changes add message-menu controls, author search, filter management, MessageShot appearance, text-to-draft/search/ID tools, reversible local message hiding, reaction-display settings and updated app artwork. Reliability changes cover filter scope, image bounds, missing App Group access, startup diagnostics and database-key persistence. See the detailed changelog for source changes.
 
+## User agreement, VoidGram notice and flash colour (development source)
+
+- **User agreement before sign-in** (iPhone and desktop): the [User Agreement](USER_AGREEMENT.md)
+  covers the phone-number screen. It can be accepted only after scrolling the text to the very end
+  and pressing **I agree**. Accounts signed in before this update see it once, before their chats.
+- **"I use VoidGram" notice**: in every private chat with a person (not bots, groups or channels)
+  VoidGram sends and silently pins, once, *"Я использую VoidGram — я не гарантирую шифрование
+  нашей переписки и не советую кидать интимные фото или что-то ещё."* (with an English line). It
+  goes out the first time you write in that chat from VoidGram, so old and new chats are covered
+  without a mass mailing. While you use VoidGram it cannot be deleted or unpinned; opening the chat
+  or "Unpin all" pins it again. The other person can still delete or unpin it on their side.
+- **Video message flash colour** (iPhone): **Settings → VoidGram → Sending Options → Video message
+  flash colour**, or a long press on the flash button while recording. Eight colours.
+
+Not built or device-tested yet: these changes need a new Codemagic/GitHub build.
+
 ## Current implementation
 
 Development source adds Telegram-style pull-down settings search, chat-local Ghost Mode,
