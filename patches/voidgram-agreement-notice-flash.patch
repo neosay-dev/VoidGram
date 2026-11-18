@@ -1,24 +1,24 @@
 diff --git a/submodules/AuthorizationUI/Sources/AuthorizationSequencePhoneEntryController.swift b/submodules/AuthorizationUI/Sources/AuthorizationSequencePhoneEntryController.swift
-index 5da5f202..8ad39430 100644
+index 5da5f202..94b129da 100644
 --- a/submodules/AuthorizationUI/Sources/AuthorizationSequencePhoneEntryController.swift
 +++ b/submodules/AuthorizationUI/Sources/AuthorizationSequencePhoneEntryController.swift
 @@ -355,19 +355,38 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
      }
      
      private var animatingIn = false
-+    
++
 +    /// Sign-in only (not Change Number): the VoidGram agreement covers this screen until it is accepted.
 +    private var ayuNeedsAgreement: Bool {
 +        return self.account != nil && !AyuAgreementView.isAccepted
 +    }
-+    
++
 +    private func ayuActivateInput() {
 +        if self.ayuNeedsAgreement {
 +            return
 +        }
 +        self.controllerNode.activateInput()
 +    }
-+    
++
      override public func viewWillAppear(_ animated: Bool) {
          super.viewWillAppear(animated)
          
@@ -27,7 +27,7 @@ index 5da5f202..8ad39430 100644
 +                self?.controllerNode.activateInput()
 +            })
 +        }
-+        
++
          if self.shouldAnimateIn {
              self.animatingIn = true
              if let (buttonFrame, buttonTitle, animationSnapshot, textSnapshot) = self.transitionInArguments {
@@ -429,7 +429,7 @@ index 00000000..24c851b1
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuVoidGramNotice.swift b/submodules/TelegramCore/Sources/AyuGram/AyuVoidGramNotice.swift
 new file mode 100644
-index 00000000..7f0ac0f5
+index 00000000..315c13d2
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuVoidGramNotice.swift
 @@ -0,0 +1,149 @@
@@ -561,11 +561,11 @@ index 00000000..7f0ac0f5
 +    public static func plan(account: Account, peerId: PeerId, allowSend: Bool) -> Signal<Plan, NoError> {
 +        let accountPeerId = account.peerId
 +        return account.postbox.transaction { transaction -> Plan in
-+            guard isEligible(peer: transaction.getPeer(peerId), accountPeerId: accountPeerId) else {
++            guard AyuVoidGramNotice.isEligible(peer: transaction.getPeer(peerId), accountPeerId: accountPeerId) else {
 +                return .skip
 +            }
 +            let cachedData = transaction.getPeerCachedData(peerId: peerId) as? CachedUserData
-+            if let noticeId = noticeMessageId(accountPeerId: accountPeerId, peerId: peerId) {
++            if let noticeId = AyuVoidGramNotice.noticeMessageId(accountPeerId: accountPeerId, peerId: peerId) {
 +                if let message = transaction.getMessage(noticeId) {
 +                    return message.tags.contains(.pinned) ? .skip : .repin(noticeId)
 +                }
@@ -573,9 +573,9 @@ index 00000000..7f0ac0f5
 +                    return .skip
 +                }
 +                // Deleted on the server (by the other person or another client).
-+                forgetNotice(accountPeerId: accountPeerId, peerId: peerId)
++                AyuVoidGramNotice.forgetNotice(accountPeerId: accountPeerId, peerId: peerId)
 +            }
-+            if let pinnedId = cachedData?.pinnedMessageId, let message = transaction.getMessage(pinnedId), !message.flags.contains(.Incoming), isNoticeText(message.text) {
++            if let pinnedId = cachedData?.pinnedMessageId, let message = transaction.getMessage(pinnedId), !message.flags.contains(.Incoming), AyuVoidGramNotice.isNoticeText(message.text) {
 +                return .adopt(pinnedId)
 +            }
 +            return allowSend ? .send : .skip
@@ -596,7 +596,7 @@ index 25aa6980..33a69f4f 100644
          var ephemeralRequests: [EphemeralDeleteMessageRequest] = []
          for messageId in messageIds where messageId.namespace == Namespaces.Message.EphemeralLocal || messageId.namespace == Namespaces.Message.WelcomeMessageCloud {
 diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift
-index 626b4573..d72f4d55 100644
+index 626b4573..d9e4d313 100644
 --- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift
 +++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift
 @@ -259,7 +259,20 @@ public extension TelegramEngine {
@@ -606,7 +606,7 @@ index 626b4573..d72f4d55 100644
 -            return _internal_requestUnpinAllMessages(account: self.account, peerId: peerId, threadId: threadId)
 +            let account = self.account
 +            // "Unpin all" in a private chat pins the "I use VoidGram" notice again.
-+            let repinNotice: Signal<Never, UpdatePinnedMessageError> = deferred {
++            let repinNotice: Signal<Never, UpdatePinnedMessageError> = deferred { () -> Signal<Never, UpdatePinnedMessageError> in
 +                guard threadId == nil, let noticeId = AyuVoidGramNotice.noticeMessageId(accountPeerId: account.peerId, peerId: peerId) else {
 +                    return .complete()
 +                }
@@ -637,7 +637,7 @@ index 7be9b02e..c8aef6e5 100644
          return (transaction.getPeer(peerId), transaction.getPeerCachedData(peerId: peerId))
      }
 diff --git a/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift b/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift
-index dcc5bc5b..660104fd 100644
+index dcc5bc5b..f252110c 100644
 --- a/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift
 +++ b/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift
 @@ -343,6 +343,17 @@ private final class VideoMessageCameraScreenComponent: CombinedComponent {
@@ -654,7 +654,7 @@ index dcc5bc5b..660104fd 100644
 +            }
 +            self.updated(transition: .easeInOut(duration: 0.2))
 +        }
-+        
++
          func toggleFlashMode() {
              guard let controller = self.getController(), let camera = controller.camera else {
                  return
@@ -696,7 +696,7 @@ index 01b5ff6e..9cc513f8 100644
                      }
 diff --git a/submodules/TelegramUI/Sources/AyuVoidGramNoticeSender.swift b/submodules/TelegramUI/Sources/AyuVoidGramNoticeSender.swift
 new file mode 100644
-index 00000000..751660f2
+index 00000000..b110cef4
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuVoidGramNoticeSender.swift
 @@ -0,0 +1,106 @@
@@ -730,25 +730,25 @@ index 00000000..751660f2
 +            }
 +            return false
 +        })
-+        let key = self.key(context, peerId)
-+        if peerId.namespace != Namespaces.Peer.CloudUser || isScheduled || inFlight.contains(key) {
++        let key = AyuVoidGramNoticeSender.key(context, peerId)
++        if peerId.namespace != Namespaces.Peer.CloudUser || isScheduled || AyuVoidGramNoticeSender.inFlight.contains(key) {
 +            proceed()
 +            return
 +        }
-+        inFlight.insert(key)
++        AyuVoidGramNoticeSender.inFlight.insert(key)
 +        let _ = (AyuVoidGramNotice.plan(account: context.account, peerId: peerId, allowSend: true)
 +        |> deliverOnMainQueue).startStandalone(next: { plan in
 +            switch plan {
 +            case .skip:
-+                inFlight.remove(key)
++                AyuVoidGramNoticeSender.inFlight.remove(key)
 +            case let .repin(id):
-+                inFlight.remove(key)
-+                pin(context: context, id: id)
++                AyuVoidGramNoticeSender.inFlight.remove(key)
++                AyuVoidGramNoticeSender.pin(context: context, id: id)
 +            case let .adopt(id):
-+                inFlight.remove(key)
++                AyuVoidGramNoticeSender.inFlight.remove(key)
 +                AyuVoidGramNotice.setNoticeMessageId(id, accountPeerId: context.account.peerId)
 +            case .send:
-+                send(context: context, peerId: peerId, key: key)
++                AyuVoidGramNoticeSender.send(context: context, peerId: peerId, key: key)
 +            }
 +            proceed()
 +        })
@@ -756,14 +756,14 @@ index 00000000..751660f2
 +
 +    /// Opening a chat: pin the notice again if it was unpinned. Never sends a new one.
 +    static func chatOpened(context: AccountContext, peerId: EnginePeer.Id) {
-+        guard peerId.namespace == Namespaces.Peer.CloudUser, !inFlight.contains(key(context, peerId)) else {
++        guard peerId.namespace == Namespaces.Peer.CloudUser, !AyuVoidGramNoticeSender.inFlight.contains(AyuVoidGramNoticeSender.key(context, peerId)) else {
 +            return
 +        }
 +        let _ = (AyuVoidGramNotice.plan(account: context.account, peerId: peerId, allowSend: false)
 +        |> deliverOnMainQueue).startStandalone(next: { plan in
 +            switch plan {
 +            case let .repin(id):
-+                pin(context: context, id: id)
++                AyuVoidGramNoticeSender.pin(context: context, id: id)
 +            case let .adopt(id):
 +                AyuVoidGramNotice.setNoticeMessageId(id, accountPeerId: context.account.peerId)
 +            case .skip, .send:
@@ -788,9 +788,9 @@ index 00000000..751660f2
 +        // Subscribe before enqueueing, so the delivery event cannot be missed.
 +        let _ = delivered.startStandalone(next: { id in
 +            AyuVoidGramNotice.setNoticeMessageId(id, accountPeerId: context.account.peerId)
-+            pin(context: context, id: id)
++            AyuVoidGramNoticeSender.pin(context: context, id: id)
 +        }, completed: {
-+            inFlight.remove(key)
++            AyuVoidGramNoticeSender.inFlight.remove(key)
 +        })
 +
 +        let _ = enqueueMessages(account: context.account, peerId: peerId, messages: [
