@@ -396,7 +396,7 @@ index 5c9f7dde..bd07354f 100644
                  }
                  if let swipeToReplyNode = self.swipeToReplyNode {
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageSwipeToReplyNode/Sources/ChatMessageSwipeToReplyNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageSwipeToReplyNode/Sources/ChatMessageSwipeToReplyNode.swift
-index f57eab10..92486a08 100644
+index f57eab10..22e53709 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageSwipeToReplyNode/Sources/ChatMessageSwipeToReplyNode.swift
 +++ b/submodules/TelegramUI/Components/Chat/ChatMessageSwipeToReplyNode/Sources/ChatMessageSwipeToReplyNode.swift
 @@ -13,6 +13,8 @@ public final class ChatMessageSwipeToReplyNode: ASDisplayNode {
@@ -415,7 +415,7 @@ index f57eab10..92486a08 100644
 +            case .hide:
 +                if let image = UIImage(bundleImageName: "Chat/Message/AgeRestricted") {
 +                    let imageRect = CGRect(origin: CGPoint(x: floor((size.width - image.size.width) / 2.0), y: floor((size.height - image.size.height) / 2.0)), size: image.size)
-+                    
++
 +                    context.translateBy(x: imageRect.midX, y: imageRect.midY)
 +                    context.scaleBy(x: 1.0, y: -1.0)
 +                    context.translateBy(x: -imageRect.midX, y: -imageRect.midY)
@@ -6981,7 +6981,7 @@ index b5b46866..4bd1106e 100644
          var entryAttributes = ChatMessageEntryAttributes()
          entryAttributes.isCentered = isCentered
 diff --git a/submodules/TextSelectionNode/Sources/TextSelectionNode.swift b/submodules/TextSelectionNode/Sources/TextSelectionNode.swift
-index a86f7041..f7340d29 100644
+index a86f7041..de8d0d34 100644
 --- a/submodules/TextSelectionNode/Sources/TextSelectionNode.swift
 +++ b/submodules/TextSelectionNode/Sources/TextSelectionNode.swift
 @@ -213,6 +213,8 @@ public enum TextSelectionAction: Equatable {
@@ -7012,7 +7012,7 @@ index a86f7041..f7340d29 100644
 +                self?.cancelSelection()
 +            })]
 +        }
-+        
++
          self.contextMenu?.dismiss()
          
          let contextMenu = makeContextMenuController(actions: actions, catchTapsOutside: false, hasHapticFeedback: false, isDark: self.theme.isDark, skipCoordnateConversion: self.menuSkipCoordnateConversion)
@@ -7038,7 +7038,7 @@ index f80c6f5d..cd242bf1 100644
      }
      
 diff --git a/submodules/UndoUI/Sources/UndoOverlayControllerNode.swift b/submodules/UndoUI/Sources/UndoOverlayControllerNode.swift
-index 251e9255..406d658b 100644
+index 251e9255..10767165 100644
 --- a/submodules/UndoUI/Sources/UndoOverlayControllerNode.swift
 +++ b/submodules/UndoUI/Sources/UndoOverlayControllerNode.swift
 @@ -1627,6 +1627,10 @@ final class UndoOverlayControllerNode: ViewControllerTracingNode {
@@ -7048,7 +7048,7 @@ index 251e9255..406d658b 100644
 +        if self.appearance?.hidesIcon == true {
 +            self.animationNode = nil
 +        }
-+        
++
          self.titleNode.isUserInteractionEnabled = false
          self.textNode.isUserInteractionEnabled = self.textNode.tapAttributeAction != nil
          self.iconNode?.isUserInteractionEnabled = false
