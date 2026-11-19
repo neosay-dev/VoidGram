@@ -36,7 +36,7 @@ index ef5604ac..f1f2b134 100644
 +    }
 +}
 diff --git a/submodules/Display/Source/AyuSpeechBleep.swift b/submodules/Display/Source/AyuSpeechBleep.swift
-index be3a2cf5..366a3ac0 100644
+index be3a2cf5..8680ccf0 100644
 --- a/submodules/Display/Source/AyuSpeechBleep.swift
 +++ b/submodules/Display/Source/AyuSpeechBleep.swift
 @@ -11,13 +11,22 @@ public enum AyuSpeechBleep {
@@ -64,6 +64,60 @@ index be3a2cf5..366a3ac0 100644
      }
  
      /// Time ranges (seconds) of swear words in 16 kHz mono samples.
+@@ -72,6 +81,53 @@ public enum AyuSpeechBleep {
+         }
+     }
+ 
++    /// The whole text of 16 kHz mono samples, for "→A" (a voice recording turned into an editable message), or nil.
++    public static func transcribe(_ samples: [Int16], completion: @escaping (String?) -> Void) {
++        SFSpeechRecognizer.requestAuthorization { status in
++            guard status == .authorized, !samples.isEmpty else { return completion(nil) }
++            let recognizer = SFSpeechRecognizer(locale: Locale(identifier: Locale.preferredLanguages.first ?? "en-US")) ?? SFSpeechRecognizer()
++            guard let recognizer, recognizer.isAvailable,
++                  let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000.0, channels: 1, interleaved: false),
++                  let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)), let channel = buffer.floatChannelData?[0] else {
++                return completion(nil)
++            }
++            buffer.frameLength = AVAudioFrameCount(samples.count)
++            for (index, sample) in samples.enumerated() {
++                channel[index] = Float(sample) / 32768.0
++            }
++            let request = SFSpeechAudioBufferRecognitionRequest()
++            request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
++            request.shouldReportPartialResults = false
++            if #available(iOS 16.0, *) {
++                request.addsPunctuation = true
++            }
++            request.append(buffer)
++            request.endAudio()
++            let lock = NSLock()
++            var finished = false
++            let finish: (String?) -> Void = { text in
++                lock.lock()
++                let alreadyFinished = finished
++                finished = true
++                lock.unlock()
++                if !alreadyFinished {
++                    completion(text)
++                }
++            }
++            let task = recognizer.recognitionTask(with: request, resultHandler: { result, error in
++                if let result, result.isFinal {
++                    finish(result.bestTranscription.formattedString)
++                } else if error != nil {
++                    finish(nil)
++                }
++            })
++            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 30.0) {
++                task.cancel()
++                finish(nil)
++            }
++        }
++    }
++
+     /// Covers the ranges in samples at `sampleRate`, with 50 ms of margin.
+     public static func cover(_ samples: inout [Int16], ranges: [Range<Double>], sampleRate: Double, beep: Bool) {
+         let margin = Int(sampleRate * 0.05)
 diff --git a/submodules/GalleryUI/Sources/ChatItemGalleryFooterContentNode.swift b/submodules/GalleryUI/Sources/ChatItemGalleryFooterContentNode.swift
 index 7d422d4e..889a1868 100644
 --- a/submodules/GalleryUI/Sources/ChatItemGalleryFooterContentNode.swift
@@ -126,23 +180,29 @@ index 3f373eee..a47e32a7 100644
 +    }
 +}
 diff --git a/submodules/Postbox/AllowedImporters.txt b/submodules/Postbox/AllowedImporters.txt
-index 9eca1c37..a4a75aa7 100644
+index 9eca1c37..e1faff47 100644
 --- a/submodules/Postbox/AllowedImporters.txt
 +++ b/submodules/Postbox/AllowedImporters.txt
-@@ -103,3 +103,4 @@ submodules/TelegramUniversalVideoContent/Sources/SystemVideoContent.swift
- submodules/TelegramUniversalVideoContent/Sources/WebEmbedVideoContent.swift
- submodules/TemporaryCachedPeerDataManager/Sources/ChannelMemberCategoryListContext.swift
- submodules/TemporaryCachedPeerDataManager/Sources/PeerChannelMemberCategoriesContextsManager.swift
+@@ -89,6 +89,7 @@ submodules/TelegramUI/Sources/ChatHistoryEntriesForView.swift
+ submodules/TelegramUI/Sources/ChatHistoryListNode.swift
+ submodules/TelegramUI/Sources/ChatHistoryViewForLocation.swift
+ submodules/TelegramUI/Sources/ConceptsMuteExceptionNavigation.swift
 +submodules/TelegramUI/Sources/ConceptsTopicSwipe.swift
+ submodules/TelegramUI/Sources/CreateGroupController.swift
+ submodules/TelegramUI/Sources/DocumentPreviewController.swift
+ submodules/TelegramUI/Sources/FetchCachedRepresentations.swift
 diff --git a/submodules/Postbox/AllowedPostboxAccess.txt b/submodules/Postbox/AllowedPostboxAccess.txt
-index 23206056..01db0fac 100644
+index 23206056..3b9acb61 100644
 --- a/submodules/Postbox/AllowedPostboxAccess.txt
 +++ b/submodules/Postbox/AllowedPostboxAccess.txt
-@@ -249,3 +249,4 @@ submodules/TranslateUI/Sources/ChatTranslation.swift
- submodules/UndoUI/Sources/UndoOverlayControllerNode.swift
- submodules/WallpaperBackgroundNode/Sources/WallpaperBackgroundNode.swift
- submodules/WallpaperResources/Sources/WallpaperResources.swift
+@@ -218,6 +218,7 @@ submodules/TelegramUI/Sources/ChatControllerOpenMessageShareMenu.swift
+ submodules/TelegramUI/Sources/ChatHistoryListNode.swift
+ submodules/TelegramUI/Sources/ChatPinnedMessageTitlePanelNode.swift
+ submodules/TelegramUI/Sources/ConceptsMuteExceptionNavigation.swift
 +submodules/TelegramUI/Sources/ConceptsTopicSwipe.swift
+ submodules/TelegramUI/Sources/CreateGroupController.swift
+ submodules/TelegramUI/Sources/CreatePeerAvatarSetup.swift
+ submodules/TelegramUI/Sources/DocumentPreviewController.swift
 diff --git a/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
 index 5db910e3..7ed7e447 100644
 --- a/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
@@ -458,6 +518,105 @@ index 724aaa9e..ece41ebd 100644
          if value && self.isTimeCapsuleSealed {
              return
          }
+diff --git a/submodules/TelegramUI/Components/Chat/ChatRecordingViewOnceButtonNode/Sources/ChatRecordingViewOnceButtonNode.swift b/submodules/TelegramUI/Components/Chat/ChatRecordingViewOnceButtonNode/Sources/ChatRecordingViewOnceButtonNode.swift
+index 10879490..83c4710c 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatRecordingViewOnceButtonNode/Sources/ChatRecordingViewOnceButtonNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatRecordingViewOnceButtonNode/Sources/ChatRecordingViewOnceButtonNode.swift
+@@ -9,6 +9,8 @@ public final class ChatRecordingViewOnceButtonNode: HighlightTrackingButtonNode
+     public enum Icon {
+         case viewOnce
+         case recordMore
++        /// "→A": the recording becomes text in the input field.
++        case transcribe
+     }
+     
+     private let icon: Icon
+@@ -87,6 +89,15 @@ public final class ChatRecordingViewOnceButtonNode: HighlightTrackingButtonNode
+                 self.iconView.image = generateTintedImage(image: UIImage(bundleImageName: self.innerIsSelected ? "Media Gallery/ViewOnceEnabled" : "Media Gallery/ViewOnce"), color: .white)?.withRenderingMode(.alwaysTemplate)
+             case .recordMore:
+                 self.iconView.image = generateTintedImage(image: UIImage(bundleImageName: "Chat/Input/Text/IconMicrophone"), color: .white)?.withRenderingMode(.alwaysTemplate)
++            case .transcribe:
++                let text = NSAttributedString(string: "→A", attributes: [.font: UIFont.systemFont(ofSize: 15.0, weight: .semibold), .foregroundColor: UIColor.white])
++                let textSize = text.size()
++                self.iconView.image = generateImage(CGSize(width: ceil(textSize.width), height: ceil(textSize.height)), rotatedContext: { size, context in
++                    context.clear(CGRect(origin: CGPoint(), size: size))
++                    UIGraphicsPushContext(context)
++                    text.draw(at: CGPoint())
++                    UIGraphicsPopContext()
++                })?.withRenderingMode(.alwaysTemplate)
+             }
+             
+             self.iconView.tintColor = theme.chat.inputPanel.panelControlColor
+diff --git a/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift b/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift
+index f1aaa265..89cffc6d 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift
+@@ -257,6 +257,9 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+     
+     public var viewOnce = false
+     public let viewOnceButton: ChatRecordingViewOnceButtonNode
++    /// VoidGram "→A" while a voice recording is locked: the recording becomes text in the input field.
++    public let ayuTranscribeButton: ChatRecordingViewOnceButtonNode
++    public var ayuTranscribeRecording: (() -> Void)?
+     public let recordMoreButton: ChatRecordingViewOnceButtonNode
+     
+     private var accessoryPanel: (component: AnyComponentWithIdentity<ChatInputAccessoryPanelEnvironment>, view: ComponentView<ChatInputAccessoryPanelEnvironment>)?
+@@ -783,6 +786,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+         self.slowModeButton.alpha = 0.0
+         
+         self.viewOnceButton = ChatRecordingViewOnceButtonNode(icon: .viewOnce)
++        self.ayuTranscribeButton = ChatRecordingViewOnceButtonNode(icon: .transcribe)
+         self.recordMoreButton = ChatRecordingViewOnceButtonNode(icon: .recordMore)
+         
+         super.init()
+@@ -1094,12 +1098,15 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+         }
+         
+         self.viewOnceButton.addTarget(self, action: #selector(self.viewOncePressed), forControlEvents: [.touchUpInside])
++        self.ayuTranscribeButton.addTarget(self, action: #selector(self.ayuTranscribePressed), forControlEvents: [.touchUpInside])
++        self.ayuTranscribeButton.alpha = 0.0
+         self.recordMoreButton.addTarget(self, action: #selector(self.recordMorePressed), forControlEvents: [.touchUpInside])
+         
+         self.view.addSubview(self.recordMoreButton.view)
+         
+         if let viewForOverlayContent = self.viewForOverlayContent {
+             viewForOverlayContent.addSubnode(self.viewOnceButton)
++            viewForOverlayContent.addSubnode(self.ayuTranscribeButton)
+         }
+     }
+ 
+@@ -3787,6 +3794,20 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+             self.viewOnceButton.isHidden = true
+         }
+         
++        var transcribeIsVisible = false
++        if let recordingState = interfaceState.inputTextPanelState.mediaRecordingState, case let .audio(_, isLocked) = recordingState {
++            transcribeIsVisible = isLocked
++        }
++        let transcribeSize = self.ayuTranscribeButton.update(theme: interfaceState.theme)
++        // Above "view once" when that shows (private chats), in its place otherwise.
++        let transcribeY = viewOnceButtonY - (self.viewOnceButton.isHidden ? 0.0 : 52.0)
++        let transcribeFrame = CGRect(origin: CGPoint(x: width - rightInset - 50.0 - UIScreenPixel, y: transcribeY), size: transcribeSize)
++        self.ayuTranscribeButton.bounds = CGRect(origin: .zero, size: transcribeFrame.size)
++        transition.updatePosition(node: self.ayuTranscribeButton, position: transcribeFrame.center)
++        transition.updateAlpha(node: self.ayuTranscribeButton, alpha: transcribeIsVisible ? 1.0 : 0.0)
++        transition.updateTransformScale(node: self.ayuTranscribeButton, scale: transcribeIsVisible ? 1.0 : 0.01)
++        self.ayuTranscribeButton.isUserInteractionEnabled = transcribeIsVisible
++
+         let recordMoreSize = self.recordMoreButton.update(theme: interfaceState.theme)
+         let recordMoreButtonFrame = CGRect(origin: CGPoint(x: width - rightInset - 50.0 - UIScreenPixel, y: -52.0), size: recordMoreSize)
+         self.recordMoreButton.bounds = CGRect(origin: .zero, size: recordMoreButtonFrame.size)
+@@ -4070,6 +4091,10 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+         self.interfaceInteraction?.openBoostToUnrestrict()
+     }
+     
++    @objc private func ayuTranscribePressed() {
++        self.ayuTranscribeRecording?()
++    }
++
+     @objc private func viewOncePressed() {
+         guard let context = self.context, let interfaceState = self.presentationInterfaceState else {
+             return
 diff --git a/submodules/TelegramUI/Components/ChatControllerInteraction/Sources/ChatControllerInteraction.swift b/submodules/TelegramUI/Components/ChatControllerInteraction/Sources/ChatControllerInteraction.swift
 index d50de13e..daccbcd9 100644
 --- a/submodules/TelegramUI/Components/ChatControllerInteraction/Sources/ChatControllerInteraction.swift
@@ -2291,6 +2450,86 @@ index 639285dd..68a6ae5e 100644
                  break
              }
          }
+diff --git a/submodules/TelegramUI/Sources/AyuPluginAppServices.swift b/submodules/TelegramUI/Sources/AyuPluginAppServices.swift
+index d79e6d31..805c0dd8 100644
+--- a/submodules/TelegramUI/Sources/AyuPluginAppServices.swift
++++ b/submodules/TelegramUI/Sources/AyuPluginAppServices.swift
+@@ -8,6 +8,8 @@ import SettingsUI
+ import ChatInterfaceState
+ import ChatPresentationInterfaceState
+ import ChatControllerInteraction
++import PresentationDataUtils
++import TelegramPresentationData
+ 
+ /// AyuGram "Undo send": messages wait a few seconds with an Undo button before they are enqueued.
+ enum AyuUndoSend {
+@@ -380,3 +382,47 @@ func ayuInstallPluginAppServices(sharedContext: SharedAccountContext) {
+         AyuPluginChatTracker.current?.ayuSetInputText(text)
+     }
+ }
++
++extension ChatControllerImpl {
++    /// "→A": the voice recording stops, is recognised on the device (or by Apple's server where the language needs it)
++    /// and becomes the text of the input field, to edit before sending. The recording itself is dropped.
++    func ayuTranscribeRecording() {
++        guard let audioRecorderValue = self.audioRecorderValue else {
++            return
++        }
++        audioRecorderValue.stop()
++        self.dismissAllTooltips()
++        self.updateChatPresentationInterfaceState(animated: true, interactive: true, {
++            $0.updatedInputTextPanelState { panelState in
++                return panelState.withUpdatedMediaRecordingState(.waitingForPreview)
++            }
++        })
++        let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let finish: (String?) -> Void = { [weak self] text in
++            Queue.mainQueue().async {
++                guard let self else { return }
++                self.recorderDataDisposable.set(nil)
++                self.audioRecorder.set(.single(nil))
++                self.recorderFeedback = nil
++                self.updateChatPresentationInterfaceState(animated: true, interactive: true, {
++                    $0.updatedInputTextPanelState { panelState in
++                        return panelState.withUpdatedMediaRecordingState(nil)
++                    }
++                })
++                if let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
++                    let current = self.presentationInterfaceState.interfaceState.effectiveInputState.inputText.string
++                    self.ayuSetInputText(current.isEmpty ? text : current + " " + text)
++                } else {
++                    self.present(textAlertController(context: self.context, title: nil, text: ru ? "Не удалось распознать речь. Проверь доступ к распознаванию речи в Настройках iOS." : "Speech could not be recognised. Check Speech Recognition access in iOS Settings.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
++                }
++            }
++        }
++        self.recorderDataDisposable.set((audioRecorderValue.takenRecordedData() |> deliverOnMainQueue).startStrict(next: { data in
++            guard let data, data.duration >= 0.5, let samples = AyuProfanityBleep.samples(of: data.compressedData) else {
++                finish(nil)
++                return
++            }
++            AyuSpeechBleep.transcribe(samples, completion: finish)
++        }))
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/AyuProfanityBleep.swift b/submodules/TelegramUI/Sources/AyuProfanityBleep.swift
+index 9d50fda7..9355fdd2 100644
+--- a/submodules/TelegramUI/Sources/AyuProfanityBleep.swift
++++ b/submodules/TelegramUI/Sources/AyuProfanityBleep.swift
+@@ -92,6 +92,14 @@ enum AyuProfanityBleep {
+     }
+ 
+     /// 48 kHz Opus decoder output averaged down to 16 kHz mono.
++    /// 16 kHz mono samples of a recorded voice message (Ogg Opus).
++    static func samples(of data: Data) -> [Int16]? {
++        let url = FileManager.default.temporaryDirectory.appendingPathComponent("ayu_samples_\(Int64.random(in: 1 ... Int64.max)).ogg")
++        defer { try? FileManager.default.removeItem(at: url) }
++        guard (try? data.write(to: url)) != nil else { return nil }
++        return decode(path: url.path)
++    }
++
+     private static func decode(path: String) -> [Int16]? {
+         guard let reader = OggOpusReader(path: path) else { return nil }
+         var result: [Int16] = []
 diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
 index bcac5f1a..e73fc0a3 100644
 --- a/submodules/TelegramUI/Sources/ChatController.swift
@@ -2339,6 +2578,20 @@ index bcac5f1a..e73fc0a3 100644
      }
      
      func displayGiveawayStatusInfo(messageId: EngineMessage.Id, giveawayInfo: PremiumGiveawayInfo) {
+diff --git a/submodules/TelegramUI/Sources/ChatControllerNode.swift b/submodules/TelegramUI/Sources/ChatControllerNode.swift
+index 643956a8..0802681e 100644
+--- a/submodules/TelegramUI/Sources/ChatControllerNode.swift
++++ b/submodules/TelegramUI/Sources/ChatControllerNode.swift
+@@ -1047,6 +1047,9 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
+             strongSelf.inputPanelContainerNode.toggleIfEnabled()
+         }
+         
++        self.textInputPanelNode?.ayuTranscribeRecording = { [weak self] in
++            self?.controller?.ayuTranscribeRecording()
++        }
+         self.textInputPanelNode?.switchToTextInputIfNeeded = { [weak self] in
+             guard let strongSelf = self, let interfaceInteraction = strongSelf.interfaceInteraction else {
+                 return
 diff --git a/submodules/TelegramUI/Sources/ChatControllerOpenPostShareImage.swift b/submodules/TelegramUI/Sources/ChatControllerOpenPostShareImage.swift
 new file mode 100644
 index 00000000..30b27dc4
