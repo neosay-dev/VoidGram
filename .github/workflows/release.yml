@@ -91,6 +91,8 @@ jobs:
             ipa=$(find artifact/ios -name '*.ipa' | head -n 1)
             test -n "$ipa" || { echo "::error::run $RUN_ID has no IPA"; exit 1; }
             cp "$ipa" "files/VoidGram-${VERSION}.ipa"
+            tipa=$(find artifact/ios -name '*.tipa' | head -n 1)
+            if [ -n "$tipa" ]; then cp "$tipa" "files/VoidGram-${VERSION}-TrollStore.tipa"; fi
           fi
           find artifact/windows artifact/arch artifact/linux artifact/macos -type f \( -name '*.zip' -o -name '*.tar.zst' -o -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' \) -exec cp {} files/ \; 2>/dev/null || true
           # Generic tarballs carry their own install.sh; the release one is the current installer.

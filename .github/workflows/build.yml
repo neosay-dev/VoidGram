@@ -106,6 +106,14 @@ jobs:
       - name: Build native VoidGram port
         if: github.event_name == 'push' || inputs.native_build
         run: python3 -u ci/build.py telegram --phase port --configuration "$CONFIGURATION"
+      - name: TrollStore package
+        if: success() && hashFiles('telegram/artifacts/port/*.ipa') != ''
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          brew install ldid
+          ipa=$(ls telegram/artifacts/port/*.ipa | head -n 1)
+          python3 ci/trollstore.py "$ipa" "${ipa%.ipa}-TrollStore.tipa" one.ayugram.unofficial.ios AYUCOMPILE
       - name: Show errors on the run page
         if: failure()
         run: python3 ci/annotate_failure.py "VoidGram build failed" "$RUNNER_TEMP/ayu-checks.log" telegram/artifacts/port/build.log
@@ -115,6 +123,7 @@ jobs:
           name: VoidGram-ios-${{ env.CONFIGURATION }}-unsigned-${{ github.run_number }}
           path: |
             telegram/artifacts/port/*.ipa
+            telegram/artifacts/port/*.tipa
             telegram/artifacts/port/manifest.json
             telegram/artifacts/port/build.log
             ${{ runner.temp }}/ayu-tests.log
