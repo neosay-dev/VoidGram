@@ -577,13 +577,17 @@ index 9881370..262aa9c 100644
                  if (BuildVars.LOGS_ENABLED) {
                      FileLog.d("NotificationsController: process new messages, value is " + value + " ("+dialogId+", "+isChannel+", "+messageObject.isReactionPush+", "+messageObject.isStoryReactionPush+")");
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java b/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
-index 55452d3..7d59d80 100644
+index 55452d3..2151066 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
-@@ -4439,6 +4439,12 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
+@@ -4439,6 +4439,16 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
      }
  
      public void sendMessage(SendMessageParams sendMessageParams) {
++        // VoidGram: a voice message waits until its swear words are bleeped.
++        if (org.telegram.messenger.voidgram.VoidGramBleep.intercept(currentAccount, sendMessageParams)) {
++            return;
++        }
 +        // VoidGram: the privacy notice goes before the first own message in a chat.
 +        org.telegram.messenger.voidgram.VoidGramChatNotice.beforeSend(currentAccount, sendMessageParams);
 +        // VoidGram: tracking parameters are removed from links.
@@ -1260,6 +1264,287 @@ index 0000000..d824b69
 +            }
 +            NotificationCenter.getInstance(a).postNotificationName(NotificationCenter.updateInterfaces, MessagesController.UPDATE_MASK_EMOJI_STATUS);
 +        }
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramBleep.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramBleep.java
+new file mode 100644
+index 0000000..500c5cd
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramBleep.java
+@@ -0,0 +1,275 @@
++package org.telegram.messenger.voidgram;
++
++import android.content.Intent;
++import android.media.AudioFormat;
++import android.os.Build;
++import android.os.Bundle;
++import android.os.ParcelFileDescriptor;
++import android.speech.RecognitionListener;
++import android.speech.RecognitionPart;
++import android.speech.RecognizerIntent;
++import android.speech.SpeechRecognizer;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.ApplicationLoader;
++import org.telegram.messenger.MediaController;
++import org.telegram.messenger.MessageObject;
++import org.telegram.messenger.SendMessagesHelper;
++import org.telegram.messenger.Utilities;
++import org.telegram.tgnet.TLRPC;
++
++import java.io.File;
++import java.io.FileOutputStream;
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.Locale;
++import java.util.Set;
++import java.util.WeakHashMap;
++
++/**
++ * "Bleep profanity" for voice messages, as on iOS: before a voice message goes out its words are
++ * recognised on the device with their times, swear words are covered by a 1 kHz beep or
++ * silence, and the audio is encoded again. Android 14+. When recognition is not available, or
++ * takes too long, the original recording is sent.
++ */
++public final class VoidGramBleep {
++    private VoidGramBleep() {
++    }
++
++    public static final String[] MODES = {"off", "beep", "silence"};
++
++    private static final String[] ROOTS = {
++            "хуй", "хуе", "хуё", "хуя", "хуи", "пизд", "бля", "ебан", "ебат", "ебал", "ебу", "ёб", "заеб", "выеб", "наеб", "отъеб", "уеб",
++            "сука", "суки", "сучк", "мудак", "мудил", "пидор", "пидар", "педик", "залуп", "гандон", "шлюх", "дерьм", "говн", "хер",
++            "fuck", "shit", "bitch", "cunt", "dick", "asshole", "motherf", "bastard", "whore", "slut"
++    };
++    private static final String[] PREFIXES = {"", "на", "по", "о", "об", "объ", "за", "вы", "от", "отъ", "у", "до", "раз", "рас", "с", "съ", "при", "под", "пере", "ни", "ох"};
++
++    private static final Set<SendMessagesHelper.SendMessageParams> processed = Collections.newSetFromMap(new WeakHashMap<>());
++
++    public static String mode() {
++        return VoidGram.prefs().getString("bleep", "off");
++    }
++
++    public static void setMode(String value) {
++        VoidGram.prefs().edit().putString("bleep", value).apply();
++    }
++
++    public static boolean isSupported() {
++        return Build.VERSION.SDK_INT >= 34;
++    }
++
++    public static String title(String mode) {
++        switch (mode) {
++            case "beep": return VoidGram.t("Писк", "Beep");
++            case "silence": return VoidGram.t("Тишина", "Silence");
++            default: return VoidGram.t("Выключено", "Off");
++        }
++    }
++
++    public static boolean isProfanity(String word) {
++        if (word == null) {
++            return false;
++        }
++        if (word.contains("*")) {
++            return true;
++        }
++        String lowered = word.toLowerCase(Locale.ROOT).replace('ё', 'е').replaceAll("^[\\p{Punct}«»]+|[\\p{Punct}«»]+$", "");
++        for (String prefix : PREFIXES) {
++            if (!lowered.startsWith(prefix)) {
++                continue;
++            }
++            String rest = lowered.substring(prefix.length());
++            for (String root : ROOTS) {
++                if (rest.startsWith(root.replace('ё', 'е'))) {
++                    return true;
++                }
++            }
++        }
++        for (String root : ROOTS) {
++            if (lowered.length() > 4 && root.length() >= 4 && lowered.contains(root.replace('ё', 'е'))) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    private static boolean isVoice(SendMessagesHelper.SendMessageParams params) {
++        if (params.document == null || params.path == null) {
++            return false;
++        }
++        for (TLRPC.DocumentAttribute attribute : params.document.attributes) {
++            if (attribute instanceof TLRPC.TL_documentAttributeAudio && attribute.voice) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    /** SendMessagesHelper: holds a voice message back until it is bleeped, then sends it again. */
++    public static boolean intercept(int account, SendMessagesHelper.SendMessageParams params) {
++        if (params == null || "off".equals(mode()) || !isSupported() || VoidGramDecoy.isActive() || !isVoice(params) || processed.contains(params)) {
++            return false;
++        }
++        processed.add(params);
++        final boolean beep = "beep".equals(mode());
++        final boolean[] sent = new boolean[1];
++        final Runnable send = () -> {
++            if (sent[0]) {
++                return;
++            }
++            sent[0] = true;
++            SendMessagesHelper.getInstance(account).sendMessage(params);
++        };
++        AndroidUtilities.runOnUIThread(send, 45_000);
++        Utilities.globalQueue.postRunnable(() -> {
++            File file = new File(params.path);
++            byte[] speech = VoidGramTranscribe.decodePcm(file, 16000, 600);
++            if (speech == null || speech.length == 0) {
++                AndroidUtilities.runOnUIThread(send);
++                return;
++            }
++            if (Build.VERSION.SDK_INT < 34) {
++                AndroidUtilities.runOnUIThread(send);
++                return;
++            }
++            AndroidUtilities.runOnUIThread(() -> recognize(speech, ranges -> {
++                if (ranges.isEmpty() || sent[0]) {
++                    send.run();
++                    return;
++                }
++                Utilities.globalQueue.postRunnable(() -> {
++                    byte[] pcm = VoidGramTranscribe.decodePcm(file, 48000, 600);
++                    if (pcm != null) {
++                        cover(pcm, ranges, 48000, beep);
++                        File edited = new File(file.getParentFile(), "bleep_" + file.getName());
++                        if (MediaController.getInstance().voidgramEncodeVoice(edited.getAbsolutePath(), pcm) && edited.length() > 0) {
++                            if (file.delete() && edited.renameTo(file)) {
++                                params.document.size = (int) file.length();
++                            } else {
++                                params.path = edited.getAbsolutePath();
++                                params.document.size = (int) edited.length();
++                            }
++                        }
++                    }
++                    AndroidUtilities.runOnUIThread(send);
++                });
++            }));
++        });
++        return true;
++    }
++
++    /** Covers each range (seconds) with 50 ms of margin, in 16-bit little-endian PCM. */
++    private static void cover(byte[] pcm, ArrayList<double[]> ranges, int rate, boolean beep) {
++        int samples = pcm.length / 2;
++        int margin = (int) (rate * 0.05);
++        for (double[] range : ranges) {
++            int start = Math.max(0, (int) (range[0] * rate) - margin);
++            int end = Math.min(samples, (int) (range[1] * rate) + margin);
++            for (int i = start; i < end; i++) {
++                short value = beep ? (short) (Math.sin(i * 2.0 * Math.PI * 1000.0 / rate) * 9000.0) : 0;
++                pcm[i * 2] = (byte) (value & 0xff);
++                pcm[i * 2 + 1] = (byte) ((value >> 8) & 0xff);
++            }
++        }
++    }
++
++    private interface Ranges {
++        void run(ArrayList<double[]> ranges);
++    }
++
++    @androidx.annotation.RequiresApi(34)
++    private static void recognize(byte[] pcm, Ranges done) {
++        final ArrayList<double[]> ranges = new ArrayList<>();
++        if (!SpeechRecognizer.isRecognitionAvailable(ApplicationLoader.applicationContext)) {
++            done.run(ranges);
++            return;
++        }
++        final SpeechRecognizer recognizer;
++        final ParcelFileDescriptor[] pipe;
++        try {
++            recognizer = SpeechRecognizer.isOnDeviceRecognitionAvailable(ApplicationLoader.applicationContext)
++                    ? SpeechRecognizer.createOnDeviceSpeechRecognizer(ApplicationLoader.applicationContext)
++                    : SpeechRecognizer.createSpeechRecognizer(ApplicationLoader.applicationContext);
++            pipe = ParcelFileDescriptor.createPipe();
++        } catch (Throwable e) {
++            done.run(ranges);
++            return;
++        }
++        final boolean[] finished = new boolean[1];
++        final Runnable finish = () -> {
++            if (finished[0]) {
++                return;
++            }
++            finished[0] = true;
++            try {
++                recognizer.destroy();
++            } catch (Throwable ignore) {
++            }
++            try {
++                pipe[0].close();
++            } catch (Throwable ignore) {
++            }
++            done.run(ranges);
++        };
++        recognizer.setRecognitionListener(new RecognitionListener() {
++            @Override public void onReadyForSpeech(Bundle params) { }
++            @Override public void onBeginningOfSpeech() { }
++            @Override public void onRmsChanged(float rmsdB) { }
++            @Override public void onBufferReceived(byte[] buffer) { }
++            @Override public void onEndOfSpeech() { }
++            @Override public void onPartialResults(Bundle partialResults) { }
++            @Override public void onEvent(int eventType, Bundle params) { }
++
++            @Override
++            public void onResults(Bundle results) {
++                ArrayList<RecognitionPart> parts = results != null ? results.getParcelableArrayList(SpeechRecognizer.RECOGNITION_PARTS, RecognitionPart.class) : null;
++                if (parts != null) {
++                    for (int i = 0; i < parts.size(); i++) {
++                        RecognitionPart part = parts.get(i);
++                        String word = part.getFormattedText() != null ? part.getFormattedText() : part.getRawText();
++                        if (!isProfanity(word)) {
++                            continue;
++                        }
++                        double start = part.getTimestampMillis() / 1000.0;
++                        double end = i + 1 < parts.size() ? parts.get(i + 1).getTimestampMillis() / 1000.0 : start + 0.6;
++                        if (end <= start || end - start > 1.2) {
++                            end = start + 0.6;
++                        }
++                        ranges.add(new double[]{start, end});
++                    }
++                }
++                finish.run();
++            }
++
++            @Override
++            public void onError(int error) {
++                finish.run();
++            }
++        });
++        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
++        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
++        intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
++        intent.putExtra(RecognizerIntent.EXTRA_REQUEST_WORD_TIMING, true);
++        intent.putExtra(RecognizerIntent.EXTRA_MASK_OFFENSIVE_WORDS, false);
++        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 10_000L);
++        intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, pipe[0]);
++        intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1);
++        intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT);
++        intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, 16000);
++        try {
++            recognizer.startListening(intent);
++        } catch (Throwable e) {
++            finish.run();
++            return;
++        }
++        new Thread(() -> {
++            try (FileOutputStream out = new ParcelFileDescriptor.AutoCloseOutputStream(pipe[1])) {
++                out.write(pcm);
++                out.write(new byte[16000 * 2]);
++            } catch (Throwable ignore) {
++            }
++        }, "VoidGramBleep").start();
++        AndroidUtilities.runOnUIThread(finish, 40_000);
 +    }
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChatExport.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChatExport.java
@@ -7160,10 +7445,10 @@ index 0000000..53c13b2
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java
 new file mode 100644
-index 0000000..17be5d9
+index 0000000..f63c19e
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java
-@@ -0,0 +1,156 @@
+@@ -0,0 +1,180 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.view.View;
@@ -7190,6 +7475,7 @@ index 0000000..17be5d9
 +    private static final int ID_PREVIEW_VOICE = 10;
 +    private static final int ID_QUICK_STICKER = 11;
 +    private static final int ID_VOICE_CHANGER = 12;
++    private static final int ID_BLEEP = 13;
 +    private static final int ID_TRANSLATE_BASE = 20;
 +    private static final int ID_LIBRE_URL = 30;
 +
@@ -7209,6 +7495,7 @@ index 0000000..17be5d9
 +        items.add(UItem.asCheck(ID_CONFIRM_GIFS, VoidGram.t("Спрашивать перед отправкой GIF", "Confirm GIF sends")).setChecked(org.telegram.messenger.voidgram.VoidGramSending.confirmGifs()));
 +        items.add(UItem.asCheck(ID_QUICK_STICKER, VoidGram.t("Быстрые стикеры (удерживать кнопку стикеров)", "Quick stickers (hold the sticker button)")).setChecked(VoidGramQuickSticker.isEnabled()));
 +        items.add(UItem.asButton(ID_VOICE_CHANGER, VoidGram.t("Смена голоса", "Voice changer"), org.telegram.messenger.voidgram.VoidGramVoiceChanger.title(org.telegram.messenger.voidgram.VoidGramVoiceChanger.voice())));
++        items.add(UItem.asButton(ID_BLEEP, VoidGram.t("Запикивать мат в голосовых", "Bleep swearing in voice messages"), org.telegram.messenger.voidgram.VoidGramBleep.isSupported() ? org.telegram.messenger.voidgram.VoidGramBleep.title(org.telegram.messenger.voidgram.VoidGramBleep.mode()) : VoidGram.t("Android 14+", "Android 14+")));
 +        items.add(UItem.asCheck(ID_PREVIEW_VOICE, VoidGram.t("Прослушать голосовое перед отправкой", "Preview voice messages before sending")).setChecked(org.telegram.messenger.voidgram.VoidGramSending.previewVoice()));
 +        items.add(UItem.asShadow(null));
 +        items.add(UItem.asHeader(VoidGram.t("Фильтры", "Filters")));
@@ -7244,6 +7531,28 @@ index 0000000..17be5d9
 +            case ID_FILTERS: org.telegram.messenger.voidgram.VoidGramFilters.setEnabled(!org.telegram.messenger.voidgram.VoidGramFilters.isEnabled()); break;
 +            case ID_FILTERS_OWN: org.telegram.messenger.voidgram.VoidGramFilters.setOwnMessages(!org.telegram.messenger.voidgram.VoidGramFilters.ownMessages()); break;
 +            case ID_FILTERS_EDIT: editPatterns(); return;
++            case ID_BLEEP: {
++                if (!org.telegram.messenger.voidgram.VoidGramBleep.isSupported()) {
++                    org.telegram.ui.Components.BulletinFactory.of(this).createErrorBulletin(VoidGram.t("Нужен Android 14 или новее: распознавание слов с их временем.", "Needs Android 14 or newer: word recognition with timing.")).show();
++                    return;
++                }
++                String[] modes = org.telegram.messenger.voidgram.VoidGramBleep.MODES;
++                CharSequence[] modeTitles = new CharSequence[modes.length];
++                for (int i = 0; i < modes.length; i++) {
++                    modeTitles[i] = org.telegram.messenger.voidgram.VoidGramBleep.title(modes[i]);
++                }
++                org.telegram.ui.ActionBar.AlertDialog.Builder bleepBuilder = new org.telegram.ui.ActionBar.AlertDialog.Builder(getContext());
++                bleepBuilder.setTitle(VoidGram.t("Запикивать мат", "Bleep swearing"));
++                bleepBuilder.setMessage(VoidGram.t("Перед отправкой голосовое распознаётся на устройстве, мат закрывается писком или тишиной. Если распознавание недоступно, уходит исходная запись.", "Before sending, the voice message is recognised on the device and swearing is covered by a beep or silence. If recognition is not available, the original recording is sent."));
++                bleepBuilder.setItems(modeTitles, (d, which) -> {
++                    org.telegram.messenger.voidgram.VoidGramBleep.setMode(modes[which]);
++                    if (listView != null && listView.adapter != null) {
++                        listView.adapter.update(true);
++                    }
++                });
++                showDialog(bleepBuilder.create());
++                return;
++            }
 +            case ID_VOICE_CHANGER: {
 +                String[] voices = org.telegram.messenger.voidgram.VoidGramVoiceChanger.VOICES;
 +                CharSequence[] titles = new CharSequence[voices.length];
