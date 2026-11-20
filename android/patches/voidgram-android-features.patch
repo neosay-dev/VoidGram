@@ -234,7 +234,7 @@ index 373e423..9fb14ba 100644
              return false;
          }
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java b/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java
-index ec76835..d21ea33 100644
+index ec76835..597c378 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java
 @@ -9346,6 +9346,14 @@ public class MessagesController extends BaseController implements NotificationCe
@@ -274,6 +274,55 @@ index ec76835..d21ea33 100644
          TLRPC.TL_messages_updatePinnedMessage req = new TLRPC.TL_messages_updatePinnedMessage();
          req.peer = getInputPeer(chat != null ? -chat.id : user.id);
          req.id = id;
+@@ -10553,7 +10569,7 @@ public class MessagesController extends BaseController implements NotificationCe
+         checkReadTasks();
+ 
+         if (getUserConfig().isClientActivated()) {
+-            if (!ignoreSetOnline && getConnectionsManager().getPauseTime() == 0 && ApplicationLoader.isScreenOn && !ApplicationLoader.mainInterfacePausedStageQueue) {
++            if (!ignoreSetOnline && !org.telegram.messenger.voidgram.VoidGramGhost.hideOnline(currentAccount) && getConnectionsManager().getPauseTime() == 0 && ApplicationLoader.isScreenOn && !ApplicationLoader.mainInterfacePausedStageQueue) {
+                 if (ApplicationLoader.mainInterfacePausedStageQueueTime != 0 && Math.abs(ApplicationLoader.mainInterfacePausedStageQueueTime - System.currentTimeMillis()) > 1000) {
+                     if (statusSettingState != 1 && (lastStatusUpdateTime == 0 || Math.abs(System.currentTimeMillis() - lastStatusUpdateTime) >= 55000 || offlineSent)) {
+                         statusSettingState = 1;
+@@ -11415,6 +11431,10 @@ public class MessagesController extends BaseController implements NotificationCe
+         if (action < 0 || action >= sendingTypings.length || dialogId == 0) {
+             return false;
+         }
++        // VoidGram Ghost Mode: no typing, recording or upload status.
++        if (!DialogObject.isEncryptedDialog(dialogId) && org.telegram.messenger.voidgram.VoidGramGhost.hideTyping(currentAccount, dialogId)) {
++            return false;
++        }
+         final long selfId = UserConfig.getInstance(UserConfig.selectedAccount).getClientUserId();
+         if (dialogId == selfId) {
+             return false;
+@@ -14593,6 +14613,10 @@ public class MessagesController extends BaseController implements NotificationCe
+     }
+ 
+     private void completeReadTask(ReadTask task) {
++        // VoidGram Ghost Mode: the chat is read here, the other side is not told.
++        if (!DialogObject.isEncryptedDialog(task.dialogId) && org.telegram.messenger.voidgram.VoidGramGhost.hideRead(currentAccount, task.dialogId)) {
++            return;
++        }
+         if (task.replyId != 0 && task.monoForumPeerId == 0) {
+             TLRPC.TL_messages_readDiscussion req = new TLRPC.TL_messages_readDiscussion();
+             req.msg_id = (int) task.replyId;
+@@ -19933,6 +19957,8 @@ public class MessagesController extends BaseController implements NotificationCe
+                 for (int a = 0, size2 = messageObjects.size(); a < size2; a++) {
+                     messagesRes.messages.add(messageObjects.get(a).messageOwner);
+                 }
++                // VoidGram: keep the text the messages had before this edit.
++                org.telegram.messenger.voidgram.VoidGramHistory.captureEdits(currentAccount, editingMessages.keyAt(b), messageObjects);
+                 getMessagesStorage().putMessages(messagesRes, editingMessages.keyAt(b), -2, 0, false, 0, 0);
+             }
+             LongSparseArray<ArrayList<MessageObject>> editingMessagesFinal = editingMessages;
+@@ -21117,6 +21143,8 @@ public class MessagesController extends BaseController implements NotificationCe
+         LongSparseIntArray markAsReadMessagesOutboxFinal = markAsReadMessagesOutbox;
+         LongSparseArray<ArrayList<Integer>> markContentAsReadMessagesFinal = markContentAsReadMessages;
+         SparseIntArray markAsReadEncryptedFinal = markAsReadEncrypted;
++        // VoidGram: deletions by other people are kept (with a mark) instead of being applied.
++        org.telegram.messenger.voidgram.VoidGramHistory.interceptDeleted(currentAccount, deletedMessages);
+         LongSparseArray<ArrayList<Integer>> deletedMessagesFinal = deletedMessages;
+         LongSparseArray<ArrayList<Integer>> deletedQuickRepliesMessagesFinal = deletedQuickReplyMessages;
+         LongSparseArray<ArrayList<Integer>> scheduledDeletedMessagesFinal = scheduledDeletedMessages;
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java b/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
 index 55452d3..1255973 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
@@ -903,6 +952,454 @@ index 0000000..cb30503
 +            case METHOD_DISORDER_OOB: return VoidGram.t("Перестановка + OOB", "Disorder + OOB");
 +            default: return VoidGram.t("Выключено", "Off");
 +        }
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramGhost.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramGhost.java
+new file mode 100644
+index 0000000..94c035f
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramGhost.java
+@@ -0,0 +1,91 @@
++package org.telegram.messenger.voidgram;
++
++import android.content.SharedPreferences;
++
++import java.util.HashSet;
++import java.util.Set;
++
++/**
++ * VoidGram Ghost Mode, as on iOS: per account, hide read receipts, the online status and the
++ * typing / recording / upload indicators. Every option is off by default. Chats can be excluded
++ * (the ghost button in a chat header toggles that chat only). Secret chats, voice/video
++ * consumption and story views keep Telegram's behaviour. Not absolute invisibility: requests that
++ * already went out cannot be taken back, and a later read can acknowledge earlier messages.
++ */
++public final class VoidGramGhost {
++    private VoidGramGhost() {
++    }
++
++    private static String key(int account, String name) {
++        return "ghost_" + account + "_" + name;
++    }
++
++    private static SharedPreferences prefs() {
++        return VoidGram.prefs();
++    }
++
++    public static boolean isEnabled(int account) {
++        return prefs().getBoolean(key(account, "enabled"), false);
++    }
++
++    public static void setEnabled(int account, boolean value) {
++        prefs().edit().putBoolean(key(account, "enabled"), value).apply();
++    }
++
++    public static boolean option(int account, String name) {
++        return prefs().getBoolean(key(account, name), true);
++    }
++
++    public static void setOption(int account, String name, boolean value) {
++        prefs().edit().putBoolean(key(account, name), value).apply();
++    }
++
++    public static final String READ = "read";
++    public static final String ONLINE = "online";
++    public static final String TYPING = "typing";
++    public static final String[] OPTIONS = {READ, ONLINE, TYPING};
++
++    public static String optionTitle(String option) {
++        switch (option) {
++            case READ: return VoidGram.t("Не отправлять «прочитано»", "Don't send read receipts");
++            case ONLINE: return VoidGram.t("Скрывать «в сети»", "Hide online status");
++            default: return VoidGram.t("Скрывать «печатает» и загрузку", "Hide typing and upload status");
++        }
++    }
++
++    // MARK: exceptions
++
++    public static Set<String> exceptions(int account) {
++        return new HashSet<>(prefs().getStringSet(key(account, "exceptions"), new HashSet<>()));
++    }
++
++    public static boolean isException(int account, long dialogId) {
++        return exceptions(account).contains(String.valueOf(dialogId));
++    }
++
++    /** The ghost button in a chat header: the chat is excluded from (or returned to) Ghost Mode. */
++    public static void toggleException(int account, long dialogId) {
++        Set<String> set = exceptions(account);
++        String value = String.valueOf(dialogId);
++        if (!set.remove(value)) {
++            set.add(value);
++        }
++        prefs().edit().putStringSet(key(account, "exceptions"), set).apply();
++    }
++
++    private static boolean active(int account, long dialogId, String option) {
++        return isEnabled(account) && option(account, option) && (dialogId == 0 || !isException(account, dialogId));
++    }
++
++    public static boolean hideRead(int account, long dialogId) {
++        return active(account, dialogId, READ);
++    }
++
++    public static boolean hideOnline(int account) {
++        return active(account, 0, ONLINE);
++    }
++
++    public static boolean hideTyping(int account, long dialogId) {
++        return active(account, dialogId, TYPING);
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramHistory.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramHistory.java
+new file mode 100644
+index 0000000..2b4c3c4
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramHistory.java
+@@ -0,0 +1,345 @@
++package org.telegram.messenger.voidgram;
++
++import android.content.ContentValues;
++import android.content.Context;
++import android.database.Cursor;
++import android.database.sqlite.SQLiteDatabase;
++import android.database.sqlite.SQLiteOpenHelper;
++import android.text.TextUtils;
++
++import androidx.collection.LongSparseArray;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.ApplicationLoader;
++import org.telegram.messenger.DialogObject;
++import org.telegram.messenger.FileLog;
++import org.telegram.messenger.LocaleController;
++import org.telegram.messenger.MessageObject;
++import org.telegram.messenger.MessagesStorage;
++import org.telegram.messenger.UserConfig;
++import org.telegram.messenger.Utilities;
++import org.telegram.SQLite.SQLiteCursor;
++import org.telegram.tgnet.NativeByteBuffer;
++import org.telegram.tgnet.TLRPC;
++import org.telegram.ui.ActionBar.AlertDialog;
++import org.telegram.ui.ActionBar.BaseFragment;
++
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.HashSet;
++
++/**
++ * VoidGram message history, as on iOS: messages other people delete stay in the chat with a 🗑
++ * mark, and the earlier texts of edited messages are kept and can be looked at ("Edit history").
++ * Everything stays on this device, per account.
++ */
++public final class VoidGramHistory {
++    private static final class Db extends SQLiteOpenHelper {
++        Db(Context context, int account) {
++            super(context, "voidgram_history_" + account + ".db", null, 1);
++        }
++
++        @Override
++        public void onCreate(SQLiteDatabase db) {
++            db.execSQL("CREATE TABLE deleted (dialog INTEGER, mid INTEGER, date INTEGER, PRIMARY KEY (dialog, mid))");
++            db.execSQL("CREATE TABLE edits (dialog INTEGER, mid INTEGER, date INTEGER, text TEXT)");
++            db.execSQL("CREATE INDEX edits_message ON edits (dialog, mid)");
++        }
++
++        @Override
++        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
++        }
++    }
++
++    private static final Db[] databases = new Db[UserConfig.MAX_ACCOUNT_COUNT];
++    @SuppressWarnings("unchecked")
++    private static final HashSet<Long>[] deletedKeys = new HashSet[UserConfig.MAX_ACCOUNT_COUNT];
++    @SuppressWarnings("unchecked")
++    private static final HashSet<Long>[] editedKeys = new HashSet[UserConfig.MAX_ACCOUNT_COUNT];
++
++    private VoidGramHistory() {
++    }
++
++    // MARK: settings
++
++    public static boolean saveDeleted() {
++        return VoidGram.prefs().getBoolean("history_deleted", true);
++    }
++
++    public static void setSaveDeleted(boolean value) {
++        VoidGram.prefs().edit().putBoolean("history_deleted", value).apply();
++    }
++
++    public static boolean saveEdits() {
++        return VoidGram.prefs().getBoolean("history_edits", true);
++    }
++
++    public static void setSaveEdits(boolean value) {
++        VoidGram.prefs().edit().putBoolean("history_edits", value).apply();
++    }
++
++    public static String deletedMark() {
++        String mark = VoidGram.prefs().getString("history_deleted_mark", "");
++        return TextUtils.isEmpty(mark) ? "🗑" : mark;
++    }
++
++    public static void setDeletedMark(String value) {
++        VoidGram.prefs().edit().putString("history_deleted_mark", value == null ? "" : value.trim()).apply();
++    }
++
++    // MARK: storage
++
++    private static synchronized Db db(int account) {
++        if (databases[account] == null) {
++            databases[account] = new Db(ApplicationLoader.applicationContext, account);
++        }
++        return databases[account];
++    }
++
++    private static boolean isChannelMessage(MessageObject messageObject) {
++        return messageObject.messageOwner != null && messageObject.messageOwner.peer_id != null && messageObject.messageOwner.peer_id.channel_id != 0;
++    }
++
++    private static long key(long scope, int mid) {
++        return scope * 31 + mid;
++    }
++
++    private static synchronized HashSet<Long> loadKeys(int account, boolean deleted) {
++        HashSet<Long>[] cache = deleted ? deletedKeys : editedKeys;
++        if (cache[account] != null) {
++            return cache[account];
++        }
++        HashSet<Long> keys = new HashSet<>();
++        Cursor cursor = null;
++        try {
++            cursor = db(account).getReadableDatabase().rawQuery(deleted ? "SELECT dialog, mid FROM deleted" : "SELECT DISTINCT dialog, mid FROM edits", null);
++            while (cursor.moveToNext()) {
++                keys.add(key(cursor.getLong(0), cursor.getInt(1)));
++            }
++        } catch (Throwable e) {
++            FileLog.e(e);
++        } finally {
++            if (cursor != null) {
++                cursor.close();
++            }
++        }
++        cache[account] = keys;
++        return keys;
++    }
++
++    public static boolean isDeleted(MessageObject messageObject) {
++        if (messageObject == null || messageObject.getId() <= 0) {
++            return false;
++        }
++        HashSet<Long> keys = loadKeys(messageObject.currentAccount, true);
++        if (keys.isEmpty()) {
++            return false;
++        }
++        long dialogId = messageObject.getDialogId();
++        return keys.contains(key(DialogObject.isChatDialog(dialogId) && isChannelMessage(messageObject) ? dialogId : 0, messageObject.getId()));
++    }
++
++    public static boolean hasEdits(int account, MessageObject messageObject) {
++        if (messageObject == null || messageObject.getId() <= 0) {
++            return false;
++        }
++        HashSet<Long> keys = loadKeys(account, false);
++        long dialogId = messageObject.getDialogId();
++        return !keys.isEmpty() && keys.contains(key(DialogObject.isChatDialog(dialogId) && isChannelMessage(messageObject) ? dialogId : 0, messageObject.getId()));
++    }
++
++    /**
++     * Called with the deletions an update batch carries (key 0: private chats and groups, otherwise
++     * a channel's dialog id). When deleted messages are kept, they are recorded and taken out of the
++     * batch, so neither the database nor open chats drop them.
++     */
++    public static void interceptDeleted(int account, LongSparseArray<ArrayList<Integer>> deletedMessages) {
++        if (deletedMessages == null || deletedMessages.size() == 0 || !saveDeleted()) {
++            return;
++        }
++        final int now = (int) (System.currentTimeMillis() / 1000);
++        final ArrayList<long[]> rows = new ArrayList<>();
++        HashSet<Long> keys = loadKeys(account, true);
++        for (int i = deletedMessages.size() - 1; i >= 0; i--) {
++            long dialogId = deletedMessages.keyAt(i);
++            ArrayList<Integer> ids = deletedMessages.valueAt(i);
++            if (ids != null) {
++                for (Integer id : ids) {
++                    if (id != null && id > 0) {
++                        rows.add(new long[]{dialogId, id});
++                        synchronized (VoidGramHistory.class) {
++                            keys.add(key(dialogId, id));
++                        }
++                    }
++                }
++            }
++            deletedMessages.removeAt(i);
++        }
++        if (rows.isEmpty()) {
++            return;
++        }
++        Utilities.globalQueue.postRunnable(() -> {
++            try {
++                SQLiteDatabase database = db(account).getWritableDatabase();
++                database.beginTransaction();
++                try {
++                    for (long[] row : rows) {
++                        ContentValues values = new ContentValues();
++                        values.put("dialog", row[0]);
++                        values.put("mid", (int) row[1]);
++                        values.put("date", now);
++                        database.insertWithOnConflict("deleted", null, values, SQLiteDatabase.CONFLICT_IGNORE);
++                    }
++                    database.setTransactionSuccessful();
++                } finally {
++                    database.endTransaction();
++                }
++            } catch (Throwable e) {
++                FileLog.e(e);
++            }
++        });
++        // Open chats redraw their messages so the 🗑 mark shows at once.
++        AndroidUtilities.runOnUIThread(VoidGramHistory::notifyChanged);
++    }
++
++    /**
++     * Called before edited messages are written to the database: the text they had so far is read
++     * on the storage queue (ahead of the write) and kept when it changed.
++     */
++    public static void captureEdits(int account, long dialogId, ArrayList<MessageObject> edited) {
++        if (!saveEdits() || edited == null || edited.isEmpty()) {
++            return;
++        }
++        final ArrayList<TLRPC.Message> messages = new ArrayList<>();
++        for (MessageObject object : edited) {
++            if (object != null && object.messageOwner != null && object.getId() > 0) {
++                messages.add(object.messageOwner);
++            }
++        }
++        if (messages.isEmpty()) {
++            return;
++        }
++        final MessagesStorage storage = MessagesStorage.getInstance(account);
++        storage.getStorageQueue().postRunnable(() -> {
++            for (TLRPC.Message message : messages) {
++                String oldText = null;
++                SQLiteCursor cursor = null;
++                try {
++                    cursor = storage.getDatabase().queryFinalized("SELECT data FROM messages_v2 WHERE uid = " + dialogId + " AND mid = " + message.id + " LIMIT 1");
++                    if (cursor.next()) {
++                        NativeByteBuffer data = cursor.byteBufferValue(0);
++                        if (data != null) {
++                            TLRPC.Message old = TLRPC.Message.TLdeserialize(data, data.readInt32(false), false);
++                            data.reuse();
++                            if (old != null) {
++                                oldText = old.message;
++                            }
++                        }
++                    }
++                } catch (Throwable e) {
++                    FileLog.e(e);
++                } finally {
++                    if (cursor != null) {
++                        cursor.dispose();
++                    }
++                }
++                if (oldText == null || TextUtils.equals(oldText, message.message)) {
++                    continue;
++                }
++                final String previous = oldText;
++                final long scope = message.peer_id != null && message.peer_id.channel_id != 0 ? -message.peer_id.channel_id : 0;
++                final int date = message.edit_date != 0 ? message.edit_date : (int) (System.currentTimeMillis() / 1000);
++                Utilities.globalQueue.postRunnable(() -> {
++                    try {
++                        ContentValues values = new ContentValues();
++                        values.put("dialog", scope);
++                        values.put("mid", message.id);
++                        values.put("date", date);
++                        values.put("text", previous);
++                        db(account).getWritableDatabase().insert("edits", null, values);
++                        synchronized (VoidGramHistory.class) {
++                            loadKeys(account, false).add(key(scope, message.id));
++                        }
++                    } catch (Throwable e) {
++                        FileLog.e(e);
++                    }
++                });
++            }
++        });
++    }
++
++    /** The "Edit history" sheet: every earlier text, oldest first, then the current one. */
++    public static void showEdits(BaseFragment fragment, MessageObject messageObject) {
++        if (fragment == null || fragment.getParentActivity() == null || messageObject == null) {
++            return;
++        }
++        final int account = messageObject.currentAccount;
++        final long dialogId = messageObject.getDialogId();
++        final long scope = DialogObject.isChatDialog(dialogId) && isChannelMessage(messageObject) ? dialogId : 0;
++        final int mid = messageObject.getId();
++        Utilities.globalQueue.postRunnable(() -> {
++            StringBuilder builder = new StringBuilder();
++            Cursor cursor = null;
++            try {
++                cursor = db(account).getReadableDatabase().rawQuery("SELECT date, text FROM edits WHERE dialog = ? AND mid = ? ORDER BY date ASC", new String[]{String.valueOf(scope), String.valueOf(mid)});
++                while (cursor.moveToNext()) {
++                    builder.append(LocaleController.getInstance().getFormatterStats().format(new Date(cursor.getLong(0) * 1000L))).append('\n');
++                    builder.append(cursor.getString(1)).append("\n\n");
++                }
++            } catch (Throwable e) {
++                FileLog.e(e);
++            } finally {
++                if (cursor != null) {
++                    cursor.close();
++                }
++            }
++            builder.append(VoidGram.t("Сейчас:", "Now:")).append('\n').append(messageObject.messageOwner != null ? messageObject.messageOwner.message : "");
++            final String text = builder.toString();
++            AndroidUtilities.runOnUIThread(() -> {
++                if (fragment.getParentActivity() == null) {
++                    return;
++                }
++                AlertDialog.Builder dialog = new AlertDialog.Builder(fragment.getParentActivity());
++                dialog.setTitle(VoidGram.t("История изменений", "Edit history"));
++                dialog.setMessage(text);
++                dialog.setPositiveButton("OK", null);
++                fragment.showDialog(dialog.create());
++            });
++        });
++    }
++
++    private static final ArrayList<Runnable> listeners = new ArrayList<>();
++
++    public static void addListener(Runnable listener) {
++        if (!listeners.contains(listener)) {
++            listeners.add(listener);
++        }
++    }
++
++    public static void removeListener(Runnable listener) {
++        listeners.remove(listener);
++    }
++
++    private static void notifyChanged() {
++        for (Runnable listener : new ArrayList<>(listeners)) {
++            listener.run();
++        }
++    }
++
++    /** Clears everything kept for an account. */
++    public static void clear(int account) {
++        Utilities.globalQueue.postRunnable(() -> {
++            try {
++                SQLiteDatabase database = db(account).getWritableDatabase();
++                database.delete("deleted", null, null);
++                database.delete("edits", null, null);
++            } catch (Throwable e) {
++                FileLog.e(e);
++            }
++            synchronized (VoidGramHistory.class) {
++                deletedKeys[account] = null;
++                editedKeys[account] = null;
++            }
++        });
 +    }
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLyrics.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLyrics.java
@@ -1677,14 +2174,53 @@ index ab54ee3..995933f 100644
      public static native void native_updateDcSettings(int currentAccount);
      public static native void native_moveDatacenter(int currentAccount, int datacenterId);
      public static native void native_setNetworkAvailable(int currentAccount, boolean value, int networkType, boolean slow);
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Cells/ChatMessageCell.java b/TMessagesProj/src/main/java/org/telegram/ui/Cells/ChatMessageCell.java
+index 5dc090f..46a5378 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/Cells/ChatMessageCell.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/Cells/ChatMessageCell.java
+@@ -15560,6 +15560,15 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
+      * before a cell lays it out (RichWidgetBlock#estimateSafeArea).
+      */
+     public static String timeString(MessageObject current, MessageObject message, boolean edited, int editDate) {
++        String time = timeStringBase(current, message, edited, editDate);
++        // VoidGram: a message someone deleted stays, marked.
++        if (!time.isEmpty() && org.telegram.messenger.voidgram.VoidGramHistory.isDeleted(current)) {
++            return org.telegram.messenger.voidgram.VoidGramHistory.deletedMark() + " " + time;
++        }
++        return time;
++    }
++
++    private static String timeStringBase(MessageObject current, MessageObject message, boolean edited, int editDate) {
+         if (current.notime || current.isSponsored() || current.isQuickReply() || current.isWelcomeMessage()) {
+             return "";
+         } else if (current.scheduled && current.messageOwner.date == 0x7FFFFFFE) {
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
-index a54b134..a067e9d 100644
+index a54b134..282ae49 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
-@@ -2835,6 +2835,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -1246,6 +1246,8 @@ public class ChatActivity extends BaseFragment implements
+     public final static int OPTION_DELETE = 1;
+     public final static int OPTION_FORWARD = 2;
+     public final static int OPTION_COPY = 3;
++    /** VoidGram: earlier texts of an edited message. */
++    public final static int OPTION_VOIDGRAM_EDIT_HISTORY = 9101;
+     public final static int OPTION_SAVE_TO_GALLERY = 4;
+     public final static int OPTION_APPLY_LOCALIZATION_OR_THEME = 5;
+     public final static int OPTION_SHARE = 6;
+@@ -1707,6 +1709,8 @@ public class ChatActivity extends BaseFragment implements
+     private final static int view_as_topics = 59;
+ 
+     private final static int search = 40;
++    /** VoidGram: Ghost Mode for this chat only. */
++    private final static int voidgram_ghost_chat = 9201;
+ 
+     private final static int topic_close = 60;
+     private final static int open_forum = 61;
+@@ -2835,6 +2839,11 @@ public class ChatActivity extends BaseFragment implements
          }
  
          dialog_id_Long = dialog_id;
++        org.telegram.messenger.voidgram.VoidGramHistory.addListener(voidgramHistoryListener);
 +        // VoidGram: put the privacy notice back on top if its pin was removed.
 +        if (DialogObject.isUserDialog(dialog_id)) {
 +            org.telegram.messenger.voidgram.VoidGramChatNotice.ensurePinned(currentAccount, dialog_id);
@@ -1692,6 +2228,70 @@ index a54b134..a067e9d 100644
  
          transitionAnimationGlobalIndex = NotificationCenter.getGlobalInstance().setAnimationInProgress(transitionAnimationGlobalIndex, new int[0]);
  
+@@ -3336,8 +3345,16 @@ public class ChatActivity extends BaseFragment implements
+         }
+     }
+ 
++    /** VoidGram: redraw messages when one gets the deleted mark. */
++    private final Runnable voidgramHistoryListener = () -> {
++        if (chatAdapter != null) {
++            chatAdapter.notifyDataSetChanged(false);
++        }
++    };
++
+     @Override
+     public void onFragmentDestroy() {
++        org.telegram.messenger.voidgram.VoidGramHistory.removeListener(voidgramHistoryListener);
+         super.onFragmentDestroy();
+         if (messageMetricsView != null) {
+             messageMetricsView.finish();
+@@ -3988,6 +4005,12 @@ public class ChatActivity extends BaseFragment implements
+                     getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/help", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
+                 } else if (id == bot_settings) {
+                     getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/settings", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
++                } else if (id == voidgram_ghost_chat) {
++                    org.telegram.messenger.voidgram.VoidGramGhost.toggleException(currentAccount, dialog_id);
++                    boolean ghost = !org.telegram.messenger.voidgram.VoidGramGhost.isException(currentAccount, dialog_id);
++                    BulletinFactory.of(ChatActivity.this).createSimpleBulletin(R.raw.contact_check, ghost
++                        ? org.telegram.messenger.voidgram.VoidGram.t("Режим призрака в этом чате включён", "Ghost Mode is on in this chat")
++                        : org.telegram.messenger.voidgram.VoidGram.t("В этом чате вы видны как обычно", "In this chat you are visible as usual")).show();
+                 } else if (id == search) {
+                     openSearchWithText(isSupportedTags() ? "" : null);
+                 } else if (id == translate) {
+@@ -4398,6 +4421,9 @@ public class ChatActivity extends BaseFragment implements
+             if (searchItem != null) {
+                 headerItem.lazilyAddSubItem(search, R.drawable.msg_search, LocaleController.getString(R.string.Search));
+             }
++            if (org.telegram.messenger.voidgram.VoidGramGhost.isEnabled(currentAccount) && !DialogObject.isEncryptedDialog(dialog_id)) {
++                headerItem.lazilyAddSubItem(voidgram_ghost_chat, R.drawable.msg_secret, org.telegram.messenger.voidgram.VoidGram.t("Призрак в этом чате", "Ghost in this chat"));
++            }
+             if (ChatObject.isBoostSupported(currentChat) && (getUserConfig().isPremium() || ChatObject.isBoosted(chatInfo) || ChatObject.hasAdminRights(currentChat))) {
+                 RLottieDrawable drawable = new RLottieDrawable(R.raw.boosts, dp(24), dp(24));
+                 headerItem.lazilyAddSubItem(boost_group, drawable, LocaleController.getString(ChatObject.isChannelAndNotMegaGroup(currentChat) ? R.string.BoostingBoostChannelMenu : R.string.BoostingBoostGroupMenu));
+@@ -31957,6 +31983,12 @@ public class ChatActivity extends BaseFragment implements
+                 icons.add(R.drawable.msg_calendar2);
+             }
+ 
++            // VoidGram: the earlier texts of an edited message.
++            if (message != null && org.telegram.messenger.voidgram.VoidGramHistory.hasEdits(currentAccount, message)) {
++                items.add(org.telegram.messenger.voidgram.VoidGram.t("История изменений", "Edit history"));
++                options.add(OPTION_VOIDGRAM_EDIT_HISTORY);
++                icons.add(R.drawable.msg_edit);
++            }
+             if (options.isEmpty() && optionsView == null) {
+                 return false;
+             }
+@@ -34293,6 +34325,10 @@ public class ChatActivity extends BaseFragment implements
+         }
+         boolean preserveDim = false;
+         switch (option) {
++            case OPTION_VOIDGRAM_EDIT_HISTORY: {
++                org.telegram.messenger.voidgram.VoidGramHistory.showEdits(this, selectedObject);
++                break;
++            }
+             case OPTION_RETRY: {
+                 final MessageObject object = selectedObject;
+                 final MessageObject.GroupedMessages group = selectedObjectGroup;
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Components/AudioPlayerAlert.java b/TMessagesProj/src/main/java/org/telegram/ui/Components/AudioPlayerAlert.java
 index 3fa7042..81f56a7 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/Components/AudioPlayerAlert.java
@@ -1963,6 +2563,121 @@ index 0000000..44df62b
 +            return;
 +        } else if (id == ID_RESET) {
 +            VoidGramDpi.reset();
++        } else {
++            return;
++        }
++        refresh();
++    }
++
++    @Override
++    protected boolean onLongClick(UItem item, View view, int position, float x, float y) {
++        return false;
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramGhostActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramGhostActivity.java
+new file mode 100644
+index 0000000..ea91239
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramGhostActivity.java
+@@ -0,0 +1,109 @@
++package org.telegram.ui.voidgram;
++
++import android.view.View;
++
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramGhost;
++import org.telegram.messenger.voidgram.VoidGramHistory;
++import org.telegram.ui.ActionBar.AlertDialog;
++import org.telegram.ui.Components.UItem;
++import org.telegram.ui.Components.UniversalAdapter;
++import org.telegram.ui.Components.UniversalFragment;
++
++import java.util.ArrayList;
++
++/** VoidGram → Ghost Mode and message history (per account for Ghost Mode). */
++public class VoidGramGhostActivity extends UniversalFragment {
++    private static final int ID_GHOST = 1;
++    private static final int ID_OPTION_BASE = 10;
++    private static final int ID_EXCEPTIONS_CLEAR = 20;
++    private static final int ID_DELETED = 30;
++    private static final int ID_EDITS = 31;
++    private static final int ID_MARK = 32;
++    private static final int ID_CLEAR = 33;
++
++    @Override
++    protected CharSequence getTitle() {
++        return VoidGram.t("Призрак и история", "Ghost and history");
++    }
++
++    private void refresh() {
++        if (listView != null && listView.adapter != null) {
++            listView.adapter.update(true);
++        }
++    }
++
++    @Override
++    protected void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
++        boolean ghost = VoidGramGhost.isEnabled(currentAccount);
++        items.add(UItem.asHeader(VoidGram.t("Режим призрака", "Ghost Mode")));
++        items.add(UItem.asCheck(ID_GHOST, VoidGram.t("Режим призрака", "Ghost Mode")).setChecked(ghost));
++        if (ghost) {
++            for (int i = 0; i < VoidGramGhost.OPTIONS.length; i++) {
++                String option = VoidGramGhost.OPTIONS[i];
++                items.add(UItem.asCheck(ID_OPTION_BASE + i, VoidGramGhost.optionTitle(option)).setChecked(VoidGramGhost.option(currentAccount, option)));
++            }
++            int exceptions = VoidGramGhost.exceptions(currentAccount).size();
++            if (exceptions > 0) {
++                items.add(UItem.asButton(ID_EXCEPTIONS_CLEAR, VoidGram.t("Сбросить исключения", "Clear exceptions"), String.valueOf(exceptions)));
++            }
++        }
++        items.add(UItem.asShadow(VoidGram.t("Для этого аккаунта. В чате: ⋮ → «Призрак в этом чате» исключает чат. Секретные чаты, прослушивание голосовых и просмотр историй работают как обычно. Это не полная невидимость: отправленные запросы не отменить, а новое прочтение после выключения может отметить и старые сообщения. Режим противоречит правилам Telegram API — на ваш риск.", "For this account. In a chat: ⋮ → \"Ghost in this chat\" excludes it. Secret chats, voice listening and story views behave as usual. Not absolute invisibility: requests that went out cannot be taken back, and a new read after turning it off can acknowledge older messages too. The mode conflicts with Telegram's API terms — at your own risk.")));
++
++        items.add(UItem.asHeader(VoidGram.t("История сообщений", "Message history")));
++        items.add(UItem.asCheck(ID_DELETED, VoidGram.t("Сохранять удалённые сообщения", "Keep deleted messages")).setChecked(VoidGramHistory.saveDeleted()));
++        items.add(UItem.asCheck(ID_EDITS, VoidGram.t("Сохранять историю изменений", "Keep edit history")).setChecked(VoidGramHistory.saveEdits()));
++        items.add(UItem.asButton(ID_MARK, VoidGram.t("Метка удалённого", "Deleted mark"), VoidGramHistory.deletedMark()));
++        items.add(UItem.asShadow(VoidGram.t("Сообщения, которые удалили другие, остаются в чате с меткой. У изменённых в меню сообщения появляется «История изменений». Всё хранится только на этом устройстве.", "Messages other people delete stay in the chat with a mark. Edited ones get \"Edit history\" in the message menu. Everything stays on this device only.")));
++        items.add(UItem.asButton(ID_CLEAR, VoidGram.t("Очистить сохранённую историю", "Clear kept history")).red());
++        items.add(UItem.asShadow(null));
++    }
++
++    @Override
++    protected void onClick(UItem item, View view, int position, float x, float y) {
++        int id = item.id;
++        if (id == ID_GHOST) {
++            VoidGramGhost.setEnabled(currentAccount, !VoidGramGhost.isEnabled(currentAccount));
++        } else if (id >= ID_OPTION_BASE && id < ID_OPTION_BASE + VoidGramGhost.OPTIONS.length) {
++            String option = VoidGramGhost.OPTIONS[id - ID_OPTION_BASE];
++            VoidGramGhost.setOption(currentAccount, option, !VoidGramGhost.option(currentAccount, option));
++        } else if (id == ID_EXCEPTIONS_CLEAR) {
++            for (String dialog : VoidGramGhost.exceptions(currentAccount)) {
++                try {
++                    VoidGramGhost.toggleException(currentAccount, Long.parseLong(dialog));
++                } catch (NumberFormatException ignore) {
++                }
++            }
++        } else if (id == ID_DELETED) {
++            VoidGramHistory.setSaveDeleted(!VoidGramHistory.saveDeleted());
++        } else if (id == ID_EDITS) {
++            VoidGramHistory.setSaveEdits(!VoidGramHistory.saveEdits());
++        } else if (id == ID_MARK) {
++            final String[] marks = {"🗑", "❌", "🚫", "👻", VoidGram.t("удалено", "deleted")};
++            AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
++            builder.setTitle(VoidGram.t("Метка удалённого", "Deleted mark"));
++            builder.setItems(marks, (dialog, which) -> {
++                VoidGramHistory.setDeletedMark(marks[which]);
++                refresh();
++            });
++            showDialog(builder.create());
++            return;
++        } else if (id == ID_CLEAR) {
++            AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
++            builder.setTitle(VoidGram.t("Очистить историю?", "Clear history?"));
++            builder.setMessage(VoidGram.t("Метки удалённых исчезнут, история изменений сотрётся; сами сообщения останутся в чатах.", "The deleted marks go away and the edit history is erased; the messages themselves stay in the chats."));
++            builder.setPositiveButton(VoidGram.t("Очистить", "Clear"), (dialog, which) -> VoidGramHistory.clear(currentAccount));
++            builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++            showDialog(builder.create());
++            return;
 +        } else {
 +            return;
 +        }
@@ -2501,10 +3216,10 @@ index 0000000..61aac10
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
 new file mode 100644
-index 0000000..9623cd7
+index 0000000..282c92a
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
-@@ -0,0 +1,193 @@
+@@ -0,0 +1,201 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.content.Context;
@@ -2540,6 +3255,7 @@ index 0000000..9623cd7
 +    private static final int ID_NIGHT = 3;
 +    private static final int ID_MINI = 4;
 +    private static final int ID_AGREEMENT = 5;
++    private static final int ID_GHOST = 6;
 +
 +    private FrameLayout musicRow;
 +    private TextView musicButton;
@@ -2552,8 +3268,12 @@ index 0000000..9623cd7
 +
 +    @Override
 +    protected void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
++        items.add(UItem.asHeader(VoidGram.t("Приватность", "Privacy")));
++        items.add(UItem.asButton(ID_GHOST, R.drawable.msg2_secret, VoidGram.t("Призрак и история", "Ghost and history"), org.telegram.messenger.voidgram.VoidGramGhost.isEnabled(currentAccount) ? VoidGram.t("Призрак вкл.", "Ghost on") : VoidGram.t("Выкл.", "Off")));
++        items.add(UItem.asShadow(VoidGram.t("Режим призрака, удалённые сообщения и история изменений.", "Ghost Mode, deleted messages and edit history.")));
++
 +        items.add(UItem.asHeader(VoidGram.t("Сеть", "Network")));
-+        items.add(UItem.asButton(ID_DPI, R.drawable.msg2_secret, VoidGram.t("Обход блокировок", "Bypass blocking"), VoidGramDpi.isEnabled() ? VoidGramDpi.presetTitle(VoidGramDpi.preset()) : VoidGram.t("Выкл.", "Off")));
++        items.add(UItem.asButton(ID_DPI, R.drawable.msg2_data, VoidGram.t("Обход блокировок", "Bypass blocking"), VoidGramDpi.isEnabled() ? VoidGramDpi.presetTitle(VoidGramDpi.preset()) : VoidGram.t("Выкл.", "Off")));
 +        items.add(UItem.asShadow(VoidGram.t("Обход DPI для России, Ирана, Китая и других стран, с полной настройкой.", "DPI bypass for Russia, Iran, China and other countries, fully configurable.")));
 +
 +        items.add(UItem.asHeader(VoidGram.t("Устройство", "Device")));
@@ -2666,6 +3386,9 @@ index 0000000..9623cd7
 +    @Override
 +    protected void onClick(UItem item, View view, int position, float x, float y) {
 +        switch (item.id) {
++            case ID_GHOST:
++                presentFragment(new VoidGramGhostActivity());
++                break;
 +            case ID_DPI:
 +                presentFragment(new VoidGramDpiActivity());
 +                break;
