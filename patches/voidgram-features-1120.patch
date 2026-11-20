@@ -1238,10 +1238,10 @@ index 2b152e6a..05e441ca 100644
      private func showLock() {
 diff --git a/submodules/TelegramUI/Sources/AyuLicenseAgreement.swift b/submodules/TelegramUI/Sources/AyuLicenseAgreement.swift
 new file mode 100644
-index 00000000..7e5c3ddb
+index 00000000..db78fff6
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuLicenseAgreement.swift
-@@ -0,0 +1,308 @@
+@@ -0,0 +1,333 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -1260,6 +1260,9 @@ index 00000000..7e5c3ddb
 +    }
 +
 +    private static weak var shownView: AyuLicenseAgreementView?
++    /// The agreement lives in its own window: Telegram's window routes touches through its own
++    /// gesture recognizers, which swallowed the text view's scrolling.
++    private static var agreementWindow: UIWindow?
 +
 +    /// Shows the agreement over `window` unless it is accepted or already showing.
 +    static func presentIfNeeded(in window: UIWindow?, presentationData: PresentationData) {
@@ -1269,17 +1272,36 @@ index 00000000..7e5c3ddb
 +        let russian = ["ru", "uk", "be", "kk"].contains(where: { code.hasPrefix($0) || preferred.hasPrefix($0) })
 +        let view = AyuLicenseAgreementView(frame: window.bounds, russian: russian, accentColor: presentationData.theme.list.itemAccentColor)
 +        view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-+        view.accepted = { [weak view] in
++        window.endEditing(true)
++
++        let controller = UIViewController()
++        controller.view = view
++        controller.modalPresentationStyle = .fullScreen
++        let overlay: UIWindow
++        if let scene = window.windowScene {
++            overlay = UIWindow(windowScene: scene)
++        } else {
++            overlay = UIWindow(frame: window.bounds)
++        }
++        overlay.frame = window.bounds
++        overlay.windowLevel = UIWindow.Level.alert + 1.0
++        overlay.rootViewController = controller
++        overlay.isHidden = false
++        overlay.makeKeyAndVisible()
++        agreementWindow = overlay
++        shownView = view
++
++        view.accepted = { [weak window] in
 +            UserDefaults.standard.set(version, forKey: key)
 +            UIView.animate(withDuration: 0.25, animations: {
-+                view?.alpha = 0.0
++                agreementWindow?.alpha = 0.0
 +            }, completion: { _ in
-+                view?.removeFromSuperview()
++                agreementWindow?.isHidden = true
++                agreementWindow?.rootViewController = nil
++                agreementWindow = nil
++                window?.makeKeyAndVisible()
 +            })
 +        }
-+        window.endEditing(true)
-+        window.addSubview(view)
-+        shownView = view
 +    }
 +
 +    static func text(russian: Bool) -> String {
@@ -1414,6 +1436,9 @@ index 00000000..7e5c3ddb
 +
 +        self.textView.isEditable = false
 +        self.textView.isSelectable = false
++        self.textView.isScrollEnabled = true
++        self.textView.showsVerticalScrollIndicator = true
++        self.textView.isUserInteractionEnabled = true
 +        self.textView.alwaysBounceVertical = true
 +        self.textView.backgroundColor = UIColor.secondarySystemBackground
 +        self.textView.layer.cornerRadius = 14.0
