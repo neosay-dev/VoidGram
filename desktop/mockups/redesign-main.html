@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>VoidGram Desktop — iOS redesign mockup</title>
+<style>
+  :root {
+    --bg: #000;
+    --sheet: #0b0b0d;
+    --row: #1c1c1e;
+    --row-hi: #2c2c2e;
+    --sep: rgba(84, 84, 88, .45);
+    --label: #fff;
+    --label2: rgba(235, 235, 245, .62);
+    --label3: rgba(235, 235, 245, .32);
+    --accent: #0a84ff;
+    --green: #30d158;
+    --glass: rgba(40, 40, 44, .52);
+    --glass-edge: rgba(255, 255, 255, .14);
+    --glass-top: rgba(255, 255, 255, .22);
+    font-family: -apple-system, "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100vh; } body { width: 100vw; background: var(--bg); color: var(--label); overflow: hidden; -webkit-font-smoothing: antialiased; }
+  svg { display: block; }
+  .ico { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* Liquid-glass surface: blur of what is under it, a tint, a bright top edge and a faint rim. */
+  .glass {
+    background: var(--glass);
+    backdrop-filter: blur(22px) saturate(170%);
+    -webkit-backdrop-filter: blur(22px) saturate(170%);
+    border: 1px solid var(--glass-edge);
+    box-shadow: inset 0 1px 0 var(--glass-top), 0 8px 24px rgba(0, 0, 0, .35);
+  }
+
+  .app { display: grid; grid-template-columns: 76px 640px 1fr 296px; grid-template-rows: 100vh; height: 100vh; overflow: hidden; } .app > * { min-height: 0; overflow: hidden; }
+
+  /* Folder rail */
+  .rail { padding: 14px 10px; display: flex; flex-direction: column; align-items: center; gap: 6px; background: var(--sheet); }
+  .rail .menu { width: 44px; height: 44px; border-radius: 22px; display: grid; place-items: center; color: var(--label2); margin-bottom: 8px; }
+  .folder { width: 60px; padding: 9px 0 7px; border-radius: 16px; display: flex; flex-direction: column; align-items: center; gap: 5px; color: var(--label2); font-size: 11px; font-weight: 500; position: relative; text-align: center; line-height: 1.15; }
+  .folder.on { color: var(--label); background: rgba(118, 118, 128, .24); }
+  .folder .ico { width: 24px; height: 24px; }
+  .folder .badge { position: absolute; top: 4px; right: 6px; }
+
+  .badge { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 600; display: inline-grid; place-items: center; }
+  .badge.muted { background: rgba(118, 118, 128, .5); }
+
+  /* Chat list */
+  .list { background: var(--sheet); display: flex; flex-direction: column; border-right: 1px solid var(--sep); }
+  .list-head { padding: 14px 18px 10px; }
+  .list-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .pill-btn { height: 36px; padding: 0 16px; border-radius: 18px; display: inline-flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 500; color: var(--label); }
+  .circle-btn { width: 36px; height: 36px; border-radius: 18px; display: grid; place-items: center; color: var(--label); }
+  .circle-btn.accent { background: var(--accent); border-color: rgba(255,255,255,.25); }
+  .large-title { font-size: 30px; font-weight: 700; letter-spacing: .2px; margin: 4px 2px 12px; }
+  .search { height: 38px; border-radius: 19px; background: rgba(118, 118, 128, .24); display: flex; align-items: center; gap: 8px; padding: 0 12px; color: var(--label2); font-size: 16px; }
+  .search .ico { width: 17px; height: 17px; }
+
+  .rows { overflow: hidden; padding: 4px 8px; }
+  .row { display: grid; grid-template-columns: 54px 1fr auto; gap: 12px; align-items: center; padding: 8px 10px; border-radius: 14px; position: relative; }
+  .row + .row::before { content: ""; position: absolute; left: 76px; right: 10px; top: 0; height: 1px; background: var(--sep); }
+  .row.sel { background: var(--accent); }
+  .row.sel::before, .row.sel + .row::before { display: none; }
+  .row.sel .prev, .row.sel .time { color: rgba(255,255,255,.8); }
+  .av { width: 54px; height: 54px; border-radius: 27px; display: grid; place-items: center; font-weight: 600; font-size: 20px; color: #fff; }
+  .name { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 5px; white-space: nowrap; overflow: hidden; }
+  .prev { font-size: 15px; color: var(--label2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 3px; }
+  .prev b { color: var(--label); font-weight: 500; }
+  .meta { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; align-self: stretch; padding: 3px 0; }
+  .time { font-size: 14px; color: var(--label2); }
+  .pin { width: 15px; height: 15px; color: var(--label3); }
+  .tag { display: inline-block; margin-top: 4px; padding: 1px 7px; border-radius: 6px; font-size: 11px; font-weight: 600; color: #ff9f0a; background: rgba(255, 159, 10, .16); }
+  .verified { width: 15px; height: 15px; color: var(--accent); }
+
+  /* Chat */
+  .chat { position: relative; overflow: hidden;
+    background:
+      radial-gradient(1200px 700px at 20% 10%, #1b2a4a 0%, transparent 60%),
+      radial-gradient(900px 700px at 90% 90%, #3a1f3d 0%, transparent 55%),
+      #0f1220; }
+  .chat .pattern { position: absolute; inset: 0; opacity: .06; background-image: radial-gradient(circle at 1px 1px, #fff 1px, transparent 1.5px); background-size: 26px 26px; }
+  .chat-head { position: absolute; top: 14px; left: 18px; right: 18px; display: flex; justify-content: space-between; align-items: center; z-index: 3; }
+  .title-cap { height: 50px; padding: 0 22px; border-radius: 25px; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+  .title-cap .t { font-size: 16px; font-weight: 600; }
+  .title-cap .s { font-size: 12.5px; color: var(--label2); }
+  .cap-group { height: 50px; border-radius: 25px; display: flex; align-items: center; padding: 0 6px; }
+  .cap-group .circle-btn { width: 40px; height: 40px; border-radius: 20px; border: 0; box-shadow: none; background: none; }
+  .head-av { width: 50px; height: 50px; border-radius: 25px; display: grid; place-items: center; }
+  .pinned { position: absolute; top: 76px; left: 18px; right: 18px; height: 50px; border-radius: 25px; display: flex; align-items: center; gap: 12px; padding: 0 8px 0 18px; z-index: 3; }
+  .pinned .bar { width: 3px; height: 30px; border-radius: 2px; background: var(--accent); }
+  .pinned .k { font-size: 13px; color: var(--accent); font-weight: 600; }
+  .pinned .v { font-size: 14px; }
+  .pinned .grow { flex: 1; min-width: 0; }
+
+  .messages { position: absolute; top: 140px; bottom: 84px; left: 0; right: 0; padding: 0 28px; display: flex; flex-direction: column; justify-content: flex-end; gap: 10px; }
+  .msg { display: flex; align-items: flex-end; gap: 10px; }
+  .msg .av { width: 34px; height: 34px; font-size: 13px; border-radius: 17px; flex: none; }
+  .bubble { background: rgba(38, 38, 42, .92); border-radius: 20px 20px 20px 6px; padding: 10px 14px 8px; max-width: 470px; font-size: 15px; line-height: 1.35; box-shadow: 0 1px 0 rgba(255,255,255,.04) inset; }
+  .bubble .from { font-size: 13.5px; font-weight: 600; color: #64d2ff; margin-bottom: 6px; }
+  .bubble .stamp { font-size: 12px; color: var(--label3); text-align: right; margin-top: 4px; display: flex; justify-content: flex-end; gap: 5px; align-items: center; }
+  .file { display: flex; gap: 12px; align-items: center; }
+  .file .fi { width: 46px; height: 46px; border-radius: 23px; background: var(--accent); display: grid; place-items: center; color: #fff; }
+  .file .fn { font-size: 15px; font-weight: 500; }
+  .file .fs { font-size: 13px; color: var(--label2); margin-top: 2px; }
+  .share { width: 34px; height: 34px; border-radius: 17px; display: grid; place-items: center; align-self: center; color: var(--label); }
+  .doc { width: 430px; border-radius: 20px 20px 20px 6px; background: #121214; padding: 16px 18px; font-size: 12.5px; line-height: 1.5; color: rgba(235,235,245,.86); border: 1px solid rgba(255,255,255,.06); }
+  .doc h4 { font-size: 13px; margin-bottom: 6px; color: #fff; }
+  .doc li { margin: 2px 0 2px 16px; }
+
+  .composer { position: absolute; left: 18px; right: 18px; bottom: 16px; display: flex; gap: 10px; align-items: center; z-index: 3; }
+  .composer .field { flex: 1; height: 50px; border-radius: 25px; display: flex; align-items: center; padding: 0 8px 0 20px; gap: 4px; font-size: 16px; color: var(--label3); }
+  .composer .field .grow { flex: 1; }
+  .composer .circle-btn { width: 50px; height: 50px; border-radius: 25px; }
+  .composer .field .circle-btn { width: 38px; height: 38px; border: 0; box-shadow: none; background: none; color: var(--label2); }
+
+  /* Sticker panel */
+  .side { background: var(--sheet); border-left: 1px solid var(--sep); padding: 14px 14px 0; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+  .seg { height: 38px; border-radius: 19px; background: rgba(118, 118, 128, .24); display: grid; grid-template-columns: repeat(3, 1fr); padding: 3px; font-size: 14px; font-weight: 500; }
+  .seg div { display: grid; place-items: center; border-radius: 16px; color: var(--label2); }
+  .seg .on { background: #636366; color: #fff; box-shadow: 0 2px 6px rgba(0,0,0,.35); }
+  .packs { display: flex; gap: 8px; color: var(--label2); }
+  .packs div { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: rgba(118,118,128,.16); }
+  .packs div.on { background: rgba(118,118,128,.4); color: #fff; }
+  .sec { font-size: 13px; font-weight: 600; color: var(--label2); text-transform: uppercase; letter-spacing: .4px; margin-top: 2px; display: flex; justify-content: space-between; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .st { aspect-ratio: 1; border-radius: 14px; background: #1c1c1e; position: relative; overflow: hidden; }
+  .st::after { content: ""; position: absolute; inset: 18%; border-radius: 50%; background: var(--c, #3a3a3c); opacity: .9; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="i-chats" viewBox="0 0 24 24"><path d="M4 5.5h11a2 2 0 0 1 2 2V13a2 2 0 0 1-2 2H9l-4 3.5V15a2 2 0 0 1-1-1.8V7.5a2 2 0 0 1 2-2z"/><path d="M17 9h2a2 2 0 0 1 2 2v5a2 2 0 0 1-1 1.7V20l-3-2.5h-5"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></symbol>
+  <symbol id="i-compose" viewBox="0 0 24 24"><path d="M12 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"/><path d="M17.5 3.5l3 3L12 15l-4 1 1-4z"/></symbol>
+  <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="3"/><path d="M14 5v14"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.2" fill="currentColor"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/><circle cx="18" cy="12" r="1.2" fill="currentColor"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 4h6l-1 6 3 3H7l3-3z"/><path d="M12 13v7"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="M19 11.5l-7.2 7.2a4.5 4.5 0 0 1-6.4-6.4l7.4-7.4a3 3 0 0 1 4.2 4.2l-7.3 7.3a1.5 1.5 0 0 1-2.1-2.1l6.6-6.6"/></symbol>
+  <symbol id="i-smile" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 14c1 1.5 2.2 2.2 3.5 2.2s2.5-.7 3.5-2.2"/><circle cx="9.3" cy="10" r=".8" fill="currentColor"/><circle cx="14.7" cy="10" r=".8" fill="currentColor"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M7 3.5h7l4 4V20a.5.5 0 0 1-.5.5h-10A.5.5 0 0 1 7 20z"/><path d="M14 3.5V8h4"/></symbol>
+  <symbol id="i-fwd" viewBox="0 0 24 24"><path d="M13 6l6 6-6 6"/><path d="M19 12H9a5 5 0 0 0-5 5v1"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M3 12.5l4 4L15 8.5M10.5 16.5l1 0L20 8.5"/></symbol>
+  <symbol id="i-badge" viewBox="0 0 24 24"><path d="M12 3l2.2 1.6 2.7-.2.9 2.6 2.2 1.6-.9 2.6.9 2.6-2.2 1.6-.9 2.6-2.7-.2L12 21l-2.2-1.6-2.7.2-.9-2.6-2.2-1.6.9-2.6-.9-2.6 2.2-1.6.9-2.6 2.7.2z" fill="currentColor" stroke="none"/><path d="M8.5 12.2l2.3 2.2 4.7-4.7" stroke="#fff"/></symbol>
+  <symbol id="i-saved" viewBox="0 0 24 24"><path d="M7 4h10v16l-5-3.5L7 20z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-archive" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="4" rx="1"/><path d="M5.5 9v9a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V9M10 13h4"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 19s-7-4.3-7-9.2A3.8 3.8 0 0 1 12 7.6a3.8 3.8 0 0 1 7 2.2C19 14.7 12 19 12 19z"/></symbol>
+  <symbol id="i-group" viewBox="0 0 24 24"><circle cx="9" cy="9" r="3"/><circle cx="16.5" cy="10" r="2.3"/><path d="M3.5 18.5a5.5 5.5 0 0 1 11 0M14 18.5a4.2 4.2 0 0 1 6.5-3.5"/></symbol>
+  <symbol id="i-channel" viewBox="0 0 24 24"><path d="M4 10v4h3l7 4V6l-7 4z"/><path d="M17.5 9a4 4 0 0 1 0 6"/></symbol>
+</svg>
+
+<div class="app">
+  <!-- Folders -->
+  <nav class="rail">
+    <div class="menu"><svg class="ico"><use href="#i-menu"/></svg></div>
+    <div class="folder on"><svg class="ico"><use href="#i-chats"/></svg>Все чаты<span class="badge">97</span></div>
+    <div class="folder"><svg class="ico"><use href="#i-folder"/></svg>Не похуй<span class="badge muted">1</span></div>
+    <div class="folder"><svg class="ico"><use href="#i-folder"/></svg>Боты норм<span class="badge muted">3</span></div>
+    <div class="folder"><svg class="ico"><use href="#i-folder"/></svg>Дизайн</div>
+    <div class="folder"><svg class="ico"><use href="#i-sliders"/></svg>Изм.</div>
+  </nav>
+
+  <!-- Chat list -->
+  <section class="list">
+    <div class="list-head">
+      <div class="list-top">
+        <div class="pill-btn glass">Изм.</div>
+        <div style="display:flex;gap:8px">
+          <div class="circle-btn glass"><svg class="ico"><use href="#i-sliders"/></svg></div>
+          <div class="circle-btn glass accent"><svg class="ico"><use href="#i-compose"/></svg></div>
+        </div>
+      </div>
+      <div class="large-title">Чаты</div>
+      <div class="search"><svg class="ico"><use href="#i-search"/></svg>Поиск</div>
+    </div>
+    <div class="rows">
+      <div class="row">
+        <div class="av" style="background:#48484a"><svg class="ico" style="width:26px;height:26px"><use href="#i-archive"/></svg></div>
+        <div><div class="name">Архив</div><div class="prev">background, dalmac's ports idk, Будь в Тренде, Se4ya, SO2, BestClient…</div></div>
+        <div class="meta"><span class="time">&nbsp;</span><span class="badge muted">72</span></div>
+      </div>
+      <div class="row sel">
+        <div class="av" style="background:#fff;color:var(--accent)"><svg class="ico" style="width:26px;height:26px;color:var(--accent)"><use href="#i-saved"/></svg></div>
+        <div><div class="name">Избранное</div><div class="prev">Фото</div></div>
+        <div class="meta"><span class="time">21:45</span><svg class="pin ico" style="color:rgba(255,255,255,.7)"><use href="#i-pin"/></svg></div>
+      </div>
+      <div class="row">
+        <div class="av" style="background:#b4593b">ДС</div>
+        <div><div class="name"><svg class="ico" style="width:16px;height:16px;color:var(--label2)"><use href="#i-group"/></svg>Джейлбрейк Сообщество!</div><div class="prev"><b>Lober iOS Chat,</b> пельмешечная V 8.0 L6, VoidGram Chat, RecPlay…</div><span class="tag">НЕ ПОХУЙ</span></div>
+        <div class="meta"><span class="time">&nbsp;</span><span class="badge muted">7</span></div>
+      </div>
+      <div class="row">
+        <div class="av" style="background:#1c1c1e;border:1px solid #3a3a3c;font-size:14px">H</div>
+        <div><div class="name"><svg class="ico" style="width:16px;height:16px;color:var(--label2)"><use href="#i-channel"/></svg>Horizon-IOS</div><div class="prev">Спокии ноки тгк</div></div>
+        <div class="meta"><span class="time">Пн</span><svg class="pin ico"><use href="#i-pin"/></svg></div>
+      </div>
+      <div class="row">
+        <div class="av" style="background:#2c2c2e">V</div>
+        <div><div class="name">VoidGram Support<svg class="verified ico"><use href="#i-badge"/></svg></div><div class="prev">Вопрос #13 от gurodesc · идея · важность: низкая</div></div>
+        <div class="meta"><span class="time">Ср</span><svg class="pin ico"><use href="#i-pin"/></svg></div>
+      </div>
+      <div class="row">
+        <div class="av" style="background:#6e6e73">П</div>
+        <div><div class="name"><svg class="ico" style="width:16px;height:16px;color:var(--label2)"><use href="#i-channel"/></svg>Приват для спонсоров<svg class="verified ico"><use href="#i-badge"/></svg></div><div class="prev">Тут баг с курсором если у вас челка на гит ссылка…</div></div>
+        <div class="meta"><span class="time">Сб</span><svg class="pin ico"><use href="#i-pin"/></svg></div>
+      </div>
+      <div class="row">
+        <div class="av" style="background:#2c2c2e">V</div>
+        <div><div class="name">VoidGram · Бейджи<svg class="verified ico"><use href="#i-badge"/></svg></div><div class="prev">reiz (@reizpassive) изменил(а) свой профиль: gifts</div></div>
+        <div class="meta"><span class="time">22:21</span><svg class="pin ico"><use href="#i-pin"/></svg></div>
+      </div>
+      <div class="row">
+        <div class="av" style="background:#2c2c2e">V</div>
+        <div><div class="name"><svg class="ico" style="width:16px;height:16px;color:var(--label2)"><use href="#i-group"/></svg>VoidGram-IOS Dev</div><div class="prev"><b>Murk nya:</b> Типо я такой</div></div>
+        <div class="meta"><span class="time">10:58</span><svg class="pin ico"><use href="#i-pin"/></svg></div>
+      </div>
+      <div class="row">
+        <div class="av" style="background:#5e5ce6">M</div>
+        <div><div class="name">Murk nya &lt;3<svg class="verified ico"><use href="#i-badge"/></svg></div><div class="prev" style="color:var(--accent)">Голосовое сообщение</div><span class="tag">НЕ ПОХУЙ</span></div>
+        <div class="meta"><span class="time">Чт</span><svg class="pin ico"><use href="#i-pin"/></svg></div>
+      </div>
+      <div class="row">
+        <div class="av" style="background:#0a84ff">М</div>
+        <div><div class="name">Мама</div><div class="prev">Стикер</div></div>
+        <div class="meta"><span class="time">10.11.26</span><svg class="pin ico"><use href="#i-pin"/></svg></div>
+      </div>
+      <div class="row">
+        <div class="av" style="background:#ff9f0a">П</div>
+        <div><div class="name">Папа</div><div class="prev">https://t.me/+ibnaZxgStBFkOGMy</div></div>
+        <div class="meta"><span class="time">20:59</span><svg class="pin ico"><use href="#i-pin"/></svg></div>
+      </div>
+      <div class="row">
+        <div class="av" style="background:#3a3a3c">M</div>
+        <div><div class="name"><svg class="ico" style="width:16px;height:16px;color:var(--label2)"><use href="#i-group"/></svg>Merixti</div><div class="prev"><b>Чат Merixti:</b> SoftLixt</div></div>
+        <div class="meta"><span class="time">&nbsp;</span><span class="badge muted">2</span></div>
+      </div>
+      <div class="row">
+        <div class="av" style="background:#ff453a">I</div>
+        <div><div class="name"><svg class="ico" style="width:16px;height:16px;color:var(--label2)"><use href="#i-group"/></svg>IOS Freedom чат</div><div class="prev"><b>Kayoshi:</b> что за ошибка</div></div>
+        <div class="meta"><span class="time">17:36</span><span class="badge muted">18618</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Chat -->
+  <main class="chat">
+    <div class="pattern"></div>
+    <div class="chat-head">
+      <div class="head-av glass" style="background:rgba(255,255,255,.92)"><svg class="ico" style="width:24px;height:24px;color:var(--accent)"><use href="#i-saved"/></svg></div>
+      <div class="title-cap glass"><div class="t">Избранное</div><div class="s">сохранённые сообщения</div></div>
+      <div class="cap-group glass">
+        <div class="circle-btn"><svg class="ico"><use href="#i-search"/></svg></div>
+        <div class="circle-btn"><svg class="ico"><use href="#i-sidebar"/></svg></div>
+        <div class="circle-btn"><svg class="ico"><use href="#i-more"/></svg></div>
+      </div>
+    </div>
+    <div class="pinned glass">
+      <div class="bar"></div>
+      <div class="grow"><div class="k">Закреплённое сообщение</div><div class="v">https://t.me/+rnesNlrSbtkwNmI6</div></div>
+      <div class="circle-btn" style="color:var(--label2)"><svg class="ico"><use href="#i-close"/></svg></div>
+    </div>
+
+    <div class="messages">
+      <div class="msg">
+        <div class="av" style="background:#6e6e73">П</div>
+        <div class="bubble">
+          <div class="from">Приват для спонсоров</div>
+          <div class="file"><div class="fi"><svg class="ico"><use href="#i-file"/></svg></div><div><div class="fn">Telegram.ipa</div><div class="fs">74,8 МБ</div></div></div>
+          <div class="stamp">вчера в 15:53</div>
+        </div>
+        <div class="share glass"><svg class="ico" style="width:17px;height:17px"><use href="#i-fwd"/></svg></div>
+      </div>
+      <div class="msg">
+        <div class="av" style="background:#48484a">Н</div>
+        <div class="doc">
+          <h4>1. Алгебра и Геометрия (Вт, Ср) — без этого не решить ни одной задачи</h4>
+          <div style="color:var(--label2);margin-bottom:6px">В 9 классе идут квадратичные функции, неравенства, прогрессии и векторы. Пока не добьёшь 4 базовые темы из 7–8 класса, двигаться дальше смысла нет.</div>
+          <ul>
+            <li><b>Дроби и действия с минусами</b> — как складывать и умножать отрицательные числа.</li>
+            <li><b>Линейные и квадратные уравнения</b> — дискриминант D = b² − 4ac и теорема Виета.</li>
+            <li><b>Формулы сокращённого умножения</b> — (a ± b)², a² − b².</li>
+            <li><b>Геометрия</b> — теорема Пифагора, синус, косинус и тангенс в прямоугольном треугольнике.</li>
+          </ul>
+          <div class="stamp">17:42 <svg class="ico" style="width:16px;height:16px;color:var(--accent)"><use href="#i-check"/></svg></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="composer">
+      <div class="circle-btn glass"><svg class="ico"><use href="#i-clip"/></svg></div>
+      <div class="field glass">
+        <span class="grow">Сообщение</span>
+        <div class="circle-btn"><svg class="ico"><use href="#i-clock"/></svg></div>
+        <div class="circle-btn"><svg class="ico"><use href="#i-smile"/></svg></div>
+      </div>
+      <div class="circle-btn glass"><svg class="ico"><use href="#i-mic"/></svg></div>
+    </div>
+  </main>
+
+  <!-- Stickers -->
+  <aside class="side">
+    <div class="seg"><div>Эмодзи</div><div class="on">Стикеры</div><div>GIF</div></div>
+    <div class="search" style="height:34px;font-size:15px"><svg class="ico"><use href="#i-search"/></svg>Поиск стикеров</div>
+    <div class="packs">
+      <div class="on"><svg class="ico" style="width:18px;height:18px"><use href="#i-clock"/></svg></div>
+      <div><svg class="ico" style="width:18px;height:18px"><use href="#i-heart"/></svg></div>
+      <div></div><div></div><div></div><div></div>
+    </div>
+    <div class="sec">Недавние</div>
+    <div class="grid">
+      <div class="st" style="--c:#8e8e93"></div><div class="st" style="--c:#c7a27a"></div><div class="st" style="--c:#d1d1d6"></div><div class="st" style="--c:#b0806a"></div>
+      <div class="st" style="--c:#a2845e"></div><div class="st" style="--c:#c7c7cc"></div><div class="st" style="--c:#d9a066"></div><div class="st" style="--c:#8e8e93"></div>
+      <div class="st" style="--c:#b0806a"></div><div class="st" style="--c:#c7a27a"></div><div class="st" style="--c:#a2845e"></div><div class="st" style="--c:#d1d1d6"></div>
+      <div class="st" style="--c:#d9a066"></div><div class="st" style="--c:#8e8e93"></div><div class="st" style="--c:#c7c7cc"></div><div class="st" style="--c:#b0806a"></div>
+    </div>
+    <div class="sec">@kynik — это оч крутой канал<svg class="ico" style="width:14px;height:14px"><use href="#i-close"/></svg></div>
+    <div class="grid">
+      <div class="st" style="--c:#c7a27a"></div><div class="st" style="--c:#d9a066"></div><div class="st" style="--c:#d1d1d6"></div><div class="st" style="--c:#a2845e"></div>
+      <div class="st" style="--c:#8e8e93"></div><div class="st" style="--c:#b0806a"></div><div class="st" style="--c:#c7c7cc"></div><div class="st" style="--c:#d9a066"></div>
+    </div>
+  </aside>
+</div>
+</body>
+</html>

@@ -1,8 +1,8 @@
 diff --git a/Telegram/CMakeLists.txt b/Telegram/CMakeLists.txt
-index a957cfd..25a8bc2 100644
+index a957cfd..8debdcb 100644
 --- a/Telegram/CMakeLists.txt
 +++ b/Telegram/CMakeLists.txt
-@@ -129,6 +129,30 @@ set(ayugram_files
+@@ -129,6 +129,32 @@ set(ayugram_files
          ayu/utils/windows_utils.h
          ayu/utils/rc_manager.cpp
          ayu/utils/rc_manager.h
@@ -20,6 +20,8 @@ index a957cfd..25a8bc2 100644
 +        voidgram/voidgram_gifts.h
 +        voidgram/voidgram_ton_card.cpp
 +        voidgram/voidgram_ton_card.h
++        voidgram/voidgram_liquid_glass.cpp
++        voidgram/voidgram_liquid_glass.h
 +        voidgram/voidgram_names.cpp
 +        voidgram/voidgram_names.h
 +        voidgram/voidgram_effects.cpp
@@ -33,7 +35,7 @@ index a957cfd..25a8bc2 100644
          ayu/ui/ayu_logo.cpp
          ayu/ui/ayu_logo.h
          ayu/ui/toasts.cpp
-@@ -2571,7 +2595,7 @@ else()
+@@ -2571,7 +2597,7 @@ else()
          set(bundle_identifier "one.ayugram.AyuGramDesktop")
      endif()
      set(bundle_entitlements "Telegram.entitlements")
@@ -42,7 +44,7 @@ index a957cfd..25a8bc2 100644
  endif()
  
  if (CMAKE_GENERATOR STREQUAL Xcode)
-@@ -2620,7 +2644,7 @@ get_property(is_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+@@ -2620,7 +2646,7 @@ get_property(is_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
  if (APPLE
      OR is_multi_config
      OR NOT CMAKE_EXECUTABLE_SUFFIX STREQUAL ""
@@ -51,7 +53,7 @@ index a957cfd..25a8bc2 100644
      set(output_folder ${CMAKE_BINARY_DIR})
  else()
      set(output_folder ${CMAKE_BINARY_DIR}/bin)
-@@ -2800,28 +2824,28 @@ endif()
+@@ -2800,28 +2826,28 @@ endif()
  
  if (LINUX AND DESKTOP_APP_USE_PACKAGED)
      include(GNUInstallDirs)
@@ -33417,22 +33419,24 @@ index 40cc5e2..8b38ffd 100644
  	});
  }
 diff --git a/Telegram/SourceFiles/mainwidget.cpp b/Telegram/SourceFiles/mainwidget.cpp
-index 96cf0ba..bc4f604 100644
+index 96cf0ba..fe28551 100644
 --- a/Telegram/SourceFiles/mainwidget.cpp
 +++ b/Telegram/SourceFiles/mainwidget.cpp
-@@ -105,6 +105,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
+@@ -105,6 +105,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
  
  // AyuGram includes
  #include "ayu/features/forward/ayu_forward.h"
++#include "voidgram/voidgram_liquid_glass.h"
 +#include "voidgram/voidgram_effects.h"
  
  
  namespace {
-@@ -292,6 +293,7 @@ MainWidget::MainWidget(
+@@ -292,6 +294,8 @@ MainWidget::MainWidget(
  	if (_dialogs) {
  		setupConnectingWidget();
  	}
 +	VoidGram::AttachEffects(this);
++	VoidGram::InstallLiquidGlass();
  
  	_history->cancelRequests(
  	) | rpl::on_next([=] {
@@ -34899,6 +34903,242 @@ index 0000000..e4cfc27
 +	}
 +	p.setOpacity(opacity);
 +}
++
++} // namespace VoidGram
+diff --git a/Telegram/SourceFiles/voidgram/voidgram_liquid_glass.cpp b/Telegram/SourceFiles/voidgram/voidgram_liquid_glass.cpp
+new file mode 100644
+index 0000000..4eb99f1
+--- /dev/null
++++ b/Telegram/SourceFiles/voidgram/voidgram_liquid_glass.cpp
+@@ -0,0 +1,206 @@
++// This file is part of VoidGram for Desktop, a fork of AyuGram Desktop.
++// It is licensed under GPLv3 with the same exceptions as the rest of the code.
++#include "voidgram/voidgram_liquid_glass.h"
++
++#ifndef VOIDGRAM_GLASS_STANDALONE // The shader alone, for its visual check (desktop/tools/glass_check.cpp in the VoidGram repository).
++#include "ui/widgets/buttons.h"
++#include "ui/widgets/popup_menu.h"
++#include "styles/style_basic.h"
++#endif
++
++#include <QtCore/QCoreApplication>
++#include <QtCore/QPointer>
++#include <QtGui/QPainter>
++#include <QtGui/QPainterPath>
++#include <QtWidgets/QApplication>
++#include <QtWidgets/QWidget>
++
++#include <cmath>
++
++namespace VoidGram {
++namespace {
++
++[[maybe_unused]] // Unused by the standalone check.
++// While a backdrop is being captured, glass is not drawn (a capture must not see glass, or itself).
++bool Capturing = false;
++
++[[nodiscard]] QImage Blurred(const QImage &image) {
++	// A half-size round trip: a light frost that keeps what is behind readable, as in iOS 26.
++	const auto small = image.scaled(
++		std::max(1, image.width() / 2),
++		std::max(1, image.height() / 2),
++		Qt::IgnoreAspectRatio,
++		Qt::SmoothTransformation);
++	return small.scaled(image.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
++		.convertToFormat(QImage::Format_ARGB32_Premultiplied);
++}
++
++#ifndef VOIDGRAM_GLASS_STANDALONE
++[[nodiscard]] bool Eligible(QWidget *widget) {
++	if (!dynamic_cast<Ui::IconButton*>(widget)) {
++		return false;
++	}
++	const auto size = widget->size();
++	if (size.width() < 24 || size.height() < 24 || size.width() > 96 || size.height() > 96) {
++		return false;
++	}
++	for (auto parent = widget->parentWidget(); parent; parent = parent->parentWidget()) {
++		if (dynamic_cast<Ui::PopupMenu*>(parent)) {
++			return false; // Menus keep their flat rows.
++		}
++	}
++	return true;
++}
++
++void PaintGlass(QWidget *widget) {
++	const auto parent = widget->parentWidget();
++	if (!parent) {
++		return;
++	}
++	const auto ratio = widget->devicePixelRatioF();
++	const auto inner = widget->rect().marginsRemoved({ 2, 2, 2, 2 });
++	const auto side = std::min(inner.width(), inner.height());
++	const auto capsule = QRect(
++		inner.x() + (inner.width() - side) / 2,
++		inner.y() + (inner.height() - side) / 2,
++		side,
++		side);
++
++	// What the parent paints under the capsule, without its children: the wallpaper or the panel.
++	auto backdrop = QImage(
++		capsule.size() * ratio,
++		QImage::Format_ARGB32_Premultiplied);
++	backdrop.setDevicePixelRatio(ratio);
++	backdrop.fill(st::windowBg->c);
++	Capturing = true;
++	parent->render(
++		&backdrop,
++		QPoint(),
++		QRegion(QRect(widget->mapTo(parent, capsule.topLeft()), capsule.size())),
++		QWidget::DrawWindowBackground);
++	Capturing = false;
++	backdrop.setDevicePixelRatio(1.);
++
++	const auto dark = st::windowBg->c.lightness() < 128;
++	auto glass = RenderLiquidGlass(backdrop, dark);
++	glass.setDevicePixelRatio(ratio);
++	auto p = QPainter(widget);
++	p.drawImage(capsule.topLeft(), glass);
++}
++
++class Filter final : public QObject {
++public:
++	using QObject::QObject;
++
++protected:
++	bool eventFilter(QObject *object, QEvent *event) override {
++		if (event->type() != QEvent::Paint || !object->isWidgetType()) {
++			return false;
++		}
++		const auto widget = static_cast<QWidget*>(object);
++		if (!Eligible(widget)) {
++			return false;
++		}
++		if (Capturing) {
++			return false;
++		}
++		PaintGlass(widget);
++		return false; // The button paints its icon over the glass.
++	}
++
++};
++
++#endif
++
++} // namespace
++
++QImage RenderLiquidGlass(const QImage &backdrop, bool dark) {
++	const auto w = backdrop.width();
++	const auto h = backdrop.height();
++	auto result = QImage(w, h, QImage::Format_ARGB32_Premultiplied);
++	result.fill(Qt::transparent);
++	if (w < 4 || h < 4) {
++		return result;
++	}
++	const auto blurred = Blurred(backdrop);
++	const auto radius = std::min(w, h) / 2.;
++	const auto bezel = radius * 0.32; // The rim where the glass bends the light.
++	const auto cx = (w - 1) / 2.;
++	const auto cy = (h - 1) / 2.;
++	const auto halfW = w / 2.;
++	const auto halfH = h / 2.;
++
++	// Signed distance to the capsule's edge (negative inside).
++	const auto distance = [&](double x, double y) {
++		const auto qx = std::abs(x - cx) - (halfW - radius);
++		const auto qy = std::abs(y - cy) - (halfH - radius);
++		const auto ox = std::max(qx, 0.);
++		const auto oy = std::max(qy, 0.);
++		return std::sqrt(ox * ox + oy * oy) + std::min(std::max(qx, qy), 0.) - radius;
++	};
++	const auto sample = [&](double x, double y) {
++		const auto sx = std::clamp(int(std::lround(x)), 0, w - 1);
++		const auto sy = std::clamp(int(std::lround(y)), 0, h - 1);
++		return reinterpret_cast<const QRgb*>(blurred.constScanLine(sy))[sx];
++	};
++
++	const auto tint = dark ? qRgba(255, 255, 255, 18) : qRgba(255, 255, 255, 60);
++	for (auto y = 0; y != h; ++y) {
++		auto out = reinterpret_cast<QRgb*>(result.scanLine(y));
++		for (auto x = 0; x != w; ++x) {
++			const auto d = distance(x + 0.5, y + 0.5);
++			if (d > 0.5) {
++				continue;
++			}
++			// Refraction: near the rim the sample is pulled toward the centre, as through a lens.
++			const auto depth = std::clamp(-d / bezel, 0., 1.);
++			const auto bend = (1. - depth) * (1. - depth) * 0.28;
++			const auto sx = x + (cx - x) * bend;
++			const auto sy = y + (cy - y) * bend;
++			auto c = sample(sx, sy);
++			// Tint over the bent backdrop.
++			const auto ta = qAlpha(tint) / 255.;
++			auto r = qRed(c) * (1. - ta) + qRed(tint) * ta;
++			auto g = qGreen(c) * (1. - ta) + qGreen(tint) * ta;
++			auto b = qBlue(c) * (1. - ta) + qBlue(tint) * ta;
++			// Specular: light from the top left, strongest on the rim.
++			const auto rim = std::clamp(1. + d / (radius * 0.08), 0., 1.);
++			const auto nx = (x - cx) / halfW;
++			const auto ny = (y - cy) / halfH;
++			const auto facing = std::clamp(-(nx * 0.6 + ny * 0.8), 0., 1.);
++			const auto light = rim * (0.10 + 0.50 * facing) * (dark ? 0.8 : 1.);
++			r += (255. - r) * light;
++			g += (255. - g) * light;
++			b += (255. - b) * light;
++			// Antialiased edge.
++			const auto coverage = std::clamp(0.5 - d, 0., 1.);
++			out[x] = qRgba(
++				int(r * coverage),
++				int(g * coverage),
++				int(b * coverage),
++				int(255 * coverage));
++		}
++	}
++	// A faint outer rim, as the glass catches light all around.
++	auto p = QPainter(&result);
++	p.setRenderHint(QPainter::Antialiasing);
++	p.setPen(QPen(QColor(255, 255, 255, dark ? 40 : 90), 1.));
++	p.setBrush(Qt::NoBrush);
++	p.drawRoundedRect(QRectF(0.5, 0.5, w - 1., h - 1.), radius - 0.5, radius - 0.5);
++	return result;
++}
++
++#ifndef VOIDGRAM_GLASS_STANDALONE
++void InstallLiquidGlass() {
++	static auto installed = false;
++	if (installed || !QCoreApplication::instance()) {
++		return;
++	}
++	installed = true;
++	QCoreApplication::instance()->installEventFilter(
++		new Filter(QCoreApplication::instance()));
++}
++
++#endif
++
++} // namespace VoidGram
+diff --git a/Telegram/SourceFiles/voidgram/voidgram_liquid_glass.h b/Telegram/SourceFiles/voidgram/voidgram_liquid_glass.h
+new file mode 100644
+index 0000000..6d39d3f
+--- /dev/null
++++ b/Telegram/SourceFiles/voidgram/voidgram_liquid_glass.h
+@@ -0,0 +1,18 @@
++// This file is part of VoidGram for Desktop, a fork of AyuGram Desktop.
++// It is licensed under GPLv3 with the same exceptions as the rest of the code.
++#pragma once
++
++#include <QtGui/QImage>
++
++namespace VoidGram {
++
++// iOS 26 "Liquid Glass" behind every icon button of the app (the chat's top bar, the composer, boxes):
++// once per process, an application-wide filter paints the glass before the button paints its icon.
++void InstallLiquidGlass();
++
++// The glass "shader": `backdrop` is what lies under a `size` capsule (device pixels, premultiplied
++// ARGB). Returns the capsule: the backdrop blurred, bent at the rim like a lens, tinted, with a
++// specular edge. Transparent outside the capsule.
++[[nodiscard]] QImage RenderLiquidGlass(const QImage &backdrop, bool dark);
 +
 +} // namespace VoidGram
 diff --git a/Telegram/SourceFiles/voidgram/voidgram_look_box.cpp b/Telegram/SourceFiles/voidgram/voidgram_look_box.cpp
