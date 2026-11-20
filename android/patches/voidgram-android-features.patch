@@ -673,6 +673,175 @@ index 0000000..6f850fc
 +
 +    private static final String TEXT_EN = "VoidGram User Agreement\n\nPlease read this agreement carefully to the end. The \"Accept\" button becomes available only after you scroll the text all the way down. By tapping \"Accept\" you confirm that you have read, understood and fully agree to every term below. If you do not agree, do not use VoidGram and delete the app.\n\n1. Unofficial client\nVoidGram is an unofficial Telegram client. It is not affiliated with, endorsed or supported by Telegram FZ-LLC, Telegram Messenger Inc. or their partners. Telegram names and trademarks belong to their owners.\n\n2. \"As is\", no warranty\nVoidGram is provided \"as is\" and \"as available\", without any warranty, express or implied, including warranties of operation, security, accuracy, compatibility, fitness for a particular purpose and freedom from errors. The app may be unstable, lose data or stop working at any time.\n\n3. No liability\nThe developers, contributors and distributors of VoidGram accept NO liability for any direct, indirect, incidental, special or consequential damage related to using or being unable to use the app, including but not limited to:\n• a ban, limit, freeze or deletion of your Telegram account;\n• loss, corruption, leak or disclosure of messages, media, contacts or any other data;\n• actions of other users, bots, plugins and third parties;\n• financial losses, including Stars, gifts, NFTs and subscriptions;\n• the consequences of breaking Telegram's rules, the laws of your country or the rights of others.\nYou alone are responsible for how you use VoidGram.\n\n4. Telegram's rules\nSome VoidGram features (for example Ghost Mode, keeping deleted and edited messages, keeping view-once media) may conflict with the Telegram API Terms of Service and Telegram's Terms of Service. You turn them on at your own risk and understand that Telegram may restrict your account.\n\n5. Privacy of conversations\nVoidGram can keep deleted and edited messages and view-once photos, videos and voice messages on the device, and allows screenshots where ordinary Telegram forbids them. A conversation with a VoidGram user therefore cannot be considered protected: not in ordinary chats, not in secret chats and not with view-once messages.\n\n6. Automatic notice to the people you talk to\nSo that the people you talk to know this, VoidGram automatically sends a warning message on your behalf:\n• to every private chat, once, and pins it. You cannot delete or unpin it in VoidGram; only the other person can delete it;\n• to every group you write in, once, without pinning.\nThe message is sent before your first message in that chat. By accepting this agreement you agree to it being sent.\n\n7. Plugins and third-party code\nPlugins, themes and scripts are written by third parties. The VoidGram developers do not fully review them and are not responsible for how they work, their safety or the consequences of using them. Install only what you trust.\n\n8. Data\nVoidGram settings, history and archives are stored locally on your device. For badges and some features the app contacts the VoidGram server. The developers are not obliged to store, restore or hand over your data.\n\n9. Law\nYou agree to use VoidGram only within the laws of your country. Using the app for surveillance, stalking, blackmail, spreading other people's personal data or any other unlawful activity is forbidden.\n\n10. Changes\nThese terms may change. After a substantial change VoidGram will ask you to accept the agreement again. By continuing to use the app you accept the current version.\n\n11. Age\nBy using VoidGram you confirm that you are old enough in your country to accept such terms yourself, or that you have the consent of your parents or legal guardians.\n\nYou have reached the end. If you agree to all of the terms, tap \"Accept\".";
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramBackup.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramBackup.java
+new file mode 100644
+index 0000000..1cde15d
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramBackup.java
+@@ -0,0 +1,163 @@
++package org.telegram.messenger.voidgram;
++
++import android.content.Context;
++import android.content.SharedPreferences;
++
++import org.json.JSONArray;
++import org.json.JSONObject;
++import org.telegram.messenger.ApplicationLoader;
++
++import java.io.File;
++import java.io.FileInputStream;
++import java.io.FileOutputStream;
++import java.security.SecureRandom;
++import java.util.HashSet;
++import java.util.Iterator;
++import java.util.Map;
++import java.util.Set;
++
++import javax.crypto.Cipher;
++import javax.crypto.SecretKeyFactory;
++import javax.crypto.spec.GCMParameterSpec;
++import javax.crypto.spec.PBEKeySpec;
++import javax.crypto.spec.SecretKeySpec;
++
++/**
++ * VoidGram settings backup, as on iOS: every VoidGram setting (decoy codes excepted) in one file,
++ * sealed with AES-GCM under a key derived from the user's password.
++ */
++public final class VoidGramBackup {
++    private static final byte[] MAGIC = "VGBK1".getBytes();
++
++    private VoidGramBackup() {
++    }
++
++    private static SharedPreferences[] stores() {
++        Context context = ApplicationLoader.applicationContext;
++        return new SharedPreferences[]{context.getSharedPreferences("voidgram", Context.MODE_PRIVATE), context.getSharedPreferences("voidgram_lyrics", Context.MODE_PRIVATE)};
++    }
++
++    private static final String[] NAMES = {"voidgram", "voidgram_lyrics"};
++
++    private static byte[] key(String password, byte[] salt) throws Exception {
++        SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
++        return factory.generateSecret(new PBEKeySpec(password.toCharArray(), salt, 120000, 256)).getEncoded();
++    }
++
++    /** Writes the backup into the app's cache and returns the file, or null. */
++    public static File export(String password) {
++        try {
++            JSONObject root = new JSONObject();
++            SharedPreferences[] stores = stores();
++            for (int i = 0; i < stores.length; i++) {
++                JSONObject values = new JSONObject();
++                for (Map.Entry<String, ?> entry : stores[i].getAll().entrySet()) {
++                    Object value = entry.getValue();
++                    if (value instanceof Set) {
++                        JSONArray array = new JSONArray();
++                        for (Object item : (Set<?>) value) {
++                            array.put(item);
++                        }
++                        JSONObject wrapped = new JSONObject();
++                        wrapped.put("set", array);
++                        values.put(entry.getKey(), wrapped);
++                    } else {
++                        JSONObject wrapped = new JSONObject();
++                        wrapped.put(value instanceof Boolean ? "b" : value instanceof Integer ? "i" : value instanceof Long ? "l" : value instanceof Float ? "f" : "s", value);
++                        values.put(entry.getKey(), wrapped);
++                    }
++                }
++                root.put(NAMES[i], values);
++            }
++            byte[] plain = root.toString().getBytes("UTF-8");
++            SecureRandom random = new SecureRandom();
++            byte[] salt = new byte[16];
++            byte[] iv = new byte[12];
++            random.nextBytes(salt);
++            random.nextBytes(iv);
++            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
++            cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key(password, salt), "AES"), new GCMParameterSpec(128, iv));
++            byte[] sealed = cipher.doFinal(plain);
++            File directory = new File(ApplicationLoader.applicationContext.getFilesDir(), "cache");
++            directory.mkdirs();
++            File file = new File(directory, "VoidGram-settings.voidgram");
++            try (FileOutputStream out = new FileOutputStream(file)) {
++                out.write(MAGIC);
++                out.write(salt);
++                out.write(iv);
++                out.write(sealed);
++            }
++            return file;
++        } catch (Throwable e) {
++            return null;
++        }
++    }
++
++    /** Restores a backup; false on a wrong password or a damaged file. */
++    public static boolean restore(File file, String password) {
++        try {
++            byte[] data = new byte[(int) file.length()];
++            try (FileInputStream in = new FileInputStream(file)) {
++                int read = 0;
++                while (read < data.length) {
++                    int count = in.read(data, read, data.length - read);
++                    if (count < 0) {
++                        break;
++                    }
++                    read += count;
++                }
++            }
++            if (data.length < MAGIC.length + 28) {
++                return false;
++            }
++            for (int i = 0; i < MAGIC.length; i++) {
++                if (data[i] != MAGIC[i]) {
++                    return false;
++                }
++            }
++            byte[] salt = new byte[16];
++            byte[] iv = new byte[12];
++            System.arraycopy(data, MAGIC.length, salt, 0, 16);
++            System.arraycopy(data, MAGIC.length + 16, iv, 0, 12);
++            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
++            cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key(password, salt), "AES"), new GCMParameterSpec(128, iv));
++            byte[] plain = cipher.doFinal(data, MAGIC.length + 28, data.length - MAGIC.length - 28);
++            JSONObject root = new JSONObject(new String(plain, "UTF-8"));
++            SharedPreferences[] stores = stores();
++            for (int i = 0; i < stores.length; i++) {
++                JSONObject values = root.optJSONObject(NAMES[i]);
++                if (values == null) {
++                    continue;
++                }
++                SharedPreferences.Editor editor = stores[i].edit();
++                Iterator<String> keys = values.keys();
++                while (keys.hasNext()) {
++                    String name = keys.next();
++                    JSONObject wrapped = values.getJSONObject(name);
++                    if (wrapped.has("set")) {
++                        JSONArray array = wrapped.getJSONArray("set");
++                        HashSet<String> set = new HashSet<>();
++                        for (int j = 0; j < array.length(); j++) {
++                            set.add(array.getString(j));
++                        }
++                        editor.putStringSet(name, set);
++                    } else if (wrapped.has("b")) {
++                        editor.putBoolean(name, wrapped.getBoolean("b"));
++                    } else if (wrapped.has("i")) {
++                        editor.putInt(name, wrapped.getInt("i"));
++                    } else if (wrapped.has("l")) {
++                        editor.putLong(name, wrapped.getLong("l"));
++                    } else if (wrapped.has("f")) {
++                        editor.putFloat(name, (float) wrapped.getDouble("f"));
++                    } else if (wrapped.has("s")) {
++                        editor.putString(name, wrapped.getString("s"));
++                    }
++                }
++                editor.apply();
++            }
++            return true;
++        } catch (Throwable e) {
++            return false;
++        }
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramBadges.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramBadges.java
 new file mode 100644
 index 0000000..d824b69
@@ -6156,10 +6325,10 @@ index 0000000..70cdf0b
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
 new file mode 100644
-index 0000000..fd65444
+index 0000000..043232d
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
-@@ -0,0 +1,232 @@
+@@ -0,0 +1,313 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.content.Context;
@@ -6201,6 +6370,9 @@ index 0000000..fd65444
 +    private static final int ID_DECOY = 9;
 +    private static final int ID_MUSIC = 10;
 +    private static final int ID_BADGES = 11;
++    private static final int ID_EXPORT = 12;
++    private static final int ID_IMPORT = 13;
++    private static final int REQUEST_IMPORT = 9301;
 +
 +    private FrameLayout musicRow;
 +    private TextView musicButton;
@@ -6240,6 +6412,8 @@ index 0000000..fd65444
 +        items.add(UItem.asShadow(VoidGram.t("Значки и подписи с сервера VoidGram, рядом с именем у тех, у кого нет своего статуса. Видны только в VoidGram. Иконки приложения VoidGram — в Настройках → Оформление → Иконка.", "Badges and labels from the VoidGram server, next to the name of people without their own status. Visible only in VoidGram. VoidGram app icons are in Settings → Appearance → App icon.")));
 +
 +        items.add(UItem.asHeader(VoidGram.t("Другое", "Other")));
++        items.add(UItem.asButton(ID_EXPORT, R.drawable.msg_shareout, VoidGram.t("Экспорт настроек VoidGram", "Export VoidGram settings")));
++        items.add(UItem.asButton(ID_IMPORT, R.drawable.msg_download, VoidGram.t("Импорт настроек VoidGram", "Import VoidGram settings")));
 +        items.add(UItem.asButton(ID_AGREEMENT, R.drawable.msg2_policy, VoidGram.t("Пользовательское соглашение", "User agreement")));
 +        items.add(UItem.asShadow(null));
 +        items.add(UItem.asCustom(musicRow()));
@@ -6375,6 +6549,31 @@ index 0000000..fd65444
 +                    listView.adapter.update(true);
 +                }
 +                break;
++            case ID_EXPORT:
++                askPassword(VoidGram.t("Пароль для файла", "Password for the file"), password -> {
++                    java.io.File file = org.telegram.messenger.voidgram.VoidGramBackup.export(password);
++                    if (file == null) {
++                        org.telegram.ui.Components.BulletinFactory.of(this).createErrorBulletin(VoidGram.t("Не удалось создать файл", "The file could not be created")).show();
++                        return;
++                    }
++                    try {
++                        android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(getParentActivity(), org.telegram.messenger.ApplicationLoader.getApplicationId() + ".provider", file);
++                        android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_SEND);
++                        intent.setType("application/octet-stream");
++                        intent.putExtra(android.content.Intent.EXTRA_STREAM, uri);
++                        intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
++                        getParentActivity().startActivity(android.content.Intent.createChooser(intent, "VoidGram"));
++                    } catch (Throwable ignore) {
++                    }
++                });
++                break;
++            case ID_IMPORT: {
++                android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT);
++                intent.addCategory(android.content.Intent.CATEGORY_OPENABLE);
++                intent.setType("*/*");
++                startActivityForResult(intent, REQUEST_IMPORT);
++                break;
++            }
 +            case ID_AGREEMENT:
 +                AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
 +                builder.setTitle(VoidGram.t("Пользовательское соглашение", "User agreement"));
@@ -6385,6 +6584,57 @@ index 0000000..fd65444
 +            default:
 +                break;
 +        }
++    }
++
++    private void askPassword(String title, org.telegram.messenger.Utilities.Callback<String> done) {
++        android.widget.EditText field = new android.widget.EditText(getContext());
++        field.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
++        field.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
++        AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
++        builder.setTitle(title);
++        builder.setView(field);
++        builder.setPositiveButton("OK", (dialog, which) -> {
++            String password = field.getText().toString();
++            if (password.length() >= 4) {
++                done.run(password);
++            } else {
++                org.telegram.ui.Components.BulletinFactory.of(this).createErrorBulletin(VoidGram.t("Пароль — минимум 4 символа", "The password needs at least 4 characters")).show();
++            }
++        });
++        builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++        showDialog(builder.create());
++    }
++
++    @Override
++    public void onActivityResultFragment(int requestCode, int resultCode, android.content.Intent data) {
++        if (requestCode != REQUEST_IMPORT || resultCode != android.app.Activity.RESULT_OK || data == null || data.getData() == null) {
++            return;
++        }
++        final android.net.Uri uri = data.getData();
++        askPassword(VoidGram.t("Пароль файла", "File password"), password -> {
++            try {
++                java.io.File file = new java.io.File(getParentActivity().getCacheDir(), "voidgram_import.voidgram");
++                try (java.io.InputStream in = getParentActivity().getContentResolver().openInputStream(uri); java.io.FileOutputStream out = new java.io.FileOutputStream(file)) {
++                    byte[] buffer = new byte[16384];
++                    int count;
++                    while (in != null && (count = in.read(buffer)) > 0) {
++                        out.write(buffer, 0, count);
++                    }
++                }
++                boolean ok = org.telegram.messenger.voidgram.VoidGramBackup.restore(file, password);
++                file.delete();
++                if (ok) {
++                    org.telegram.ui.Components.BulletinFactory.of(this).createSimpleBulletin(R.raw.done, VoidGram.t("Настройки восстановлены", "Settings restored")).show();
++                    if (listView != null && listView.adapter != null) {
++                        listView.adapter.update(true);
++                    }
++                } else {
++                    org.telegram.ui.Components.BulletinFactory.of(this).createErrorBulletin(VoidGram.t("Неверный пароль или файл повреждён", "Wrong password or damaged file")).show();
++                }
++            } catch (Throwable e) {
++                org.telegram.ui.Components.BulletinFactory.of(this).createErrorBulletin(VoidGram.t("Не удалось прочитать файл", "The file could not be read")).show();
++            }
++        });
 +    }
 +
 +    @Override
