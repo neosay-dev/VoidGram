@@ -10579,10 +10579,10 @@ index 0000000..1c86390
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramOnlineTools.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramOnlineTools.java
 new file mode 100644
-index 0000000..129dc78
+index 0000000..24a525b
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramOnlineTools.java
-@@ -0,0 +1,596 @@
+@@ -0,0 +1,600 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.util.Base64;
@@ -10717,6 +10717,10 @@ index 0000000..129dc78
 +                    checkFile(fragment, file, name == null || name.isEmpty() ? file.getName() : name);
 +                }
 +            });
++        }
++        if (fragment instanceof org.telegram.ui.ChatActivity && VoidGramVideoCircle.canConvert(message)) {
++            titles.add(VoidGram.t("Отправить кружком", "Send as a round video"));
++            actions.add(() -> VoidGramVideoCircle.send((org.telegram.ui.ChatActivity) fragment, message));
 +        }
 +        if (fragment instanceof org.telegram.ui.ChatActivity && VoidGramAudioToVoice.canConvert(message)) {
 +            titles.add(VoidGram.t("Отправить как голосовое", "Send as a voice message"));
@@ -12709,6 +12713,112 @@ index 0000000..6d372f3
 +    @Override
 +    protected boolean onLongClick(UItem item, View view, int position, float x, float y) {
 +        return false;
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramVideoCircle.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramVideoCircle.java
+new file mode 100644
+index 0000000..8c8f76c
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramVideoCircle.java
+@@ -0,0 +1,100 @@
++package org.telegram.ui.voidgram;
++
++import android.media.MediaMetadataRetriever;
++
++import org.telegram.messenger.AccountInstance;
++import org.telegram.messenger.FileLoader;
++import org.telegram.messenger.MediaController;
++import org.telegram.messenger.MessageObject;
++import org.telegram.messenger.R;
++import org.telegram.messenger.SendMessagesHelper;
++import org.telegram.messenger.VideoEditedInfo;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.ui.ChatActivity;
++import org.telegram.ui.Components.BulletinFactory;
++
++import java.io.File;
++
++/**
++ * "Video → circle", as on iOS: a video is cropped to its centre square (480×480, up to 60 s) by
++ * Telegram's own converter and sent to this chat as a round video message.
++ */
++public final class VoidGramVideoCircle {
++    private VoidGramVideoCircle() {
++    }
++
++    private static final int SIDE = 480;
++    private static final long MAX_MS = 60_000;
++
++    public static boolean canConvert(MessageObject message) {
++        return message != null && message.isVideo() && !message.isRoundVideo() && !message.needDrawBluredPreview();
++    }
++
++    public static void send(ChatActivity chat, MessageObject message) {
++        File file = FileLoader.getInstance(message.currentAccount).getPathToMessage(message.messageOwner);
++        if (file == null || !file.exists()) {
++            BulletinFactory.of(chat).createErrorBulletin(VoidGram.t("Сначала загрузите видео.", "Download the video first.")).show();
++            return;
++        }
++        int width;
++        int height;
++        int rotation;
++        long durationMs;
++        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
++        try {
++            retriever.setDataSource(file.getAbsolutePath());
++            width = Integer.parseInt(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));
++            height = Integer.parseInt(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
++            String rotationValue = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
++            rotation = rotationValue != null ? Integer.parseInt(rotationValue) : 0;
++            durationMs = Long.parseLong(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));
++        } catch (Throwable e) {
++            BulletinFactory.of(chat).createErrorBulletin(VoidGram.t("Не удалось прочитать видео.", "The video could not be read.")).show();
++            return;
++        } finally {
++            try {
++                retriever.release();
++            } catch (Throwable ignore) {
++            }
++        }
++        if (width <= 0 || height <= 0 || durationMs <= 0) {
++            return;
++        }
++        boolean rotated = rotation == 90 || rotation == 270;
++        int displayWidth = rotated ? height : width;
++        int displayHeight = rotated ? width : height;
++        int side = Math.min(displayWidth, displayHeight);
++
++        VideoEditedInfo info = new VideoEditedInfo();
++        info.originalPath = file.getAbsolutePath();
++        info.originalWidth = width;
++        info.originalHeight = height;
++        info.rotationValue = rotation;
++        info.resultWidth = SIDE;
++        info.resultHeight = SIDE;
++        info.roundVideo = true;
++        info.framerate = 30;
++        info.bitrate = 1_000_000;
++        info.originalDuration = durationMs * 1000;
++        long kept = Math.min(durationMs, MAX_MS);
++        info.estimatedDuration = kept;
++        info.startTime = -1;
++        info.endTime = durationMs > MAX_MS ? kept * 1000 : -1;
++        info.estimatedSize = Math.max(1, kept / 1000 * info.bitrate / 8);
++
++        MediaController.CropState crop = new MediaController.CropState();
++        crop.cropPx = 0;
++        crop.cropPy = 0;
++        crop.cropScale = 1;
++        crop.cropRotate = 0;
++        crop.cropPw = side / (float) displayWidth;
++        crop.cropPh = side / (float) displayHeight;
++        crop.transformWidth = SIDE;
++        crop.transformHeight = SIDE;
++        crop.transformRotation = 0;
++        info.cropState = crop;
++
++        SendMessagesHelper.prepareSendingVideo(AccountInstance.getInstance(chat.getCurrentAccount()), file.getAbsolutePath(), info, null, null, chat.getDialogId(), null, null, null, null, null, 0, null, true, 0, 0, false, false, null, null, 0, 0);
++        BulletinFactory.of(chat).createSimpleBulletin(R.raw.done, VoidGram.t("Отправляется кружком", "Sending as a round video")).show();
 +    }
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramVideoDownloader.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramVideoDownloader.java
