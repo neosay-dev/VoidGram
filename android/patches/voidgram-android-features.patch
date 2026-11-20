@@ -471,7 +471,7 @@ index 373e423..abfc127 100644
              return false;
          }
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java b/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java
-index ec76835..8ee5a63 100644
+index ec76835..39d6cf9 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java
 @@ -6832,6 +6832,8 @@ public class MessagesController extends BaseController implements NotificationCe
@@ -520,16 +520,26 @@ index ec76835..8ee5a63 100644
          TLRPC.TL_messages_updatePinnedMessage req = new TLRPC.TL_messages_updatePinnedMessage();
          req.peer = getInputPeer(chat != null ? -chat.id : user.id);
          req.id = id;
-@@ -10553,7 +10571,7 @@ public class MessagesController extends BaseController implements NotificationCe
+@@ -10553,7 +10571,8 @@ public class MessagesController extends BaseController implements NotificationCe
          checkReadTasks();
  
          if (getUserConfig().isClientActivated()) {
 -            if (!ignoreSetOnline && getConnectionsManager().getPauseTime() == 0 && ApplicationLoader.isScreenOn && !ApplicationLoader.mainInterfacePausedStageQueue) {
-+            if (!ignoreSetOnline && !org.telegram.messenger.voidgram.VoidGramGhost.hideOnline(currentAccount) && getConnectionsManager().getPauseTime() == 0 && ApplicationLoader.isScreenOn && !ApplicationLoader.mainInterfacePausedStageQueue) {
++            // VoidGram Privacy+: "always online" keeps the status in the background too (Ghost Mode wins).
++            if (!ignoreSetOnline && !org.telegram.messenger.voidgram.VoidGramGhost.hideOnline(currentAccount) && (getConnectionsManager().getPauseTime() == 0 && ApplicationLoader.isScreenOn && !ApplicationLoader.mainInterfacePausedStageQueue || org.telegram.messenger.voidgram.VoidGramPrivacy.alwaysOnline())) {
                  if (ApplicationLoader.mainInterfacePausedStageQueueTime != 0 && Math.abs(ApplicationLoader.mainInterfacePausedStageQueueTime - System.currentTimeMillis()) > 1000) {
                      if (statusSettingState != 1 && (lastStatusUpdateTime == 0 || Math.abs(System.currentTimeMillis() - lastStatusUpdateTime) >= 55000 || offlineSent)) {
                          statusSettingState = 1;
-@@ -11415,6 +11433,10 @@ public class MessagesController extends BaseController implements NotificationCe
+@@ -10578,7 +10597,7 @@ public class MessagesController extends BaseController implements NotificationCe
+                         });
+                     }
+                 }
+-            } else if (statusSettingState != 2 && !offlineSent && Math.abs(System.currentTimeMillis() - getConnectionsManager().getPauseTime()) >= 2000) {
++            } else if (statusSettingState != 2 && !offlineSent && Math.abs(System.currentTimeMillis() - getConnectionsManager().getPauseTime()) >= 2000 && (!org.telegram.messenger.voidgram.VoidGramPrivacy.alwaysOnline() || org.telegram.messenger.voidgram.VoidGramGhost.hideOnline(currentAccount))) {
+                 statusSettingState = 2;
+                 if (statusRequest != 0) {
+                     getConnectionsManager().cancelRequest(statusRequest, true);
+@@ -11415,6 +11434,10 @@ public class MessagesController extends BaseController implements NotificationCe
          if (action < 0 || action >= sendingTypings.length || dialogId == 0) {
              return false;
          }
@@ -540,7 +550,7 @@ index ec76835..8ee5a63 100644
          final long selfId = UserConfig.getInstance(UserConfig.selectedAccount).getClientUserId();
          if (dialogId == selfId) {
              return false;
-@@ -14593,6 +14615,10 @@ public class MessagesController extends BaseController implements NotificationCe
+@@ -14593,6 +14616,10 @@ public class MessagesController extends BaseController implements NotificationCe
      }
  
      private void completeReadTask(ReadTask task) {
@@ -551,7 +561,7 @@ index ec76835..8ee5a63 100644
          if (task.replyId != 0 && task.monoForumPeerId == 0) {
              TLRPC.TL_messages_readDiscussion req = new TLRPC.TL_messages_readDiscussion();
              req.msg_id = (int) task.replyId;
-@@ -19933,6 +19959,8 @@ public class MessagesController extends BaseController implements NotificationCe
+@@ -19933,6 +19960,8 @@ public class MessagesController extends BaseController implements NotificationCe
                  for (int a = 0, size2 = messageObjects.size(); a < size2; a++) {
                      messagesRes.messages.add(messageObjects.get(a).messageOwner);
                  }
@@ -560,7 +570,7 @@ index ec76835..8ee5a63 100644
                  getMessagesStorage().putMessages(messagesRes, editingMessages.keyAt(b), -2, 0, false, 0, 0);
              }
              LongSparseArray<ArrayList<MessageObject>> editingMessagesFinal = editingMessages;
-@@ -21117,6 +21145,8 @@ public class MessagesController extends BaseController implements NotificationCe
+@@ -21117,6 +21146,8 @@ public class MessagesController extends BaseController implements NotificationCe
          LongSparseIntArray markAsReadMessagesOutboxFinal = markAsReadMessagesOutbox;
          LongSparseArray<ArrayList<Integer>> markContentAsReadMessagesFinal = markContentAsReadMessages;
          SparseIntArray markAsReadEncryptedFinal = markAsReadEncrypted;
@@ -569,7 +579,7 @@ index ec76835..8ee5a63 100644
          LongSparseArray<ArrayList<Integer>> deletedMessagesFinal = deletedMessages;
          LongSparseArray<ArrayList<Integer>> deletedQuickRepliesMessagesFinal = deletedQuickReplyMessages;
          LongSparseArray<ArrayList<Integer>> scheduledDeletedMessagesFinal = scheduledDeletedMessages;
-@@ -21727,6 +21757,10 @@ public class MessagesController extends BaseController implements NotificationCe
+@@ -21727,6 +21758,10 @@ public class MessagesController extends BaseController implements NotificationCe
      }
  
      public SponsoredMessagesInfo getSponsoredMessages(long dialogId) {
@@ -596,10 +606,10 @@ index 9881370..262aa9c 100644
                  if (BuildVars.LOGS_ENABLED) {
                      FileLog.d("NotificationsController: process new messages, value is " + value + " ("+dialogId+", "+isChannel+", "+messageObject.isReactionPush+", "+messageObject.isStoryReactionPush+")");
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java b/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
-index 55452d3..fb89e80 100644
+index 55452d3..3e5a711 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
-@@ -4439,6 +4439,30 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
+@@ -4439,6 +4439,36 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
      }
  
      public void sendMessage(SendMessageParams sendMessageParams) {
@@ -607,6 +617,12 @@ index 55452d3..fb89e80 100644
 +        if (org.telegram.messenger.voidgram.VoidGramBleep.intercept(currentAccount, sendMessageParams)) {
 +            return;
 +        }
++        // VoidGram Privacy+: a pause before sending, with Undo.
++        if (org.telegram.messenger.voidgram.VoidGramPrivacy.intercept(currentAccount, sendMessageParams)) {
++            return;
++        }
++        // VoidGram Privacy+: a reply marks that chat read up to the replied message.
++        org.telegram.messenger.voidgram.VoidGramPrivacy.afterSend(currentAccount, sendMessageParams);
 +        // VoidGram: the privacy notice goes before the first own message in a chat.
 +        org.telegram.messenger.voidgram.VoidGramChatNotice.beforeSend(currentAccount, sendMessageParams);
 +        // VoidGram: text shortcuts and {date}/{time}/{weekday}/{clipboard}.
@@ -7577,6 +7593,138 @@ index 0000000..54e6e87
 +        return String.format(java.util.Locale.getDefault(), "%,d", number);
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPrivacy.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPrivacy.java
+new file mode 100644
+index 0000000..21e1188
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPrivacy.java
+@@ -0,0 +1,126 @@
++package org.telegram.messenger.voidgram;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.ChatObject;
++import org.telegram.messenger.MessagesController;
++import org.telegram.messenger.SendMessagesHelper;
++import org.telegram.tgnet.ConnectionsManager;
++import org.telegram.tgnet.TLRPC;
++
++import java.util.Collections;
++import java.util.Set;
++import java.util.WeakHashMap;
++
++/** Privacy+, as on iOS: delayed sending, always online, read on reply, call confirmation, story views. */
++public final class VoidGramPrivacy {
++    private VoidGramPrivacy() {
++    }
++
++    public static final int[] DELAYS = {0, 3, 5, 10, 15, 30};
++    private static final Set<SendMessagesHelper.SendMessageParams> delayed = Collections.newSetFromMap(new WeakHashMap<>());
++
++    private static boolean get(String key) {
++        return VoidGram.prefs().getBoolean(key, false);
++    }
++
++    private static void set(String key, boolean value) {
++        VoidGram.prefs().edit().putBoolean(key, value).apply();
++    }
++
++    public static boolean alwaysOnline() {
++        return get("privacy_always_online") && !VoidGramDecoy.isActive();
++    }
++
++    public static void setAlwaysOnline(boolean value) {
++        set("privacy_always_online", value);
++    }
++
++    public static boolean readOnReply() {
++        return get("privacy_read_on_reply");
++    }
++
++    public static void setReadOnReply(boolean value) {
++        set("privacy_read_on_reply", value);
++    }
++
++    public static boolean confirmCalls() {
++        return get("privacy_confirm_calls");
++    }
++
++    public static void setConfirmCalls(boolean value) {
++        set("privacy_confirm_calls", value);
++    }
++
++    public static boolean hideStoryViews() {
++        return get("privacy_hide_story_views");
++    }
++
++    public static void setHideStoryViews(boolean value) {
++        set("privacy_hide_story_views", value);
++    }
++
++    public static int delaySeconds() {
++        return VoidGram.prefs().getInt("privacy_delay", 0);
++    }
++
++    public static void setDelaySeconds(int value) {
++        VoidGram.prefs().edit().putInt("privacy_delay", value).apply();
++    }
++
++    /** Stories are viewed unseen while Ghost Mode hides read receipts. */
++    public static boolean skipStoryView(int account, long dialogId) {
++        return hideStoryViews() && VoidGramGhost.hideRead(account, dialogId);
++    }
++
++    /** SendMessagesHelper: holds a message for a few seconds with an "Undo" bulletin. */
++    public static boolean intercept(int account, SendMessagesHelper.SendMessageParams params) {
++        int seconds = delaySeconds();
++        if (params == null || seconds <= 0 || delayed.contains(params) || params.scheduleDate != 0 || VoidGramDecoy.isActive()) {
++            return false;
++        }
++        delayed.add(params);
++        final boolean[] cancelled = new boolean[1];
++        final Runnable send = () -> {
++            if (!cancelled[0]) {
++                SendMessagesHelper.getInstance(account).sendMessage(params);
++            }
++        };
++        AndroidUtilities.runOnUIThread(() -> {
++            org.telegram.ui.ActionBar.BaseFragment fragment = org.telegram.ui.LaunchActivity.getLastFragment();
++            if (fragment != null) {
++                org.telegram.ui.Components.BulletinFactory.of(fragment).createSimpleBulletin(org.telegram.messenger.R.raw.chats_infotip,
++                        VoidGram.t("Отправка через ", "Sending in ") + seconds + VoidGram.t(" с", " s"),
++                        VoidGram.t("Отменить", "Undo"), () -> {
++                            cancelled[0] = true;
++                            AndroidUtilities.cancelRunOnUIThread(send);
++                        }).setDuration(seconds * 1000).show();
++            }
++        });
++        AndroidUtilities.runOnUIThread(send, seconds * 1000L);
++        return true;
++    }
++
++    /** After a reply goes out: that chat is read up to the replied message, even in Ghost Mode. */
++    public static void afterSend(int account, SendMessagesHelper.SendMessageParams params) {
++        if (params == null || params.replyToMsg == null || !readOnReply() || !VoidGramGhost.hideRead(account, params.peer)) {
++            return;
++        }
++        int maxId = params.replyToMsg.getId();
++        long dialogId = params.peer;
++        MessagesController controller = MessagesController.getInstance(account);
++        if (dialogId < 0) {
++            TLRPC.Chat chat = controller.getChat(-dialogId);
++            if (ChatObject.isChannel(chat)) {
++                TLRPC.TL_channels_readHistory req = new TLRPC.TL_channels_readHistory();
++                req.channel = controller.getInputChannel(-dialogId);
++                req.max_id = maxId;
++                ConnectionsManager.getInstance(account).sendRequest(req, null);
++                return;
++            }
++        }
++        TLRPC.TL_messages_readHistory req = new TLRPC.TL_messages_readHistory();
++        req.peer = controller.getInputPeer(dialogId);
++        req.max_id = maxId;
++        ConnectionsManager.getInstance(account).sendRequest(req, null);
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramSending.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramSending.java
 new file mode 100644
 index 0000000..db8c2e1
@@ -9750,6 +9898,37 @@ index 0849d5d..3f98506 100644
              return false;
          }
          return mc.transcribeAudioTrialCooldownUntil != 0 && cc.getCurrentTime() <= mc.transcribeAudioTrialCooldownUntil && mc.transcribeAudioTrialCurrentNumber <= 0;
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Components/voip/VoIPHelper.java b/TMessagesProj/src/main/java/org/telegram/ui/Components/voip/VoIPHelper.java
+index cb6f2e2..f9cf6a2 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/Components/voip/VoIPHelper.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/Components/voip/VoIPHelper.java
+@@ -74,7 +74,26 @@ public class VoIPHelper {
+ 
+ 	private static final int VOIP_SUPPORT_ID = 4244000;
+ 
++	/** VoidGram Privacy+: set while the call confirmation is answered. */
++	private static boolean voidgramCallConfirmed;
++
+ 	public static void startCall(TLRPC.User user, boolean videoCall, boolean canVideoCall, final Activity activity, TLRPC.UserFull userFull, AccountInstance accountInstance) {
++		if (org.telegram.messenger.voidgram.VoidGramPrivacy.confirmCalls() && !voidgramCallConfirmed && activity != null && user != null) {
++			org.telegram.ui.ActionBar.AlertDialog.Builder builder = new org.telegram.ui.ActionBar.AlertDialog.Builder(activity);
++			builder.setTitle(videoCall ? org.telegram.messenger.voidgram.VoidGram.t("Видеозвонок", "Video call") : org.telegram.messenger.voidgram.VoidGram.t("Звонок", "Call"));
++			builder.setMessage(org.telegram.messenger.voidgram.VoidGram.t("Позвонить: ", "Call ") + org.telegram.messenger.UserObject.getUserName(user) + "?");
++			builder.setPositiveButton(org.telegram.messenger.voidgram.VoidGram.t("Позвонить", "Call"), (d, w) -> {
++				voidgramCallConfirmed = true;
++				try {
++					startCall(user, videoCall, canVideoCall, activity, userFull, accountInstance);
++				} finally {
++					voidgramCallConfirmed = false;
++				}
++			});
++			builder.setNegativeButton(org.telegram.messenger.voidgram.VoidGram.t("Отмена", "Cancel"), null);
++			builder.show();
++			return;
++		}
+ 		if (accountInstance == null ? MessagesController.getInstance(UserConfig.selectedAccount).isFrozen() : accountInstance.getMessagesController().isFrozen()) {
+ 			AccountFrozenAlert.show(accountInstance == null ? UserConfig.selectedAccount : accountInstance.getCurrentAccount());
+ 			return;
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/DialogsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/DialogsActivity.java
 index e6478ee..1576e94 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/DialogsActivity.java
@@ -9916,7 +10095,7 @@ index e2b917b..a42f000 100644
                  presentSettingFragment(new UserInfoActivity());
                  break;
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Stories/StoriesController.java b/TMessagesProj/src/main/java/org/telegram/ui/Stories/StoriesController.java
-index 529eb5c..e8358f5 100644
+index 529eb5c..5bfbef0 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/Stories/StoriesController.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/Stories/StoriesController.java
 @@ -281,6 +281,10 @@ public class StoriesController {
@@ -9930,6 +10109,29 @@ index 529eb5c..e8358f5 100644
          return (dialogListStories != null && dialogListStories.size() > 0) || hasSelfStories();
      }
  
+@@ -1345,7 +1349,10 @@ public class StoriesController {
+             TL_stories.TL_stories_readStories req = new TL_stories.TL_stories_readStories();
+             req.peer = MessagesController.getInstance(currentAccount).getInputPeer(dialogId);
+             req.max_id = storyItem.id;
+-            ConnectionsManager.getInstance(currentAccount).sendRequest(req, null);
++            // VoidGram Privacy+: stories viewed unseen while Ghost Mode hides reads.
++            if (!org.telegram.messenger.voidgram.VoidGramPrivacy.skipStoryView(currentAccount, dialogId)) {
++                ConnectionsManager.getInstance(currentAccount).sendRequest(req, null);
++            }
+             NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.storiesReadUpdated);
+             return true;
+         }
+@@ -3773,7 +3780,9 @@ public class StoriesController {
+             TL_stories.TL_stories_incrementStoryViews req = new TL_stories.TL_stories_incrementStoryViews();
+             req.peer = MessagesController.getInstance(currentAccount).getInputPeer(dialogId);
+             req.id.add(storyId);
+-            ConnectionsManager.getInstance(currentAccount).sendRequest(req, (response, error) -> {});
++            if (!org.telegram.messenger.voidgram.VoidGramPrivacy.skipStoryView(currentAccount, dialogId)) {
++                ConnectionsManager.getInstance(currentAccount).sendRequest(req, (response, error) -> {});
++            }
+             NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.storiesReadUpdated);
+             return true;
+         }
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/VoIPFragment.java b/TMessagesProj/src/main/java/org/telegram/ui/VoIPFragment.java
 index 496f769..76b4afb 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/VoIPFragment.java
@@ -11300,10 +11502,10 @@ index 0000000..44df62b
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramGhostActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramGhostActivity.java
 new file mode 100644
-index 0000000..ea91239
+index 0000000..5f5fd0c
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramGhostActivity.java
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,146 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.view.View;
@@ -11327,6 +11529,11 @@ index 0000000..ea91239
 +    private static final int ID_EDITS = 31;
 +    private static final int ID_MARK = 32;
 +    private static final int ID_CLEAR = 33;
++    private static final int ID_READ_ON_REPLY = 40;
++    private static final int ID_ALWAYS_ONLINE = 41;
++    private static final int ID_DELAY = 42;
++    private static final int ID_STORY_VIEWS = 43;
++    private static final int ID_CONFIRM_CALLS = 44;
 +
 +    @Override
 +    protected CharSequence getTitle() {
@@ -11356,6 +11563,14 @@ index 0000000..ea91239
 +        }
 +        items.add(UItem.asShadow(VoidGram.t("Для этого аккаунта. В чате: ⋮ → «Призрак в этом чате» исключает чат. Секретные чаты, прослушивание голосовых и просмотр историй работают как обычно. Это не полная невидимость: отправленные запросы не отменить, а новое прочтение после выключения может отметить и старые сообщения. Режим противоречит правилам Telegram API — на ваш риск.", "For this account. In a chat: ⋮ → \"Ghost in this chat\" excludes it. Secret chats, voice listening and story views behave as usual. Not absolute invisibility: requests that went out cannot be taken back, and a new read after turning it off can acknowledge older messages too. The mode conflicts with Telegram's API terms — at your own risk.")));
 +
++        items.add(UItem.asHeader(VoidGram.t("Приватность+", "Privacy+")));
++        items.add(UItem.asCheck(ID_READ_ON_REPLY, VoidGram.t("Прочитать при ответе", "Read on reply")).setChecked(org.telegram.messenger.voidgram.VoidGramPrivacy.readOnReply()));
++        items.add(UItem.asCheck(ID_ALWAYS_ONLINE, VoidGram.t("Всегда онлайн", "Always online")).setChecked(org.telegram.messenger.voidgram.VoidGramPrivacy.alwaysOnline()));
++        int delay = org.telegram.messenger.voidgram.VoidGramPrivacy.delaySeconds();
++        items.add(UItem.asButton(ID_DELAY, VoidGram.t("Отложенная отправка", "Delayed sending"), delay == 0 ? VoidGram.t("выкл.", "off") : delay + VoidGram.t(" с", " s")));
++        items.add(UItem.asCheck(ID_STORY_VIEWS, VoidGram.t("Скрывать просмотры историй", "Hide story views")).setChecked(org.telegram.messenger.voidgram.VoidGramPrivacy.hideStoryViews()));
++        items.add(UItem.asCheck(ID_CONFIRM_CALLS, VoidGram.t("Подтверждать звонки", "Confirm calls")).setChecked(org.telegram.messenger.voidgram.VoidGramPrivacy.confirmCalls()));
++        items.add(UItem.asShadow(VoidGram.t("Ответ отмечает прочитанным только этот чат и только до этого сообщения. «Всегда онлайн» держит статус и в фоне, но призрак, скрывающий онлайн, главнее. Отложенная отправка даёт несколько секунд, чтобы передумать. Истории смотрятся незаметно, пока призрак скрывает прочтения.", "A reply marks only that chat read, and only up to that message. \"Always online\" keeps the status in the background too, but Ghost Mode hiding online wins. Delayed sending gives a few seconds to change your mind. Stories are viewed unseen while Ghost Mode hides reads.")));
 +        items.add(UItem.asHeader(VoidGram.t("История сообщений", "Message history")));
 +        items.add(UItem.asCheck(ID_DELETED, VoidGram.t("Сохранять удалённые сообщения", "Keep deleted messages")).setChecked(VoidGramHistory.saveDeleted()));
 +        items.add(UItem.asCheck(ID_EDITS, VoidGram.t("Сохранять историю изменений", "Keep edit history")).setChecked(VoidGramHistory.saveEdits()));
@@ -11368,7 +11583,31 @@ index 0000000..ea91239
 +    @Override
 +    protected void onClick(UItem item, View view, int position, float x, float y) {
 +        int id = item.id;
-+        if (id == ID_GHOST) {
++        if (id == ID_DELAY) {
++            int[] delays = org.telegram.messenger.voidgram.VoidGramPrivacy.DELAYS;
++            CharSequence[] titles = new CharSequence[delays.length];
++            for (int i = 0; i < delays.length; i++) {
++                titles[i] = delays[i] == 0 ? VoidGram.t("Выключена", "Off") : delays[i] + VoidGram.t(" с", " s");
++            }
++            org.telegram.ui.ActionBar.AlertDialog.Builder builder = new org.telegram.ui.ActionBar.AlertDialog.Builder(getContext());
++            builder.setTitle(VoidGram.t("Отложенная отправка", "Delayed sending"));
++            builder.setItems(titles, (d, which) -> {
++                org.telegram.messenger.voidgram.VoidGramPrivacy.setDelaySeconds(delays[which]);
++                if (listView != null && listView.adapter != null) {
++                    listView.adapter.update(true);
++                }
++            });
++            showDialog(builder.create());
++            return;
++        } else if (id == ID_READ_ON_REPLY) {
++            org.telegram.messenger.voidgram.VoidGramPrivacy.setReadOnReply(!org.telegram.messenger.voidgram.VoidGramPrivacy.readOnReply());
++        } else if (id == ID_ALWAYS_ONLINE) {
++            org.telegram.messenger.voidgram.VoidGramPrivacy.setAlwaysOnline(!org.telegram.messenger.voidgram.VoidGramPrivacy.alwaysOnline());
++        } else if (id == ID_STORY_VIEWS) {
++            org.telegram.messenger.voidgram.VoidGramPrivacy.setHideStoryViews(!org.telegram.messenger.voidgram.VoidGramPrivacy.hideStoryViews());
++        } else if (id == ID_CONFIRM_CALLS) {
++            org.telegram.messenger.voidgram.VoidGramPrivacy.setConfirmCalls(!org.telegram.messenger.voidgram.VoidGramPrivacy.confirmCalls());
++        } else if (id == ID_GHOST) {
 +            VoidGramGhost.setEnabled(currentAccount, !VoidGramGhost.isEnabled(currentAccount));
 +        } else if (id >= ID_OPTION_BASE && id < ID_OPTION_BASE + VoidGramGhost.OPTIONS.length) {
 +            String option = VoidGramGhost.OPTIONS[id - ID_OPTION_BASE];
