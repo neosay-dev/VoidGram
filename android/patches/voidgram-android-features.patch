@@ -262,10 +262,19 @@ index 3a5413c..b59a1e4 100644
          int lastDec = 0;
          int KCount = 0;
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java b/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java
-index b1e2120..a404d82 100644
+index b1e2120..dac0771 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java
-@@ -1735,6 +1735,10 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+@@ -1214,6 +1214,8 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+                 int len = audioRecorder.read(buffer, buffer.capacity());
+                 if (len > 0) {
+                     buffer.limit(len);
++                    // VoidGram voice changer: samples are changed before the waveform and the encoder.
++                    org.telegram.messenger.voidgram.VoidGramVoiceChanger.process(buffer, len);
+                     double sum = 0;
+                     try {
+                         long newSamplesCount = samplesCount + len / 2;
+@@ -1735,6 +1737,10 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                                              editor.putFloat(saveFor, value).commit();
                                          });
                                      }
@@ -276,7 +285,7 @@ index b1e2120..a404d82 100644
                                      NotificationCenter.getInstance(currentPlayingMessageObject.currentAccount).postNotificationName(NotificationCenter.messagePlayingProgressDidChanged, currentPlayingMessageObject.getId(), value);
                                  } catch (Exception e) {
                                      FileLog.e(e);
-@@ -4109,6 +4113,13 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+@@ -4109,6 +4115,13 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                  }
                  audioPlayer.setStreamType(useFrontSpeaker ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
                  audioPlayer.play();
@@ -290,7 +299,7 @@ index b1e2120..a404d82 100644
                  if (!messageObject.isVoice()) {
                      if (audioVolumeAnimator != null) {
                          audioVolumeAnimator.removeAllListeners();
-@@ -4154,6 +4165,10 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+@@ -4154,6 +4167,10 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
          }
          startProgressTimer(playingMessageObject);
          NotificationCenter.getInstance(messageObject.currentAccount).postNotificationName(NotificationCenter.messagePlayingDidStart, messageObject, oldMessageObject);
@@ -301,7 +310,16 @@ index b1e2120..a404d82 100644
  
          if (videoPlayer != null) {
              try {
-@@ -5570,7 +5585,9 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+@@ -5372,6 +5389,8 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+                 recordSendMessageChatArguments = sendMessageChatArguments;
+                 fileBuffer.rewind();
+ 
++                // VoidGram: the voice changer starts fresh with each recording.
++                org.telegram.messenger.voidgram.VoidGramVoiceChanger.reset(sampleRate);
+                 audioRecorder.startRecording();
+             } catch (Exception e) {
+                 FileLog.e(e);
+@@ -5570,7 +5589,9 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
          ignoreOnPause = false;
      }
  
@@ -6047,6 +6065,119 @@ index 0000000..5266ca5
 +        }
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramVoiceChanger.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramVoiceChanger.java
+new file mode 100644
+index 0000000..1d369f8
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramVoiceChanger.java
+@@ -0,0 +1,107 @@
++package org.telegram.messenger.voidgram;
++
++import java.nio.ByteBuffer;
++
++/**
++ * Voice changer for voice messages, as on iOS: the microphone samples are changed before they are
++ * encoded. Pitch moves with two crossfaded read heads on a delay line, so the duration stays the
++ * same; "Robot" is a ring modulator.
++ */
++public final class VoidGramVoiceChanger {
++    public static final String[] VOICES = {"off", "high", "low", "robot"};
++
++    private static VoidGramVoiceChanger current;
++
++    private final double pitch;
++    private final boolean robot;
++    private final double sampleRate;
++    private final double window;
++    private final float[] buffer;
++    private int writeIndex;
++    private double phase;
++    private double robotPhase;
++
++    private VoidGramVoiceChanger(String voice, int sampleRate) {
++        this.pitch = "high".equals(voice) ? 1.45 : "low".equals(voice) ? 0.72 : 1.0;
++        this.robot = "robot".equals(voice);
++        this.sampleRate = sampleRate;
++        this.window = 960.0 * sampleRate / 16000.0;
++        this.buffer = new float[Math.max(4096, (int) (4096L * sampleRate / 16000))];
++    }
++
++    public static String voice() {
++        return VoidGram.prefs().getString("voice_changer", "off");
++    }
++
++    public static void setVoice(String value) {
++        VoidGram.prefs().edit().putString("voice_changer", value).apply();
++    }
++
++    public static String title(String voice) {
++        switch (voice) {
++            case "high": return VoidGram.t("Высокий голос", "High voice");
++            case "low": return VoidGram.t("Низкий голос", "Low voice");
++            case "robot": return VoidGram.t("Робот", "Robot");
++            default: return VoidGram.t("Выключен", "Off");
++        }
++    }
++
++    /** MediaController: a new recording starts. */
++    public static void reset(int sampleRate) {
++        String voice = voice();
++        current = "off".equals(voice) || VoidGramDecoy.isActive() ? null : new VoidGramVoiceChanger(voice, sampleRate);
++    }
++
++    /** MediaController: 16-bit samples of the microphone, changed in place. */
++    public static void process(ByteBuffer samples, int bytes) {
++        VoidGramVoiceChanger changer = current;
++        if (changer == null || samples == null) {
++            return;
++        }
++        int count = bytes / 2;
++        for (int i = 0; i < count; i++) {
++            short value = samples.getShort(i * 2);
++            samples.putShort(i * 2, changer.next(value));
++        }
++    }
++
++    private float read(double delay) {
++        int size = buffer.length;
++        double position = writeIndex - delay;
++        while (position < 0) {
++            position += size;
++        }
++        int index = ((int) position) % size;
++        int next = (index + 1) % size;
++        float fraction = (float) (position - (int) position);
++        return buffer[index] * (1f - fraction) + buffer[next] * fraction;
++    }
++
++    private short next(short sample) {
++        float input = sample / 32768f;
++        buffer[writeIndex] = input;
++        float output;
++        if (robot) {
++            output = (float) (input * Math.sin(robotPhase) * 1.6);
++            robotPhase += 2.0 * Math.PI * 70.0 / sampleRate;
++            if (robotPhase > 2.0 * Math.PI) {
++                robotPhase -= 2.0 * Math.PI;
++            }
++        } else {
++            double firstPhase = phase;
++            double secondPhase = phase + 0.5;
++            if (secondPhase >= 1.0) {
++                secondPhase -= 1.0;
++            }
++            float first = read(firstPhase * window + 1.0);
++            float second = read(secondPhase * window + 1.0);
++            float firstGain = (float) (Math.sin(Math.PI * firstPhase) * Math.sin(Math.PI * firstPhase));
++            float secondGain = (float) (Math.sin(Math.PI * secondPhase) * Math.sin(Math.PI * secondPhase));
++            output = first * firstGain + second * secondGain;
++            phase += (1.0 - pitch) / window;
++            phase -= Math.floor(phase);
++        }
++        writeIndex = (writeIndex + 1) % buffer.length;
++        return (short) Math.max(-32768f, Math.min(32767f, output * 32767f));
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java b/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java
 index ab54ee3..76fffa0 100644
 --- a/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java
@@ -6863,10 +6994,10 @@ index 0000000..53c13b2
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java
 new file mode 100644
-index 0000000..2eaf60e
+index 0000000..17be5d9
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,156 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.view.View;
@@ -6892,6 +7023,7 @@ index 0000000..2eaf60e
 +    private static final int ID_CONFIRM_GIFS = 9;
 +    private static final int ID_PREVIEW_VOICE = 10;
 +    private static final int ID_QUICK_STICKER = 11;
++    private static final int ID_VOICE_CHANGER = 12;
 +    private static final int ID_TRANSLATE_BASE = 20;
 +    private static final int ID_LIBRE_URL = 30;
 +
@@ -6910,6 +7042,7 @@ index 0000000..2eaf60e
 +        items.add(UItem.asCheck(ID_CONFIRM_STICKERS, VoidGram.t("Спрашивать перед отправкой стикера", "Confirm sticker sends")).setChecked(org.telegram.messenger.voidgram.VoidGramSending.confirmStickers()));
 +        items.add(UItem.asCheck(ID_CONFIRM_GIFS, VoidGram.t("Спрашивать перед отправкой GIF", "Confirm GIF sends")).setChecked(org.telegram.messenger.voidgram.VoidGramSending.confirmGifs()));
 +        items.add(UItem.asCheck(ID_QUICK_STICKER, VoidGram.t("Быстрые стикеры (удерживать кнопку стикеров)", "Quick stickers (hold the sticker button)")).setChecked(VoidGramQuickSticker.isEnabled()));
++        items.add(UItem.asButton(ID_VOICE_CHANGER, VoidGram.t("Смена голоса", "Voice changer"), org.telegram.messenger.voidgram.VoidGramVoiceChanger.title(org.telegram.messenger.voidgram.VoidGramVoiceChanger.voice())));
 +        items.add(UItem.asCheck(ID_PREVIEW_VOICE, VoidGram.t("Прослушать голосовое перед отправкой", "Preview voice messages before sending")).setChecked(org.telegram.messenger.voidgram.VoidGramSending.previewVoice()));
 +        items.add(UItem.asShadow(null));
 +        items.add(UItem.asHeader(VoidGram.t("Фильтры", "Filters")));
@@ -6945,6 +7078,23 @@ index 0000000..2eaf60e
 +            case ID_FILTERS: org.telegram.messenger.voidgram.VoidGramFilters.setEnabled(!org.telegram.messenger.voidgram.VoidGramFilters.isEnabled()); break;
 +            case ID_FILTERS_OWN: org.telegram.messenger.voidgram.VoidGramFilters.setOwnMessages(!org.telegram.messenger.voidgram.VoidGramFilters.ownMessages()); break;
 +            case ID_FILTERS_EDIT: editPatterns(); return;
++            case ID_VOICE_CHANGER: {
++                String[] voices = org.telegram.messenger.voidgram.VoidGramVoiceChanger.VOICES;
++                CharSequence[] titles = new CharSequence[voices.length];
++                for (int i = 0; i < voices.length; i++) {
++                    titles[i] = org.telegram.messenger.voidgram.VoidGramVoiceChanger.title(voices[i]);
++                }
++                org.telegram.ui.ActionBar.AlertDialog.Builder builder = new org.telegram.ui.ActionBar.AlertDialog.Builder(getContext());
++                builder.setTitle(VoidGram.t("Смена голоса", "Voice changer"));
++                builder.setItems(titles, (d, which) -> {
++                    org.telegram.messenger.voidgram.VoidGramVoiceChanger.setVoice(voices[which]);
++                    if (listView != null && listView.adapter != null) {
++                        listView.adapter.update(true);
++                    }
++                });
++                showDialog(builder.create());
++                return;
++            }
 +            case ID_CONFIRM_STICKERS: org.telegram.messenger.voidgram.VoidGramSending.setConfirmStickers(!org.telegram.messenger.voidgram.VoidGramSending.confirmStickers()); break;
 +            case ID_CONFIRM_GIFS: org.telegram.messenger.voidgram.VoidGramSending.setConfirmGifs(!org.telegram.messenger.voidgram.VoidGramSending.confirmGifs()); break;
 +            case ID_LIBRE_URL: {
