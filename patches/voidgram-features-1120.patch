@@ -101,10 +101,28 @@ index 00000000..7b1bfda1
 +    }
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuCategoriesController.swift b/submodules/SettingsUI/Sources/AyuCategoriesController.swift
-index d70e0a8c..5fde53f2 100644
+index d70e0a8c..4aae25c7 100644
 --- a/submodules/SettingsUI/Sources/AyuCategoriesController.swift
 +++ b/submodules/SettingsUI/Sources/AyuCategoriesController.swift
-@@ -146,6 +146,7 @@ func ayuCategoryItems(_ category: AyuCategory) -> [AyuCategoryItem] {
+@@ -3,6 +3,7 @@ import UIKit
+ import Display
+ import SwiftSignalKit
+ import TelegramCore
++import TelegramUIPreferences
+ import TelegramPresentationData
+ import ItemListUI
+ import AccountContext
+@@ -117,7 +118,8 @@ func ayuCategoryItems(_ category: AyuCategory) -> [AyuCategoryItem] {
+             AyuCategoryItem(id: 24, symbol: "arrow.down.circle.fill", color: 0x007AFF, titleRu: "Загрузки и качество", titleEn: "Downloads & quality", subtitleRu: "Крупные фото, качество, галерея", subtitleEn: "Large photos, quality, gallery", open: page { ayuWhiteGramController(context: $0, groups: [.photos], title: ayuIsRussian($0) ? "Загрузки и качество" : "Downloads & quality") }),
+             AyuCategoryItem(id: 25, symbol: "slider.vertical.3", color: 0xFF2D55, titleRu: "Эквалайзер плеера", titleEn: "Player equalizer", subtitleRu: "", subtitleEn: "", open: page { ayuEqualizerController(context: $0) }),
+             AyuCategoryItem(id: 26, symbol: "quote.bubble.fill", color: 0xFF2D55, titleRu: "Тексты песен", titleEn: "Lyrics", subtitleRu: "Источники текстов", subtitleEn: "Lyrics sources", open: page { ayuLyricsSourcesController(context: $0) }),
+-            AyuCategoryItem(id: 27, symbol: "text.word.spacing", color: 0xFF2D55, titleRu: "Анимация текста в плеере", titleEn: "Player lyrics animation", subtitleRu: AyuPlayerTextStyle.current.title(true), subtitleEn: AyuPlayerTextStyle.current.title(false), open: page { ayuPlayerTextSettingsController(context: $0) })
++            AyuCategoryItem(id: 27, symbol: "text.word.spacing", color: 0xFF2D55, titleRu: "Анимация текста в плеере", titleEn: "Player lyrics animation", subtitleRu: AyuPlayerTextStyle.current.title(true), subtitleEn: AyuPlayerTextStyle.current.title(false), open: page { ayuPlayerTextSettingsController(context: $0) }),
++            AyuCategoryItem(id: 28, symbol: "moon.stars.fill", color: 0x5856D6, titleRu: "Ночной режим плеера", titleEn: "Player night look", subtitleRu: AyuPlayerNightLook.current.title(true), subtitleEn: AyuPlayerNightLook.current.title(false), open: page { ayuPlayerNightLookController(context: $0) })
+         ]
+     case .appearance:
+         return [
+@@ -146,6 +148,7 @@ func ayuCategoryItems(_ category: AyuCategory) -> [AyuCategoryItem] {
              AyuCategoryItem(id: 64, symbol: "antenna.radiowaves.left.and.right", color: 0x007AFF, titleRu: "Контакты рядом", titleEn: "Nearby contact", subtitleRu: "", subtitleEn: "", open: page { ayuNearbyContactController(context: $0) }),
              AyuCategoryItem(id: 65, symbol: "gearshape.fill", color: 0x8E8E93, titleRu: "Общие", titleEn: "General", subtitleRu: "", subtitleEn: "", open: page { ayuGeneralSettingsController(context: $0) }),
              AyuCategoryItem(id: 66, symbol: "star.circle.fill", color: 0xFF9500, titleRu: "Прочее", titleEn: "Other", subtitleRu: "", subtitleEn: "", open: page { ayuOtherSettingsController(context: $0, navigation: nil) }),
@@ -151,6 +169,147 @@ index 0de2d106..d839d3f7 100644
              link(8, .creditNeistvGitHub, "neistv", "GitHub"),
              link(8, .creditNeistvTelegram, "@neistv", "Telegram")
          ])
+diff --git a/submodules/SettingsUI/Sources/AyuPlayerNightLookController.swift b/submodules/SettingsUI/Sources/AyuPlayerNightLookController.swift
+new file mode 100644
+index 00000000..39617320
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuPlayerNightLookController.swift
+@@ -0,0 +1,135 @@
++import Foundation
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import TelegramPresentationData
++import TelegramUIPreferences
++import ItemListUI
++import AccountContext
++
++// Settings → VoidGram → Media → Player night look.
++
++private enum AyuNightRow {
++    static let modeHeader: Int32 = 0
++    static let mode: Int32 = 1
++    static let off: Int32 = 2
++    static let modeInfo: Int32 = 3
++    static let startHeader: Int32 = 10
++    static let start: Int32 = 11
++    static let endHeader: Int32 = 12
++    static let end: Int32 = 13
++    static let scheduleInfo: Int32 = 14
++    static let lookHeader: Int32 = 20
++    static let strength: Int32 = 21
++    static let warm: Int32 = 22
++    static let reset: Int32 = 30
++}
++
++public func ayuPlayerNightLookController(context: AccountContext) -> ViewController {
++    let changed = Signal<Void, NoError> { subscriber in
++        subscriber.putNext(Void())
++        let observer = NotificationCenter.default.addObserver(forName: AyuPlayerNightLook.didChangeNotification, object: nil, queue: .main, using: { _ in subscriber.putNext(Void()) })
++        return ActionDisposable { NotificationCenter.default.removeObserver(observer) }
++    }
++
++    func present(_ sheet: UIAlertController) {
++        if let popover = sheet.popoverPresentationController, let view = context.sharedContext.mainWindow?.viewController?.view {
++            popover.sourceView = view
++            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1.0, height: 1.0)
++            popover.permittedArrowDirections = []
++        }
++        context.sharedContext.applicationBindings.presentNativeController(sheet)
++    }
++
++    var arguments = AyuSectionedArguments(open: { id in
++        let ru = ayuIsRussian(context)
++        switch id {
++        case AyuNightRow.mode:
++            let sheet = UIAlertController(title: ru ? "Когда включать" : "When to turn on", message: nil, preferredStyle: .actionSheet)
++            for mode in AyuPlayerNightLook.allCases {
++                sheet.addAction(UIAlertAction(title: mode.title(ru) + (mode == AyuPlayerNightLook.current ? " ✓" : ""), style: mode == .never ? .destructive : .default, handler: { _ in
++                    AyuPlayerNightLook.current = mode
++                }))
++            }
++            sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
++            present(sheet)
++        case AyuNightRow.strength:
++            let sheet = UIAlertController(title: ru ? "Сила затемнения" : "Dimming", message: nil, preferredStyle: .actionSheet)
++            for strength in AyuPlayerNightLook.Strength.allCases {
++                sheet.addAction(UIAlertAction(title: strength.title(ru) + (strength == AyuPlayerNightLook.strength ? " ✓" : ""), style: .default, handler: { _ in
++                    AyuPlayerNightLook.strength = strength
++                }))
++            }
++            sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
++            present(sheet)
++        case AyuNightRow.reset:
++            AyuPlayerNightLook.resetSettings()
++        default:
++            break
++        }
++    }, toggle: { id, value in
++        switch id {
++        case AyuNightRow.off:
++            // "Night look" switch: off is the complete shutdown; on returns to the schedule.
++            AyuPlayerNightLook.current = value ? .automatic : .never
++        case AyuNightRow.warm:
++            AyuPlayerNightLook.isWarm = value
++        default:
++            break
++        }
++    })
++    arguments.slider = { id, value in
++        switch id {
++        case AyuNightRow.start:
++            AyuPlayerNightLook.startHour = Int(value)
++        case AyuNightRow.end:
++            AyuPlayerNightLook.endHour = Int(value)
++        default:
++            break
++        }
++    }
++    let finalArguments = arguments
++
++    let signal = combineLatest(context.sharedContext.presentationData, changed)
++    |> deliverOnMainQueue
++    |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let mode = AyuPlayerNightLook.current
++        let enabled = mode != .never
++        let status: String
++        if !enabled {
++            status = ru ? "Ночной режим выключен полностью: плеер всегда выглядит как днём." : "The night look is off completely: the player always looks as in the daytime."
++        } else {
++            status = AyuPlayerNightLook.isActiveNow ? (ru ? "Сейчас ночной режим включён." : "The night look is on now.") : (ru ? "Сейчас ночной режим не действует." : "The night look is not active now.")
++        }
++
++        var entries: [AyuSectionedEntry] = [
++            .header(1, AyuNightRow.modeHeader, ru ? "НОЧНОЙ РЕЖИМ ПЛЕЕРА" : "PLAYER NIGHT LOOK"),
++            .toggle(1, AyuNightRow.off, AyuSettingsIcons.symbol("moon.stars.fill", color: UIColor(rgb: 0x5856D6)), ru ? "Ночной режим" : "Night look", nil, enabled)
++        ]
++        if enabled {
++            entries.append(.link(1, AyuNightRow.mode, AyuSettingsIcons.symbol("clock.fill", color: UIColor(rgb: 0xFF9500)), ru ? "Когда включать" : "When to turn on", mode == .always ? mode.title(ru) : (ru ? "По расписанию" : "Scheduled")))
++        }
++        entries.append(.info(1, AyuNightRow.modeInfo, status))
++
++        if enabled {
++            if mode == .automatic {
++                entries.append(.header(2, AyuNightRow.startHeader, (ru ? "НАЧАЛО: " : "STARTS: ") + AyuPlayerNightLook.hourText(AyuPlayerNightLook.startHour)))
++                entries.append(.slider(2, AyuNightRow.start, Int32(AyuPlayerNightLook.startHour), 0, 23))
++                entries.append(.header(2, AyuNightRow.endHeader, (ru ? "КОНЕЦ: " : "ENDS: ") + AyuPlayerNightLook.hourText(AyuPlayerNightLook.endHour)))
++                entries.append(.slider(2, AyuNightRow.end, Int32(AyuPlayerNightLook.endHour), 0, 23))
++                entries.append(.info(2, AyuNightRow.scheduleInfo, ru ? "Время по часам устройства. Окно может переходить через полночь (22:00–07:00). Одинаковые часы — весь день." : "Device clock time. The window may cross midnight (22:00–07:00). Equal hours mean the whole day."))
++            }
++            entries.append(.header(3, AyuNightRow.lookHeader, ru ? "ВИД" : "LOOK"))
++            entries.append(.link(3, AyuNightRow.strength, AyuSettingsIcons.symbol("circle.lefthalf.filled", color: UIColor(rgb: 0x8E8E93)), ru ? "Сила затемнения" : "Dimming", AyuPlayerNightLook.strength.title(ru)))
++            entries.append(.toggle(3, AyuNightRow.warm, AyuSettingsIcons.symbol("flame.fill", color: UIColor(rgb: 0xFF9500)), ru ? "Тёплый оттенок" : "Warm tint", ru ? "Выключите для нейтрального тёмного" : "Off for a neutral dark one", AyuPlayerNightLook.isWarm))
++            entries.append(.link(4, AyuNightRow.reset, AyuSettingsIcons.symbol("arrow.counterclockwise", color: UIColor(rgb: 0xFF3B30)), ru ? "Сбросить настройки вида и времени" : "Reset look and schedule", ""))
++        }
++
++        let data = ItemListPresentationData(presentationData)
++        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Ночной режим плеера" : "Player night look"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), finalArguments))
++    }
++    return ItemListController(context: context, state: signal)
++}
 diff --git a/submodules/SettingsUI/Sources/AyuPowerSavingController.swift b/submodules/SettingsUI/Sources/AyuPowerSavingController.swift
 new file mode 100644
 index 00000000..4f5ef8ec
@@ -341,10 +500,17 @@ index 00000000..4f5ef8ec
 +    return ItemListController(context: context, state: signal)
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsSearch.swift b/submodules/SettingsUI/Sources/AyuSettingsSearch.swift
-index 283ff405..ea0fde58 100644
+index 283ff405..b7ef9371 100644
 --- a/submodules/SettingsUI/Sources/AyuSettingsSearch.swift
 +++ b/submodules/SettingsUI/Sources/AyuSettingsSearch.swift
-@@ -80,6 +80,7 @@ private func ayuSettingsSearchEntries(context: AccountContext, ru: Bool) -> [Ayu
+@@ -74,12 +74,14 @@ private func ayuSettingsSearchEntries(context: AccountContext, ru: Bool) -> [Ayu
+     page("icons", "Иконки и бейдж", "Icons & badge", "монохромные цветные monochrome coloured svg") { ayuIconsController(context: context) }
+     page("glass", "Стекло и пузыри", "Glass and bubbles") { ayuGlassController(context: context) }
+     page("lyricsMotion", "Анимация текста в плеере", "Player lyrics animation", "караоке karaoke волна wave свечение glow каскад cascade") { ayuPlayerTextSettingsController(context: context) }
++    page("playerNight", "Ночной режим плеера", "Player night look", "ночь ночной темный тёплый затемнение расписание night dark warm dim schedule player") { ayuPlayerNightLookController(context: context) }
+     page("lyrics", "Источники текстов песен", "Lyrics sources", "музыка music слова") { ayuLyricsSourcesController(context: context) }
+     page("equalizer", "Эквалайзер", "Equalizer", "звук audio music") { ayuEqualizerController(context: context) }
+     page("extras", "Приватность и мелочи", "Privacy and extras", "таймер player sleep") { ayuExtrasController(context: context) }
      page("tools", "Инструменты", "Tools", "голос voice иконки icons ИИ AI VirusTotal") { ayuToolsController(context: context) }
      page("people", "Поиск каналов и людей", "Find channels and people") { ayuPeerSearchController(context: context) }
      page("decoy", "Фейк-режим", "Decoy mode", "фейк код пароль ложный двойной тап decoy fake code passcode") { ayuDecoySettingsController(context: context) }
@@ -1282,7 +1448,7 @@ index 94cc3242..ee290a23 100644
      // timeline by how much faster or slower this file is.
      if let tempo = AyuMusicMetadata.tempoVariant(title) {
 diff --git a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
-index 97b92591..5c65de21 100644
+index 97b92591..0f057c71 100644
 --- a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
 +++ b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
 @@ -77,6 +77,7 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
@@ -1293,7 +1459,7 @@ index 97b92591..5c65de21 100644
          self.playerView = playerView
          self.displayNode.view.addSubview(playerView)
      }
-@@ -112,6 +113,36 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+@@ -112,6 +113,43 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
          })
      }
  
@@ -1317,10 +1483,17 @@ index 97b92591..5c65de21 100644
 +
 +    private func showNightLookOptions() {
 +        let russian = self.context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
-+        let menu = UIAlertController(title: russian ? "Ночной режим плеера" : "Player night look", message: russian ? "Ночью фон плеера становится теплее и темнее, а текст не слепит." : "At night the player's backdrop turns warmer and darker, and the text glares less.", preferredStyle: .actionSheet)
++        let menu = UIAlertController(title: russian ? "Ночной режим плеера" : "Player night look", message: russian ? "Ночью фон плеера становится темнее (и теплее), а текст не слепит." : "At night the player's backdrop turns darker (and warmer), and the text glares less.", preferredStyle: .actionSheet)
 +        for mode in AyuPlayerNightLook.allCases {
 +            menu.addAction(UIAlertAction(title: mode.title(russian) + (mode == AyuPlayerNightLook.current ? " ✓" : ""), style: .default, handler: { _ in AyuPlayerNightLook.current = mode }))
 +        }
++        menu.addAction(UIAlertAction(title: russian ? "Настроить…" : "Customize…", style: .default, handler: { [weak self] _ in
++            guard let self else { return }
++            let controller = ayuPlayerNightLookController(context: self.context)
++            self.dismiss(completion: { [weak navigation = self.parentNavigationController] in
++                navigation?.pushViewController(controller)
++            })
++        }))
 +        menu.addAction(UIAlertAction(title: russian ? "Отмена" : "Cancel", style: .cancel))
 +        menu.popoverPresentationController?.sourceView = self.view
 +        menu.popoverPresentationController?.sourceRect = CGRect(x: self.view.bounds.midX, y: self.view.bounds.maxY - 80.0, width: 1.0, height: 1.0)
@@ -1330,7 +1503,7 @@ index 97b92591..5c65de21 100644
      private func showDone(_ text: String) {
          let alert = UIAlertController(title: nil, message: text, preferredStyle: .alert)
          alert.addAction(UIAlertAction(title: "OK", style: .default))
-@@ -164,6 +195,18 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+@@ -164,6 +202,18 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
              self.importingLyricsFor = self.playerView?.lyricsIdentity
              self.context.sharedContext.applicationBindings.presentNativeController(picker)
          }))
@@ -1349,7 +1522,7 @@ index 97b92591..5c65de21 100644
          if self.playerView?.currentHapticsFile != nil {
              menu.addAction(UIAlertAction(title: russian ? "Музыка в профиле…" : "Profile music…", style: .default, handler: { [weak self] _ in self?.showProfileMusicOptions() }))
          }
-@@ -342,6 +385,13 @@ final class AyuMusicPlayerView: UIView {
+@@ -342,6 +392,12 @@ final class AyuMusicPlayerView: UIView {
      private let backdropNode = TransformImageNode()
      private let backdropBlur = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
      private let backdropDim = UIView()
@@ -1357,22 +1530,21 @@ index 97b92591..5c65de21 100644
 +    private let nightTint = UIView()
 +    private let nightGlare = UIView()
 +    private var nightTimer: Foundation.Timer?
-+    private var nightLookOn = false
 +    /// Opens the lyrics editor (the controller presents it).
 +    var requestLyricsEditor: (() -> Void)?
      private let grabber = UIView()
  
      private let artworkShadow = UIView()
-@@ -423,6 +473,17 @@ final class AyuMusicPlayerView: UIView {
+@@ -423,6 +479,17 @@ final class AyuMusicPlayerView: UIView {
          self.addSubview(self.backdropBlur)
          self.backdropDim.backgroundColor = UIColor(white: 0.0, alpha: 0.28)
          self.addSubview(self.backdropDim)
 +        self.nightTint.isUserInteractionEnabled = false
-+        self.nightTint.backgroundColor = UIColor(red: 0.16, green: 0.08, blue: 0.02, alpha: 1.0)
++        self.nightTint.backgroundColor = AyuPlayerNightLook.tintColor
 +        self.nightTint.alpha = 0.0
 +        self.addSubview(self.nightTint)
 +        self.nightGlare.isUserInteractionEnabled = false
-+        self.nightGlare.backgroundColor = UIColor(red: 0.04, green: 0.02, blue: 0.0, alpha: 1.0)
++        self.nightGlare.backgroundColor = AyuPlayerNightLook.glareColor
 +        self.nightGlare.alpha = 0.0
 +        self.nightTimer = Foundation.Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true, block: { [weak self] _ in
 +            self?.applyNightLook(animated: true)
@@ -1381,7 +1553,7 @@ index 97b92591..5c65de21 100644
          for name in [AyuPlayerTextStyle.didChangeNotification, UIAccessibility.reduceMotionStatusDidChangeNotification] {
              self.appearanceObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main, using: { [weak self] _ in self?.applyPlayerAppearance() }))
          }
-@@ -457,6 +518,18 @@ final class AyuMusicPlayerView: UIView {
+@@ -457,6 +524,18 @@ final class AyuMusicPlayerView: UIView {
          self.lyricsView.seek = { [weak self] time in
              self?.control(.seek(time))
          }
@@ -1400,7 +1572,7 @@ index 97b92591..5c65de21 100644
          self.addSubview(self.lyricsView)
          self.queueView.isHidden = true
          self.queueView.haptics = { [weak self] in
-@@ -541,6 +614,8 @@ final class AyuMusicPlayerView: UIView {
+@@ -541,6 +620,8 @@ final class AyuMusicPlayerView: UIView {
          let pan = UIPanGestureRecognizer(target: self, action: #selector(self.dismissPan(_:)))
          self.addGestureRecognizer(pan)
          self.debugOverlay.isHidden = !AyuDeveloperSettings.shared.playerDebugOverlay
@@ -1409,7 +1581,7 @@ index 97b92591..5c65de21 100644
          self.addSubview(self.debugOverlay)
  
          self.stateDisposable = (context.sharedContext.mediaManager.musicMediaPlayerState
-@@ -571,6 +646,7 @@ final class AyuMusicPlayerView: UIView {
+@@ -571,6 +652,7 @@ final class AyuMusicPlayerView: UIView {
          self.stateDisposable?.dispose()
          self.lyricsDisposable?.dispose()
          self.displayLink?.invalidate()
@@ -1417,7 +1589,7 @@ index 97b92591..5c65de21 100644
      }
  
      private func applyPlayerAppearance() {
-@@ -580,6 +656,60 @@ final class AyuMusicPlayerView: UIView {
+@@ -580,6 +662,67 @@ final class AyuMusicPlayerView: UIView {
          case "aurora": self.backdropDim.backgroundColor = UIColor(red: 0.13, green: 0.07, blue: 0.24, alpha: 0.72)
          default: self.backdropDim.backgroundColor = UIColor(white: 0.0, alpha: 0.28)
          }
@@ -1426,11 +1598,18 @@ index 97b92591..5c65de21 100644
 +
 +    private func applyNightLook(animated: Bool) {
 +        let on = AyuPlayerNightLook.isActiveNow
-+        guard on != self.nightLookOn || !animated else { return }
-+        self.nightLookOn = on
++        let tintAlpha: CGFloat = on ? AyuPlayerNightLook.tintAlpha : 0.0
++        let glareAlpha: CGFloat = on ? AyuPlayerNightLook.glareAlpha : 0.0
++        let tintColor = AyuPlayerNightLook.tintColor
++        let glareColor = AyuPlayerNightLook.glareColor
++        if self.nightTint.alpha == tintAlpha && self.nightGlare.alpha == glareAlpha && self.nightTint.backgroundColor == tintColor && self.nightGlare.backgroundColor == glareColor {
++            return
++        }
 +        let apply = {
-+            self.nightTint.alpha = on ? 0.42 : 0.0
-+            self.nightGlare.alpha = on ? 0.22 : 0.0
++            self.nightTint.backgroundColor = tintColor
++            self.nightGlare.backgroundColor = glareColor
++            self.nightTint.alpha = tintAlpha
++            self.nightGlare.alpha = glareAlpha
 +        }
 +        if animated && !UIAccessibility.isReduceMotionEnabled {
 +            UIView.animate(withDuration: 1.2, delay: 0.0, options: [.beginFromCurrentState, .allowUserInteraction], animations: apply)
@@ -1478,7 +1657,7 @@ index 97b92591..5c65de21 100644
      }
  
      // MARK: State
-@@ -973,6 +1103,10 @@ final class AyuMusicPlayerView: UIView {
+@@ -973,6 +1116,10 @@ final class AyuMusicPlayerView: UIView {
          var lines = ayuParseLyricsfile(source, duration: self.status?.duration)
          if lines.isEmpty { lines = ayuParseLrc(source, duration: self.status?.duration) }
          guard !lines.isEmpty else { return false }
@@ -1489,7 +1668,7 @@ index 97b92591..5c65de21 100644
          self.lyricsDisposable?.dispose()
          self.lyricsTrackKey = self.trackKey
          self.lyricsView.set(lyrics: .synced(lines), loading: false, russian: self.russian)
-@@ -1073,6 +1207,8 @@ final class AyuMusicPlayerView: UIView {
+@@ -1073,6 +1220,8 @@ final class AyuMusicPlayerView: UIView {
          applyBackdrop()
          self.backdropBlur.frame = bounds
          self.backdropDim.frame = bounds
@@ -1498,7 +1677,7 @@ index 97b92591..5c65de21 100644
  
          self.grabber.frame = CGRect(x: floor((size.width - 36.0) / 2.0), y: insets.top + 6.0, width: 36.0, height: 5.0)
  
-@@ -1350,6 +1486,12 @@ private final class AyuMusicScrubber: UIView {
+@@ -1350,6 +1499,12 @@ private final class AyuMusicScrubber: UIView {
  /// lines are dimmed, and tapping a synced line seeks to it.
  private final class AyuLyricsView: UIView {
      var seek: ((Double) -> Void)?
@@ -1511,7 +1690,7 @@ index 97b92591..5c65de21 100644
      private var animationStyle: AyuPlayerTextStyle { return AyuPlayerTextStyle.current.effective(reduceMotion: UIAccessibility.isReduceMotionEnabled) }
  
      func refreshTextStyle() {
-@@ -1399,6 +1541,8 @@ private final class AyuLyricsView: UIView {
+@@ -1399,6 +1554,8 @@ private final class AyuLyricsView: UIView {
          self.statusLabel.textColor = UIColor(white: 1.0, alpha: 0.6)
          self.statusLabel.textAlignment = .center
          self.statusLabel.numberOfLines = 0
@@ -1520,7 +1699,7 @@ index 97b92591..5c65de21 100644
          self.addSubview(self.statusLabel)
          self.timingLabel.font = .systemFont(ofSize: 11.0)
          self.timingLabel.textColor = UIColor(white: 1.0, alpha: 0.5)
-@@ -1420,6 +1564,16 @@ private final class AyuLyricsView: UIView {
+@@ -1420,6 +1577,16 @@ private final class AyuLyricsView: UIView {
          self.userScrollUntil = CACurrentMediaTime() + 3.0
      }
  
@@ -1537,7 +1716,7 @@ index 97b92591..5c65de21 100644
      func set(lyrics: AyuLyrics?, loading: Bool, russian: Bool) {
          for label in self.lineLabels {
              label.removeFromSuperview()
-@@ -1450,11 +1604,15 @@ private final class AyuLyricsView: UIView {
+@@ -1450,11 +1617,15 @@ private final class AyuLyricsView: UIView {
              case let .plain(text):
                  texts = text.components(separatedBy: .newlines)
              case .instrumental:
@@ -1557,10 +1736,10 @@ index 97b92591..5c65de21 100644
          let synced = !self.lines.isEmpty
 diff --git a/submodules/TelegramUI/Sources/AyuUserLyrics.swift b/submodules/TelegramUI/Sources/AyuUserLyrics.swift
 new file mode 100644
-index 00000000..c127e991
+index 00000000..2860701c
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuUserLyrics.swift
-@@ -0,0 +1,234 @@
+@@ -0,0 +1,195 @@
 +import Foundation
 +import UIKit
 +import CryptoKit
@@ -1756,45 +1935,6 @@ index 00000000..c127e991
 +        self.dismiss(animated: true, completion: { [completion] in completion(text) })
 +    }
 +}
-+
-+/// The player's night look: a warmer, darker backdrop and dimmer text, so the player is easy on
-+/// the eyes in the dark. Automatic from 22:00 to 7:00 by default.
-+enum AyuPlayerNightLook: Int, CaseIterable {
-+    case automatic = 0
-+    case always = 1
-+    case never = 2
-+
-+    private static let key = "ayu.player.night"
-+    static let didChangeNotification = Notification.Name("VoidGram.PlayerNightLookChanged")
-+
-+    static var current: AyuPlayerNightLook {
-+        get { return AyuPlayerNightLook(rawValue: UserDefaults.standard.integer(forKey: key)) ?? .automatic }
-+        set {
-+            UserDefaults.standard.set(newValue.rawValue, forKey: key)
-+            NotificationCenter.default.post(name: didChangeNotification, object: nil)
-+        }
-+    }
-+
-+    static var isActiveNow: Bool {
-+        switch current {
-+        case .always:
-+            return true
-+        case .never:
-+            return false
-+        case .automatic:
-+            let hour = Calendar.current.component(.hour, from: Date())
-+            return hour >= 22 || hour < 7
-+        }
-+    }
-+
-+    func title(_ russian: Bool) -> String {
-+        switch self {
-+        case .automatic: return russian ? "Авто (22:00–7:00)" : "Auto (22:00–7:00)"
-+        case .always: return russian ? "Всегда" : "Always"
-+        case .never: return russian ? "Выключен" : "Off"
-+        }
-+    }
-+}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
 index d916dd55..758ec0eb 100644
 --- a/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
@@ -1908,6 +2048,163 @@ index 4bd1106e..72be4d4b 100644
                              strongSelf.energyUsageSettings = EnergyUsageSettings.powerSavingDefault
                          } else {
                              strongSelf.energyUsageSettings = next.energyUsageSettings
+diff --git a/submodules/TelegramUIPreferences/Sources/AyuPlayerNightLook.swift b/submodules/TelegramUIPreferences/Sources/AyuPlayerNightLook.swift
+new file mode 100644
+index 00000000..11353e89
+--- /dev/null
++++ b/submodules/TelegramUIPreferences/Sources/AyuPlayerNightLook.swift
+@@ -0,0 +1,151 @@
++import Foundation
++import UIKit
++
++/// The music player's night look (Settings → VoidGram → Media → Player night look, or the player's
++/// lyrics menu): a darker, optionally warm backdrop and less glare from the white text. It can run
++/// on a schedule, always, or be switched off completely.
++public enum AyuPlayerNightLook: Int, CaseIterable {
++    case automatic = 0
++    case always = 1
++    case never = 2
++
++    public enum Strength: Int, CaseIterable {
++        case soft = 0
++        case medium = 1
++        case strong = 2
++
++        public func title(_ russian: Bool) -> String {
++            switch self {
++            case .soft: return russian ? "Слабо" : "Soft"
++            case .medium: return russian ? "Средне" : "Medium"
++            case .strong: return russian ? "Сильно" : "Strong"
++            }
++        }
++    }
++
++    private static let modeKey = "ayu.player.night"
++    private static let startKey = "ayu.player.night.start"
++    private static let endKey = "ayu.player.night.end"
++    private static let strengthKey = "ayu.player.night.strength"
++    private static let warmKey = "ayu.player.night.warm"
++
++    public static let didChangeNotification = Notification.Name("VoidGram.PlayerNightLookChanged")
++
++    private static func changed() {
++        NotificationCenter.default.post(name: didChangeNotification, object: nil)
++    }
++
++    /// `.never` switches the night look off completely.
++    public static var current: AyuPlayerNightLook {
++        get { return AyuPlayerNightLook(rawValue: UserDefaults.standard.integer(forKey: modeKey)) ?? .automatic }
++        set {
++            UserDefaults.standard.set(newValue.rawValue, forKey: modeKey)
++            changed()
++        }
++    }
++
++    /// The hour the automatic night look starts (0…23), 22 by default.
++    public static var startHour: Int {
++        get { return min(23, max(0, UserDefaults.standard.object(forKey: startKey) as? Int ?? 22)) }
++        set {
++            UserDefaults.standard.set(min(23, max(0, newValue)), forKey: startKey)
++            changed()
++        }
++    }
++
++    /// The hour the automatic night look ends (0…23), 7 by default.
++    public static var endHour: Int {
++        get { return min(23, max(0, UserDefaults.standard.object(forKey: endKey) as? Int ?? 7)) }
++        set {
++            UserDefaults.standard.set(min(23, max(0, newValue)), forKey: endKey)
++            changed()
++        }
++    }
++
++    public static var strength: Strength {
++        get { return Strength(rawValue: UserDefaults.standard.object(forKey: strengthKey) as? Int ?? 1) ?? .medium }
++        set {
++            UserDefaults.standard.set(newValue.rawValue, forKey: strengthKey)
++            changed()
++        }
++    }
++
++    /// Warm (amber) tint; off gives a neutral dark one.
++    public static var isWarm: Bool {
++        get { return UserDefaults.standard.object(forKey: warmKey) as? Bool ?? true }
++        set {
++            UserDefaults.standard.set(newValue, forKey: warmKey)
++            changed()
++        }
++    }
++
++    public static func resetSettings() {
++        for key in [startKey, endKey, strengthKey, warmKey] {
++            UserDefaults.standard.removeObject(forKey: key)
++        }
++        changed()
++    }
++
++    /// Whether `hour` falls in the schedule. A window may cross midnight (22 → 7); equal hours
++    /// mean the whole day.
++    public static func isNightHour(_ hour: Int, start: Int = AyuPlayerNightLook.startHour, end: Int = AyuPlayerNightLook.endHour) -> Bool {
++        if start == end {
++            return true
++        } else if start < end {
++            return hour >= start && hour < end
++        } else {
++            return hour >= start || hour < end
++        }
++    }
++
++    public static var isActiveNow: Bool {
++        switch current {
++        case .always:
++            return true
++        case .never:
++            return false
++        case .automatic:
++            return isNightHour(Calendar.current.component(.hour, from: Date()))
++        }
++    }
++
++    /// Opacity of the tint over the backdrop.
++    public static var tintAlpha: CGFloat {
++        switch strength {
++        case .soft: return 0.25
++        case .medium: return 0.42
++        case .strong: return 0.6
++        }
++    }
++
++    /// Opacity of the glare filter over the whole player (text and controls).
++    public static var glareAlpha: CGFloat {
++        switch strength {
++        case .soft: return 0.12
++        case .medium: return 0.22
++        case .strong: return 0.34
++        }
++    }
++
++    public static var tintColor: UIColor {
++        return isWarm ? UIColor(red: 0.16, green: 0.08, blue: 0.02, alpha: 1.0) : UIColor(red: 0.02, green: 0.03, blue: 0.06, alpha: 1.0)
++    }
++
++    public static var glareColor: UIColor {
++        return isWarm ? UIColor(red: 0.04, green: 0.02, blue: 0.0, alpha: 1.0) : UIColor.black
++    }
++
++    public static func hourText(_ hour: Int) -> String {
++        return String(format: "%02d:00", hour)
++    }
++
++    public func title(_ russian: Bool) -> String {
++        switch self {
++        case .automatic:
++            let window = AyuPlayerNightLook.hourText(AyuPlayerNightLook.startHour) + "–" + AyuPlayerNightLook.hourText(AyuPlayerNightLook.endHour)
++            return (russian ? "По расписанию " : "Scheduled ") + window
++        case .always: return russian ? "Всегда" : "Always"
++        case .never: return russian ? "Выключен полностью" : "Off completely"
++        }
++    }
++}
 diff --git a/submodules/TelegramUIPreferences/Sources/AyuPowerSaving.swift b/submodules/TelegramUIPreferences/Sources/AyuPowerSaving.swift
 new file mode 100644
 index 00000000..6be3e6e3

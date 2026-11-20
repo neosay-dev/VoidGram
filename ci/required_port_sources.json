@@ -270,5 +270,7 @@
   "submodules/TelegramUI/Sources/AyuChatNoticeSender.swift",
   "submodules/TelegramUI/Sources/AyuLicenseAgreement.swift",
   "submodules/TelegramUI/Sources/AyuUserLyrics.swift",
-  "submodules/TelegramUIPreferences/Sources/AyuPowerSaving.swift"
+  "submodules/TelegramUIPreferences/Sources/AyuPowerSaving.swift",
+  "submodules/SettingsUI/Sources/AyuPlayerNightLookController.swift",
+  "submodules/TelegramUIPreferences/Sources/AyuPlayerNightLook.swift"
 ]
