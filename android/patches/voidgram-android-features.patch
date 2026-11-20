@@ -501,15 +501,17 @@ index 9881370..262aa9c 100644
                  if (BuildVars.LOGS_ENABLED) {
                      FileLog.d("NotificationsController: process new messages, value is " + value + " ("+dialogId+", "+isChannel+", "+messageObject.isReactionPush+", "+messageObject.isStoryReactionPush+")");
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java b/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
-index 55452d3..4417e40 100644
+index 55452d3..7d59d80 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
-@@ -4439,6 +4439,10 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
+@@ -4439,6 +4439,12 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
      }
  
      public void sendMessage(SendMessageParams sendMessageParams) {
 +        // VoidGram: the privacy notice goes before the first own message in a chat.
 +        org.telegram.messenger.voidgram.VoidGramChatNotice.beforeSend(currentAccount, sendMessageParams);
++        // VoidGram: tracking parameters are removed from links.
++        org.telegram.messenger.voidgram.VoidGramInterface.cleanOutgoing(sendMessageParams);
 +        // VoidGram Time Capsule: seal the text when the send menu asked for a capsule.
 +        org.telegram.messenger.voidgram.VoidGramTimeCapsule.applyToOutgoing(sendMessageParams);
          final SendMessageChatArguments sendMessageChatArguments = sendMessageParams.sendMessageChatArguments != null ?
@@ -2837,6 +2839,206 @@ index 0000000..2b3857c
 +        builder.show();
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramInterface.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramInterface.java
+new file mode 100644
+index 0000000..6b90d02
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramInterface.java
+@@ -0,0 +1,194 @@
++package org.telegram.messenger.voidgram;
++
++import org.telegram.messenger.SendMessagesHelper;
++import org.telegram.tgnet.TLRPC;
++
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.HashSet;
++import java.util.Locale;
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
++
++/** VoidGram → Interface: the switches of iOS "Interface" and "Privacy & extras". */
++public final class VoidGramInterface {
++    private VoidGramInterface() {
++    }
++
++    private static boolean get(String key) {
++        return VoidGram.prefs().getBoolean(key, false);
++    }
++
++    private static void set(String key, boolean value) {
++        VoidGram.prefs().edit().putBoolean(key, value).apply();
++    }
++
++    public static final String HIDE_STORIES = "ui_hide_stories";
++    public static final String NO_LINK_WARNING = "ui_no_link_warning";
++    public static final String NO_GREETING_STICKER = "ui_no_greeting_sticker";
++    public static final String NO_NEXT_CHANNEL = "ui_no_next_channel";
++    public static final String HIDE_KEYBOARD_ON_SCROLL = "ui_hide_keyboard_on_scroll";
++    public static final String HIDE_PHONE = "ui_hide_phone";
++    public static final String CLEAN_LINKS = "ui_clean_links";
++    public static final String COMMA_AFTER_MENTION = "ui_comma_after_mention";
++
++    public static boolean is(String key) {
++        return get(key);
++    }
++
++    public static void toggle(String key) {
++        set(key, !get(key));
++    }
++
++    public static boolean hideStories() {
++        return get(HIDE_STORIES);
++    }
++
++    public static boolean noLinkWarning() {
++        return get(NO_LINK_WARNING);
++    }
++
++    public static boolean noGreetingSticker() {
++        return get(NO_GREETING_STICKER);
++    }
++
++    public static boolean noNextChannel() {
++        return get(NO_NEXT_CHANNEL);
++    }
++
++    public static boolean hideKeyboardOnScroll() {
++        return get(HIDE_KEYBOARD_ON_SCROLL);
++    }
++
++    public static boolean hidePhone() {
++        return get(HIDE_PHONE);
++    }
++
++    /** "@name, " at the start of a message, "@name " elsewhere. */
++    public static String mentionSuffix(int start) {
++        return start == 0 && get(COMMA_AFTER_MENTION) ? ", " : " ";
++    }
++
++    // ---- Clean links: tracking parameters are removed from links in sent messages. ----
++
++    private static final HashSet<String> EXACT = new HashSet<>(Arrays.asList(
++            "fbclid", "gclid", "gclsrc", "dclid", "msclkid", "yclid", "ysclid", "twclid", "ttclid",
++            "igsh", "igshid", "si", "mc_cid", "mc_eid", "_hsenc", "_hsmi", "mkt_tok", "vero_id",
++            "oly_anon_id", "oly_enc_id", "rb_clickid", "s_cid", "wickedid", "ref_src", "ref_url",
++            "share_id", "sharer_id", "xmt", "_openstat", "srsltid"));
++    private static final String[] PREFIXES = {"utm_", "pk_", "mtm_", "hsa_", "ga_"};
++    private static final Pattern LINK = Pattern.compile("https?://[^\\s<>\"«»]+", Pattern.CASE_INSENSITIVE);
++
++    public static String cleanLink(String link) {
++        if (link == null) {
++            return null;
++        }
++        int question = link.indexOf('?');
++        if (question < 0) {
++            return link;
++        }
++        String base = link.substring(0, question);
++        String rest = link.substring(question + 1);
++        String fragment = "";
++        int hash = rest.indexOf('#');
++        if (hash >= 0) {
++            fragment = rest.substring(hash);
++            rest = rest.substring(0, hash);
++        }
++        String[] parameters = rest.split("&");
++        ArrayList<String> kept = new ArrayList<>();
++        int total = 0;
++        for (String parameter : parameters) {
++            if (parameter.isEmpty()) {
++                continue;
++            }
++            total++;
++            int eq = parameter.indexOf('=');
++            String name = (eq >= 0 ? parameter.substring(0, eq) : parameter).toLowerCase(Locale.ROOT);
++            boolean drop = EXACT.contains(name);
++            for (String prefix : PREFIXES) {
++                if (name.startsWith(prefix)) {
++                    drop = true;
++                }
++            }
++            if (!drop) {
++                kept.add(parameter);
++            }
++        }
++        if (kept.size() == total) {
++            return link;
++        }
++        return base + (kept.isEmpty() ? "" : "?" + String.join("&", kept)) + fragment;
++    }
++
++    /** Cleans the text and moves the formatting so it stays on the same characters. */
++    public static void cleanOutgoing(SendMessagesHelper.SendMessageParams params) {
++        if (params == null || !get(CLEAN_LINKS)) {
++            return;
++        }
++        try {
++            if (params.entities != null) {
++                for (TLRPC.MessageEntity entity : params.entities) {
++                    if (entity instanceof TLRPC.TL_messageEntityTextUrl && entity.url != null) {
++                        entity.url = cleanLink(entity.url);
++                    }
++                }
++            }
++            String text = params.message;
++            if (text == null || text.indexOf('?') < 0) {
++                return;
++            }
++            Matcher matcher = LINK.matcher(text);
++            StringBuilder result = new StringBuilder();
++            int last = 0;
++            int shift = 0;
++            while (matcher.find()) {
++                String link = matcher.group();
++                int end = link.length();
++                while (end > 0 && ".,!?;:)]".indexOf(link.charAt(end - 1)) >= 0) {
++                    end--;
++                }
++                String bare = link.substring(0, end);
++                String cleaned = cleanLink(bare);
++                if (cleaned.equals(bare)) {
++                    continue;
++                }
++                int start = matcher.start();
++                result.append(text, last, start).append(cleaned);
++                last = start + bare.length();
++                int delta = cleaned.length() - bare.length();
++                if (params.entities != null) {
++                    // Positions in the new text: the link starts at start + shift.
++                    int from = start + shift;
++                    int to = from + bare.length();
++                    for (TLRPC.MessageEntity entity : params.entities) {
++                        int entityStart = entity.offset;
++                        int entityEnd = entity.offset + entity.length;
++                        if (entityStart >= to) {
++                            entity.offset += delta;
++                        } else if (entityEnd > from) {
++                            int newEnd = entityEnd >= to ? entityEnd + delta : Math.min(entityEnd, from + cleaned.length());
++                            int newStart = Math.min(entityStart, from + cleaned.length());
++                            entity.offset = newStart;
++                            entity.length = Math.max(0, newEnd - newStart);
++                        }
++                    }
++                }
++                shift += delta;
++            }
++            if (last == 0) {
++                return;
++            }
++            result.append(text, last, text.length());
++            params.message = result.toString();
++            if (params.entities != null) {
++                for (int i = params.entities.size() - 1; i >= 0; i--) {
++                    if (params.entities.get(i).length <= 0) {
++                        params.entities.remove(i);
++                    }
++                }
++            }
++        } catch (Throwable ignore) {
++        }
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLastFm.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLastFm.java
 new file mode 100644
 index 0000000..a8d9e68
@@ -4978,7 +5180,7 @@ index 5dc090f..42ae0c5 100644
  
      void measureTime(MessageObject messageObject) {
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
-index a54b134..fac7310 100644
+index a54b134..6e4fad6 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 @@ -1246,6 +1246,10 @@ public class ChatActivity extends BaseFragment implements
@@ -5082,7 +5284,46 @@ index a54b134..fac7310 100644
              if (ChatObject.isBoostSupported(currentChat) && (getUserConfig().isPremium() || ChatObject.isBoosted(chatInfo) || ChatObject.hasAdminRights(currentChat))) {
                  RLottieDrawable drawable = new RLottieDrawable(R.raw.boosts, dp(24), dp(24));
                  headerItem.lazilyAddSubItem(boost_group, drawable, LocaleController.getString(ChatObject.isChannelAndNotMegaGroup(currentChat) ? R.string.BoostingBoostChannelMenu : R.string.BoostingBoostGroupMenu));
-@@ -10820,6 +10863,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -6727,7 +6770,8 @@ public class ChatActivity extends BaseFragment implements
+                     scrolled = super.scrollVerticallyBy(dy, recycler, state);
+                 }
+                 final boolean allowPullingDownScroll = !isInPollAddOptionMode() && !hasSelectedMessages();
+-                if (allowPullingDownScroll && dy > 0 && scrolled == 0 && (ChatObject.isChannel(currentChat) && !currentChat.megagroup || isTopic && !UserObject.isBotForum(currentUser)) && chatMode != MODE_SAVED && chatMode != MODE_WELCOME_MESSAGES && chatMode != MODE_SCHEDULED && chatListView.getScrollState() == RecyclerView.SCROLL_STATE_DRAGGING && !chatListView.isFastScrollAnimationRunning() && !chatListView.isMultiselect() && !isReport()) {
++                // VoidGram: "jump to the next channel" can be turned off.
++                if (allowPullingDownScroll && !org.telegram.messenger.voidgram.VoidGramInterface.noNextChannel() && dy > 0 && scrolled == 0 && (ChatObject.isChannel(currentChat) && !currentChat.megagroup || isTopic && !UserObject.isBotForum(currentUser)) && chatMode != MODE_SAVED && chatMode != MODE_WELCOME_MESSAGES && chatMode != MODE_SCHEDULED && chatListView.getScrollState() == RecyclerView.SCROLL_STATE_DRAGGING && !chatListView.isFastScrollAnimationRunning() && !chatListView.isMultiselect() && !isReport()) {
+                     if (pullingDownOffset == 0 && pullingDownDrawable != null) {
+                         if (nextChannels != null && !nextChannels.isEmpty()) {
+                             pullingDownDrawable.updateDialog(nextChannels.get(0));
+@@ -6861,6 +6905,10 @@ public class ChatActivity extends BaseFragment implements
+                     } else if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
+                         pollHintCell = null;
+                         wasManualScroll = true;
++                        // VoidGram: the keyboard hides when the chat is scrolled.
++                        if (org.telegram.messenger.voidgram.VoidGramInterface.hideKeyboardOnScroll() && chatActivityEnterView != null && chatActivityEnterView.isKeyboardVisible()) {
++                            AndroidUtilities.hideKeyboard(chatActivityEnterView.getEditField());
++                        }
+                         scrollingFloatingDate = true;
+                         scrollingFloatingTopic = true;
+                         checkTextureViewPosition = true;
+@@ -7392,7 +7440,7 @@ public class ChatActivity extends BaseFragment implements
+                 } else {
+                     String username = ChatObject.getPublicUsername(chat);
+                     if (username != null) {
+-                        chatActivityEnterView.replaceWithText(start, len, "@" + username + " ", false);
++                        chatActivityEnterView.replaceWithText(start, len, "@" + username + org.telegram.messenger.voidgram.VoidGramInterface.mentionSuffix(start), false);
+                     }
+                 }
+             } else if (object instanceof TLRPC.User) {
+@@ -7401,7 +7449,7 @@ public class ChatActivity extends BaseFragment implements
+                     searchUserMessages(user, null);
+                 } else {
+                     if (UserObject.getPublicUsername(user) != null) {
+-                        chatActivityEnterView.replaceWithText(start, len, "@" + UserObject.getPublicUsername(user) + " ", false);
++                        chatActivityEnterView.replaceWithText(start, len, "@" + UserObject.getPublicUsername(user) + org.telegram.messenger.voidgram.VoidGramInterface.mentionSuffix(start), false);
+                     } else {
+                         String name = UserObject.getFirstName(user, false);
+                         Spannable spannable = new SpannableString(name + " ");
+@@ -10820,6 +10868,9 @@ public class ChatActivity extends BaseFragment implements
                  actionModeViews.add(actionMode.addItemWithWidth(forward, R.drawable.msg_forward, dp(48), LocaleController.getString(R.string.Forward)));
              }
              actionModeViews.add(actionMode.addItemWithWidth(share, R.drawable.msg_shareout, dp(48), LocaleController.getString(R.string.ShareFile)));
@@ -5092,7 +5333,7 @@ index a54b134..fac7310 100644
              actionModeViews.add(actionMode.addItemWithWidth(delete, R.drawable.msg_delete, dp(48), LocaleController.getString(R.string.Delete)));
          } else {
              actionModeViews.add(actionMode.addItemWithWidth(edit, R.drawable.msg_edit, dp(48), LocaleController.getString(R.string.Edit)));
-@@ -21371,7 +21417,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -21371,7 +21422,8 @@ public class ChatActivity extends BaseFragment implements
          if (postponedScroll) {
              postponedScrollToLastMessageQueryIndex = 0;
          }
@@ -5102,7 +5343,7 @@ index a54b134..fac7310 100644
          layOutWidgetsForSideMenu(messArr);
  
          boolean universalNotify = false;
-@@ -22807,8 +22854,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -22807,8 +22859,9 @@ public class ChatActivity extends BaseFragment implements
          } else if (id == NotificationCenter.didReceiveNewMessages) {
              FileLog.d("ChatActivity didReceiveNewMessages start");
              long did = (Long) args[0];
@@ -5113,7 +5354,7 @@ index a54b134..fac7310 100644
              if (did == dialog_id) {
                  boolean scheduled = (Boolean) args[2];
                  int mode = (Integer) args[3];
-@@ -31957,6 +32005,17 @@ public class ChatActivity extends BaseFragment implements
+@@ -31957,6 +32010,17 @@ public class ChatActivity extends BaseFragment implements
                  icons.add(R.drawable.msg_calendar2);
              }
  
@@ -5131,7 +5372,7 @@ index a54b134..fac7310 100644
              if (options.isEmpty() && optionsView == null) {
                  return false;
              }
-@@ -34293,6 +34352,17 @@ public class ChatActivity extends BaseFragment implements
+@@ -34293,6 +34357,17 @@ public class ChatActivity extends BaseFragment implements
          }
          boolean preserveDim = false;
          switch (option) {
@@ -5149,6 +5390,20 @@ index a54b134..fac7310 100644
              case OPTION_RETRY: {
                  final MessageObject object = selectedObject;
                  final MessageObject.GroupedMessages group = selectedObjectGroup;
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Components/AlertsCreator.java b/TMessagesProj/src/main/java/org/telegram/ui/Components/AlertsCreator.java
+index d214b18..a931b83 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/Components/AlertsCreator.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/Components/AlertsCreator.java
+@@ -1787,7 +1787,8 @@ public class AlertsCreator {
+     public static void showOpenUrlAlert(Context context, String url, boolean punycode, boolean tryTelegraph, boolean ask, boolean forceNotInternalForApps, long inlineReturn, Browser.Progress progress, @Nullable TLRPC.WebPage webPage, Theme.ResourcesProvider resourcesProvider) {
+         if (!AndroidUtilities.isContextSafe(context)) return;
+         final String scheme = url == null ? null : Uri.parse(url).getScheme();
+-        if (Browser.isInternalUrl(url, null) || !ask || "mailto".equalsIgnoreCase(scheme)) {
++        // VoidGram: links open without the confirmation.
++        if (Browser.isInternalUrl(url, null) || !ask || "mailto".equalsIgnoreCase(scheme) || org.telegram.messenger.voidgram.VoidGramInterface.noLinkWarning()) {
+             Browser.openUrl(context, Uri.parse(url), inlineReturn == 0, tryTelegraph, forceNotInternalForApps && checkInternalBotApp(url), progress, null, false, true, false);
+             return;
+         }
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Components/AudioPlayerAlert.java b/TMessagesProj/src/main/java/org/telegram/ui/Components/AudioPlayerAlert.java
 index 3fa7042..81f56a7 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/Components/AudioPlayerAlert.java
@@ -5280,6 +5535,20 @@ index 266e570..ad77fa3 100644
          if (replyingQuote != null && parentFragment != null && replyingQuote.outdated) {
              parentFragment.showQuoteMessageUpdate();
              return;
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Components/ChatGreetingsView.java b/TMessagesProj/src/main/java/org/telegram/ui/Components/ChatGreetingsView.java
+index 480551f..726c34c 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/Components/ChatGreetingsView.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/Components/ChatGreetingsView.java
+@@ -242,7 +242,8 @@ public class ChatGreetingsView extends LinearLayout implements Theme.Colorable {
+     }
+ 
+     public void setSticker(TLRPC.Document sticker) {
+-        if (sticker == null) {
++        // VoidGram: no greeting sticker in empty chats.
++        if (sticker == null || org.telegram.messenger.voidgram.VoidGramInterface.noGreetingSticker()) {
+             return;
+         }
+         wasDraw = true;
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Components/FragmentContextView.java b/TMessagesProj/src/main/java/org/telegram/ui/Components/FragmentContextView.java
 index e8deeca..b09cc24 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/Components/FragmentContextView.java
@@ -5400,10 +5669,26 @@ index 49921be..9e87b97 100644
          }
          params.flags |= WindowManager.LayoutParams.FLAG_FULLSCREEN;
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
-index e2b917b..fa850e0 100644
+index e2b917b..a0dfde6 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
-@@ -795,6 +795,12 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
+@@ -529,12 +529,13 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
+         avatarView.setForUserOrChat(user, avatarDrawable);
+         titleView.setText(UserObject.getUserName(user));
+         final StringBuilder sb = new StringBuilder();
+-        if (user != null) {
++        // VoidGram: the own number can be hidden here.
++        if (user != null && !org.telegram.messenger.voidgram.VoidGramInterface.hidePhone()) {
+             sb.append(PhoneFormat.getInstance().format("+" + user.phone));
+         }
+         final String username = UserObject.getPublicUsername(user);
+         if (username != null) {
+-            sb.append(" • @").append(username);
++            sb.append(sb.length() > 0 ? " • @" : "@").append(username);
+         }
+         subtitleView.setText(sb);
+ 
+@@ -795,6 +796,12 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
              items.add(UItem.asShadow(null));
          }
  
@@ -5416,7 +5701,7 @@ index e2b917b..fa850e0 100644
          items.add(SettingCell.Factory.of(1, IconBackgroundColors.BLUE.top, IconBackgroundColors.BLUE.bottom, R.drawable.settings_account, getString(R.string.SettingsAccount), getString(R.string.SettingsAccountInfo)));
          items.add(SettingCell.Factory.of(2, IconBackgroundColors.ORANGE.top, IconBackgroundColors.ORANGE.bottom, R.drawable.settings_chat, getString(R.string.SettingsChat), getString(R.string.SettingsChatInfo)));
          items.add(SettingCell.Factory.of(3, IconBackgroundColors.GREEN.top, IconBackgroundColors.GREEN.bottom, R.drawable.settings_privacy, getString(R.string.SettingsPrivacySecurity), getString(R.string.SettingsPrivacySecurityInfo)));
-@@ -917,6 +923,9 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
+@@ -917,6 +924,9 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
              return;
          }
          switch (item.id) {
@@ -5426,6 +5711,21 @@ index e2b917b..fa850e0 100644
              case 1:
                  presentSettingFragment(new UserInfoActivity());
                  break;
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Stories/StoriesController.java b/TMessagesProj/src/main/java/org/telegram/ui/Stories/StoriesController.java
+index 529eb5c..e8358f5 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/Stories/StoriesController.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/Stories/StoriesController.java
+@@ -281,6 +281,10 @@ public class StoriesController {
+     }
+ 
+     public boolean hasStories() {
++        // VoidGram: stories hidden from the chat list.
++        if (org.telegram.messenger.voidgram.VoidGramInterface.hideStories()) {
++            return false;
++        }
+         return (dialogListStories != null && dialogListStories.size() > 0) || hasSelfStories();
+     }
+ 
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java
 new file mode 100644
 index 0000000..2eaf60e
@@ -5916,6 +6216,78 @@ index 0000000..ea91239
 +            return;
 +        }
 +        refresh();
++    }
++
++    @Override
++    protected boolean onLongClick(UItem item, View view, int position, float x, float y) {
++        return false;
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramInterfaceActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramInterfaceActivity.java
+new file mode 100644
+index 0000000..701321b
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramInterfaceActivity.java
+@@ -0,0 +1,66 @@
++package org.telegram.ui.voidgram;
++
++import android.view.View;
++
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramInterface;
++import org.telegram.ui.Components.UItem;
++import org.telegram.ui.Components.UniversalAdapter;
++import org.telegram.ui.Components.UniversalFragment;
++
++import java.util.ArrayList;
++
++/** VoidGram → Interface. */
++public class VoidGramInterfaceActivity extends UniversalFragment {
++    private static final String[] KEYS = {
++            VoidGramInterface.HIDE_STORIES,
++            VoidGramInterface.NO_GREETING_STICKER,
++            VoidGramInterface.NO_NEXT_CHANNEL,
++            VoidGramInterface.HIDE_KEYBOARD_ON_SCROLL,
++            VoidGramInterface.COMMA_AFTER_MENTION,
++            VoidGramInterface.HIDE_PHONE,
++            VoidGramInterface.NO_LINK_WARNING,
++            VoidGramInterface.CLEAN_LINKS,
++    };
++
++    @Override
++    protected CharSequence getTitle() {
++        return VoidGram.t("Интерфейс", "Interface");
++    }
++
++    private void check(ArrayList<UItem> items, int index, String title) {
++        items.add(UItem.asCheck(index + 1, title).setChecked(VoidGramInterface.is(KEYS[index])));
++    }
++
++    @Override
++    protected void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
++        items.add(UItem.asHeader(VoidGram.t("Чаты", "Chats")));
++        check(items, 0, VoidGram.t("Скрыть истории", "Hide stories"));
++        check(items, 1, VoidGram.t("Без приветственного стикера", "No greeting sticker"));
++        check(items, 2, VoidGram.t("Без перехода к следующему каналу", "No jump to the next channel"));
++        check(items, 3, VoidGram.t("Прятать клавиатуру при прокрутке", "Hide the keyboard on scroll"));
++        check(items, 4, VoidGram.t("Запятая после упоминания", "Comma after a mention"));
++        items.add(UItem.asShadow(VoidGram.t("Упоминание в начале сообщения вставляется как «@ник, ».", "A mention at the start of a message is inserted as \"@name, \".")));
++        items.add(UItem.asHeader(VoidGram.t("Приватность", "Privacy")));
++        check(items, 5, VoidGram.t("Скрыть мой номер в Настройках", "Hide my number in Settings"));
++        check(items, 6, VoidGram.t("Открывать ссылки без вопроса", "Open links without asking"));
++        check(items, 7, VoidGram.t("Чистить ссылки от слежки", "Remove tracking from links"));
++        items.add(UItem.asShadow(VoidGram.t("Из ссылок в ваших сообщениях убираются utm_, fbclid, si и другие метки слежки.", "utm_, fbclid, si and other tracking tags are removed from links in your messages.")));
++    }
++
++    @Override
++    protected void onClick(UItem item, View view, int position, float x, float y) {
++        int index = item.id - 1;
++        if (index >= 0 && index < KEYS.length) {
++            VoidGramInterface.toggle(KEYS[index]);
++            if (listView != null && listView.adapter != null) {
++                listView.adapter.update(true);
++            }
++        }
 +    }
 +
 +    @Override
@@ -7042,10 +7414,10 @@ index 0000000..70cdf0b
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
 new file mode 100644
-index 0000000..9c3389d
+index 0000000..318f67e
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
-@@ -0,0 +1,318 @@
+@@ -0,0 +1,323 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.content.Context;
@@ -7090,6 +7462,7 @@ index 0000000..9c3389d
 +    private static final int ID_EXPORT = 12;
 +    private static final int ID_IMPORT = 13;
 +    private static final int ID_TOOLS = 14;
++    private static final int ID_INTERFACE = 15;
 +    private static final int REQUEST_IMPORT = 9301;
 +
 +    private FrameLayout musicRow;
@@ -7126,6 +7499,7 @@ index 0000000..9c3389d
 +        items.add(UItem.asShadow(VoidGram.t("Текст песни, свой текст и его правка — в меню плеера (⋮).", "Lyrics, your own text and edits are in the player menu (⋮).")));
 +
 +        items.add(UItem.asHeader(VoidGram.t("Оформление", "Appearance")));
++        items.add(UItem.asButton(ID_INTERFACE, R.drawable.msg_customize, VoidGram.t("Интерфейс", "Interface")));
 +        items.add(UItem.asCheck(ID_BADGES, VoidGram.t("Значки VoidGram", "VoidGram badges")).setChecked(org.telegram.messenger.voidgram.VoidGramBadges.isEnabled()));
 +        items.add(UItem.asShadow(VoidGram.t("Значки и подписи с сервера VoidGram, рядом с именем у тех, у кого нет своего статуса. Видны только в VoidGram. Иконки приложения VoidGram — в Настройках → Оформление → Иконка.", "Badges and labels from the VoidGram server, next to the name of people without their own status. Visible only in VoidGram. VoidGram app icons are in Settings → Appearance → App icon.")));
 +
@@ -7232,6 +7606,9 @@ index 0000000..9c3389d
 +    @Override
 +    protected void onClick(UItem item, View view, int position, float x, float y) {
 +        switch (item.id) {
++            case ID_INTERFACE:
++                presentFragment(new VoidGramInterfaceActivity());
++                break;
 +            case ID_TOOLS:
 +                presentFragment(new VoidGramToolsActivity());
 +                break;
