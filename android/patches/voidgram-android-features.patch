@@ -3284,10 +3284,10 @@ index 0000000..7774582
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramHiddenChats.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramHiddenChats.java
 new file mode 100644
-index 0000000..793eae8
+index 0000000..a09be76
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramHiddenChats.java
-@@ -0,0 +1,152 @@
+@@ -0,0 +1,157 @@
 +package org.telegram.messenger.voidgram;
 +
 +import androidx.biometric.BiometricManager;
@@ -3410,13 +3410,20 @@ index 0000000..793eae8
 +            onSuccess.run();
 +            return;
 +        }
++        authenticateFresh(() -> {
++            unlocked = true;
++            onSuccess.run();
++        });
++    }
++
++    /** Always asks, whatever was unlocked before. */
++    public static void authenticateFresh(Runnable onSuccess) {
 +        LaunchActivity activity = LaunchActivity.instance;
 +        if (activity == null) {
 +            return;
 +        }
 +        int authenticators = BiometricManager.Authenticators.BIOMETRIC_WEAK | BiometricManager.Authenticators.DEVICE_CREDENTIAL;
 +        if (BiometricManager.from(activity).canAuthenticate(authenticators) != BiometricManager.BIOMETRIC_SUCCESS) {
-+            unlocked = true;
 +            onSuccess.run();
 +            return;
 +        }
@@ -3424,7 +3431,6 @@ index 0000000..793eae8
 +            BiometricPrompt prompt = new BiometricPrompt(activity, ContextCompat.getMainExecutor(activity), new BiometricPrompt.AuthenticationCallback() {
 +                @Override
 +                public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
-+                    unlocked = true;
 +                    AndroidUtilities.runOnUIThread(onSuccess);
 +                }
 +            });
@@ -3435,7 +3441,6 @@ index 0000000..793eae8
 +                    .build();
 +            prompt.authenticate(info);
 +        } catch (Throwable e) {
-+            unlocked = true;
 +            onSuccess.run();
 +        }
 +    }
@@ -7205,7 +7210,7 @@ index 5dc090f..3f4b262 100644
  
      void measureTime(MessageObject messageObject) {
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
-index a54b134..217fa7d 100644
+index a54b134..1ad6964 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 @@ -1246,6 +1246,11 @@ public class ChatActivity extends BaseFragment implements
@@ -7229,7 +7234,7 @@ index a54b134..217fa7d 100644
      private final static int forward = 11;
      private final static int delete = 12;
      private final static int chat_enc_timer = 13;
-@@ -1707,6 +1714,13 @@ public class ChatActivity extends BaseFragment implements
+@@ -1707,6 +1714,14 @@ public class ChatActivity extends BaseFragment implements
      private final static int view_as_topics = 59;
  
      private final static int search = 40;
@@ -7240,10 +7245,11 @@ index a54b134..217fa7d 100644
 +    private final static int voidgram_export_chat = 9204;
 +    private final static int voidgram_chat_tools = 9205;
 +    private final static int voidgram_hide_chat = 9206;
++    private final static int voidgram_lock_chat = 9207;
  
      private final static int topic_close = 60;
      private final static int open_forum = 61;
-@@ -2195,6 +2209,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -2195,6 +2210,10 @@ public class ChatActivity extends BaseFragment implements
          @Override
          public void onTextChanged(final CharSequence text, boolean bigChange, boolean fromDraft) {
              MediaController.getInstance().setInputFieldHasText(!TextUtils.isEmpty(text) || chatActivityEnterView.isEditingMessage());
@@ -7254,7 +7260,7 @@ index a54b134..217fa7d 100644
              if (mentionContainer != null && mentionContainer.getAdapter() != null) {
                  mentionContainer.getAdapter().searchUsernameOrHashtag(text, chatActivityEnterView.getCursorPosition(), messages, false, false);
              }
-@@ -2835,6 +2853,15 @@ public class ChatActivity extends BaseFragment implements
+@@ -2835,6 +2854,15 @@ public class ChatActivity extends BaseFragment implements
          }
  
          dialog_id_Long = dialog_id;
@@ -7270,7 +7276,7 @@ index a54b134..217fa7d 100644
  
          transitionAnimationGlobalIndex = NotificationCenter.getGlobalInstance().setAnimationInProgress(transitionAnimationGlobalIndex, new int[0]);
  
-@@ -3336,8 +3363,16 @@ public class ChatActivity extends BaseFragment implements
+@@ -3336,8 +3364,16 @@ public class ChatActivity extends BaseFragment implements
          }
      }
  
@@ -7287,7 +7293,7 @@ index a54b134..217fa7d 100644
          super.onFragmentDestroy();
          if (messageMetricsView != null) {
              messageMetricsView.finish();
-@@ -3746,6 +3781,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -3746,6 +3782,8 @@ public class ChatActivity extends BaseFragment implements
                          getMessagesController().getTopicsController().toggleViewForumAsMessages(-dialog_id, false);
                          TopicsFragment.prepareToSwitchAnimation(ChatActivity.this);
                      }
@@ -7296,10 +7302,16 @@ index a54b134..217fa7d 100644
                  } else if (id == copy) {
                      SpannableStringBuilder str = new SpannableStringBuilder();
                      long previousUid = 0;
-@@ -3988,6 +4025,24 @@ public class ChatActivity extends BaseFragment implements
+@@ -3988,6 +4026,30 @@ public class ChatActivity extends BaseFragment implements
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/help", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
                  } else if (id == bot_settings) {
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/settings", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
++                } else if (id == voidgram_lock_chat) {
++                    boolean lock = !org.telegram.ui.voidgram.VoidGramChatLock.isLocked(currentAccount, dialog_id);
++                    org.telegram.ui.voidgram.VoidGramChatLock.setLocked(currentAccount, dialog_id, lock);
++                    BulletinFactory.of(ChatActivity.this).createSimpleBulletin(R.raw.contact_check, lock
++                        ? org.telegram.messenger.voidgram.VoidGram.t("Чат будет открываться по отпечатку или PIN", "The chat will open with your fingerprint or PIN")
++                        : org.telegram.messenger.voidgram.VoidGram.t("Замок снят", "Lock removed")).show();
 +                } else if (id == voidgram_hide_chat) {
 +                    boolean hide = !org.telegram.messenger.voidgram.VoidGramHiddenChats.isHidden(currentAccount, dialog_id);
 +                    org.telegram.messenger.voidgram.VoidGramHiddenChats.setHidden(currentAccount, dialog_id, hide);
@@ -7321,7 +7333,7 @@ index a54b134..217fa7d 100644
                  } else if (id == search) {
                      openSearchWithText(isSupportedTags() ? "" : null);
                  } else if (id == translate) {
-@@ -4398,6 +4453,21 @@ public class ChatActivity extends BaseFragment implements
+@@ -4398,6 +4460,22 @@ public class ChatActivity extends BaseFragment implements
              if (searchItem != null) {
                  headerItem.lazilyAddSubItem(search, R.drawable.msg_search, LocaleController.getString(R.string.Search));
              }
@@ -7332,6 +7344,7 @@ index a54b134..217fa7d 100644
 +                headerItem.lazilyAddSubItem(voidgram_export_chat, R.drawable.msg_shareout, org.telegram.messenger.voidgram.VoidGram.t("Экспорт чата", "Export chat"));
 +            }
 +            if (chatMode == 0 && !isTopic && !org.telegram.messenger.voidgram.VoidGramDecoy.isActive()) {
++                headerItem.lazilyAddSubItem(voidgram_lock_chat, R.drawable.msg_permissions, org.telegram.ui.voidgram.VoidGramChatLock.isLocked(currentAccount, dialog_id) ? org.telegram.messenger.voidgram.VoidGram.t("Снять замок", "Remove the lock") : org.telegram.messenger.voidgram.VoidGram.t("Заблокировать чат", "Lock chat"));
 +                headerItem.lazilyAddSubItem(voidgram_hide_chat, R.drawable.msg_archive, org.telegram.messenger.voidgram.VoidGramHiddenChats.isHidden(currentAccount, dialog_id) ? org.telegram.messenger.voidgram.VoidGram.t("Показать в списке чатов", "Show in the chat list") : org.telegram.messenger.voidgram.VoidGram.t("Скрыть чат", "Hide chat"));
 +            }
 +            if (chatMode == 0 && !org.telegram.messenger.voidgram.VoidGramDecoy.isActive() && !DialogObject.isEncryptedDialog(dialog_id)) {
@@ -7343,7 +7356,7 @@ index a54b134..217fa7d 100644
              if (ChatObject.isBoostSupported(currentChat) && (getUserConfig().isPremium() || ChatObject.isBoosted(chatInfo) || ChatObject.hasAdminRights(currentChat))) {
                  RLottieDrawable drawable = new RLottieDrawable(R.raw.boosts, dp(24), dp(24));
                  headerItem.lazilyAddSubItem(boost_group, drawable, LocaleController.getString(ChatObject.isChannelAndNotMegaGroup(currentChat) ? R.string.BoostingBoostChannelMenu : R.string.BoostingBoostGroupMenu));
-@@ -6727,7 +6797,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -6727,7 +6805,8 @@ public class ChatActivity extends BaseFragment implements
                      scrolled = super.scrollVerticallyBy(dy, recycler, state);
                  }
                  final boolean allowPullingDownScroll = !isInPollAddOptionMode() && !hasSelectedMessages();
@@ -7353,7 +7366,7 @@ index a54b134..217fa7d 100644
                      if (pullingDownOffset == 0 && pullingDownDrawable != null) {
                          if (nextChannels != null && !nextChannels.isEmpty()) {
                              pullingDownDrawable.updateDialog(nextChannels.get(0));
-@@ -6861,6 +6932,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -6861,6 +6940,10 @@ public class ChatActivity extends BaseFragment implements
                      } else if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
                          pollHintCell = null;
                          wasManualScroll = true;
@@ -7364,7 +7377,7 @@ index a54b134..217fa7d 100644
                          scrollingFloatingDate = true;
                          scrollingFloatingTopic = true;
                          checkTextureViewPosition = true;
-@@ -7392,7 +7467,7 @@ public class ChatActivity extends BaseFragment implements
+@@ -7392,7 +7475,7 @@ public class ChatActivity extends BaseFragment implements
                  } else {
                      String username = ChatObject.getPublicUsername(chat);
                      if (username != null) {
@@ -7373,7 +7386,7 @@ index a54b134..217fa7d 100644
                      }
                  }
              } else if (object instanceof TLRPC.User) {
-@@ -7401,7 +7476,7 @@ public class ChatActivity extends BaseFragment implements
+@@ -7401,7 +7484,7 @@ public class ChatActivity extends BaseFragment implements
                      searchUserMessages(user, null);
                  } else {
                      if (UserObject.getPublicUsername(user) != null) {
@@ -7382,7 +7395,18 @@ index a54b134..217fa7d 100644
                      } else {
                          String name = UserObject.getFirstName(user, false);
                          Spannable spannable = new SpannableString(name + " ");
-@@ -10820,6 +10895,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -9045,6 +9128,10 @@ public class ChatActivity extends BaseFragment implements
+             });
+         }
+ 
++        // VoidGram: a locked chat stays covered until the owner confirms.
++        if (chatMode == 0) {
++            org.telegram.ui.voidgram.VoidGramChatLock.attach(currentAccount, dialog_id, fragmentView);
++        }
+         return fragmentView;
+     }
+ 
+@@ -10820,6 +10907,9 @@ public class ChatActivity extends BaseFragment implements
                  actionModeViews.add(actionMode.addItemWithWidth(forward, R.drawable.msg_forward, dp(48), LocaleController.getString(R.string.Forward)));
              }
              actionModeViews.add(actionMode.addItemWithWidth(share, R.drawable.msg_shareout, dp(48), LocaleController.getString(R.string.ShareFile)));
@@ -7392,7 +7416,7 @@ index a54b134..217fa7d 100644
              actionModeViews.add(actionMode.addItemWithWidth(delete, R.drawable.msg_delete, dp(48), LocaleController.getString(R.string.Delete)));
          } else {
              actionModeViews.add(actionMode.addItemWithWidth(edit, R.drawable.msg_edit, dp(48), LocaleController.getString(R.string.Edit)));
-@@ -21371,7 +21449,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -21371,7 +21461,8 @@ public class ChatActivity extends BaseFragment implements
          if (postponedScroll) {
              postponedScrollToLastMessageQueryIndex = 0;
          }
@@ -7402,7 +7426,7 @@ index a54b134..217fa7d 100644
          layOutWidgetsForSideMenu(messArr);
  
          boolean universalNotify = false;
-@@ -22807,8 +22886,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -22807,8 +22898,9 @@ public class ChatActivity extends BaseFragment implements
          } else if (id == NotificationCenter.didReceiveNewMessages) {
              FileLog.d("ChatActivity didReceiveNewMessages start");
              long did = (Long) args[0];
@@ -7413,7 +7437,7 @@ index a54b134..217fa7d 100644
              if (did == dialog_id) {
                  boolean scheduled = (Boolean) args[2];
                  int mode = (Integer) args[3];
-@@ -28135,6 +28215,13 @@ public class ChatActivity extends BaseFragment implements
+@@ -28135,6 +28227,13 @@ public class ChatActivity extends BaseFragment implements
      @Override
      public void onTransitionAnimationEnd(boolean isOpen, boolean backward) {
          super.onTransitionAnimationEnd(isOpen, backward);
@@ -7427,7 +7451,7 @@ index a54b134..217fa7d 100644
          if (isOpen) {
              if (backward) {
                  if (showPinBulletin && pinBulletin != null) {
-@@ -31957,6 +32044,23 @@ public class ChatActivity extends BaseFragment implements
+@@ -31957,6 +32056,23 @@ public class ChatActivity extends BaseFragment implements
                  icons.add(R.drawable.msg_calendar2);
              }
  
@@ -7451,7 +7475,7 @@ index a54b134..217fa7d 100644
              if (options.isEmpty() && optionsView == null) {
                  return false;
              }
-@@ -34293,6 +34397,21 @@ public class ChatActivity extends BaseFragment implements
+@@ -34293,6 +34409,21 @@ public class ChatActivity extends BaseFragment implements
          }
          boolean preserveDim = false;
          switch (option) {
@@ -7741,7 +7765,7 @@ index e6478ee..1576e94 100644
              return frozenDialogsList;
          }
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
-index 1dd2ffe..f5b4e0b 100644
+index 1dd2ffe..5794bec 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
 @@ -458,6 +458,11 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
@@ -7756,16 +7780,17 @@ index 1dd2ffe..f5b4e0b 100644
          Theme.createCommonChatResources();
          Theme.createDialogsResources(this);
          if (SharedConfig.passcodeHash.length() != 0 && SharedConfig.appLocked) {
-@@ -6897,6 +6902,8 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
+@@ -6897,6 +6902,9 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
      @Override
      protected void onPause() {
          super.onPause();
 +        // VoidGram: hidden chats lock again in the background.
 +        org.telegram.messenger.voidgram.VoidGramHiddenChats.lock();
++        org.telegram.ui.voidgram.VoidGramChatLock.lockAll();
          isResumed = false;
          WidgetMedia.onAppPaused(true);
          PipCoordinator.getInstance().onActivityPause(this);
-@@ -7209,6 +7216,8 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
+@@ -7209,6 +7217,8 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
      @Override
      protected void onResume() {
          super.onResume();
@@ -8074,6 +8099,107 @@ index 0000000..53c13b2
 +        } catch (Throwable e) {
 +            BulletinFactory.of(fragment).createErrorBulletin(VoidGram.t("Не удалось открыть файл", "The file could not be opened")).show();
 +        }
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatLock.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatLock.java
+new file mode 100644
+index 0000000..6246dd1
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatLock.java
+@@ -0,0 +1,95 @@
++package org.telegram.ui.voidgram;
++
++import android.content.Context;
++import android.graphics.Color;
++import android.util.TypedValue;
++import android.view.Gravity;
++import android.view.View;
++import android.view.ViewGroup;
++import android.widget.FrameLayout;
++import android.widget.LinearLayout;
++import android.widget.TextView;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramHiddenChats;
++import org.telegram.ui.Components.LayoutHelper;
++
++import java.util.HashSet;
++
++/**
++ * A chat locked with the fingerprint, face or screen lock, as on iOS: its content stays covered
++ * until the owner confirms; it locks again when the app goes to the background.
++ */
++public final class VoidGramChatLock {
++    private VoidGramChatLock() {
++    }
++
++    private static final HashSet<String> unlocked = new HashSet<>();
++
++    private static String key(int account, long dialogId) {
++        return account + ":" + dialogId;
++    }
++
++    public static boolean isLocked(int account, long dialogId) {
++        return VoidGram.prefs().getBoolean("chat_lock_" + key(account, dialogId), false);
++    }
++
++    public static void setLocked(int account, long dialogId, boolean locked) {
++        VoidGram.prefs().edit().putBoolean("chat_lock_" + key(account, dialogId), locked).apply();
++        if (locked) {
++            unlocked.add(key(account, dialogId));
++        }
++    }
++
++    /** LaunchActivity.onPause: every locked chat locks again. */
++    public static void lockAll() {
++        unlocked.clear();
++    }
++
++    /** ChatActivity.createView: covers the chat until the owner confirms. */
++    public static void attach(int account, long dialogId, View fragmentView) {
++        if (!(fragmentView instanceof ViewGroup) || !isLocked(account, dialogId) || unlocked.contains(key(account, dialogId))) {
++            return;
++        }
++        Context context = fragmentView.getContext();
++        FrameLayout cover = new FrameLayout(context);
++        cover.setBackgroundColor(0xF2101418);
++        cover.setClickable(true);
++        cover.setFocusable(true);
++        LinearLayout column = new LinearLayout(context);
++        column.setOrientation(LinearLayout.VERTICAL);
++        column.setGravity(Gravity.CENTER_HORIZONTAL);
++        TextView lock = new TextView(context);
++        lock.setText("🔒");
++        lock.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 48);
++        lock.setGravity(Gravity.CENTER);
++        column.addView(lock, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL));
++        TextView title = new TextView(context);
++        title.setText(VoidGram.t("Чат заблокирован", "Chat locked"));
++        title.setTextColor(Color.WHITE);
++        title.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 18);
++        title.setTypeface(AndroidUtilities.bold());
++        title.setGravity(Gravity.CENTER);
++        column.addView(title, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL, 0, 12, 0, 0));
++        TextView button = new TextView(context);
++        button.setText(VoidGram.t("Разблокировать", "Unlock"));
++        button.setTextColor(Color.WHITE);
++        button.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
++        button.setGravity(Gravity.CENTER);
++        button.setPadding(AndroidUtilities.dp(24), AndroidUtilities.dp(10), AndroidUtilities.dp(24), AndroidUtilities.dp(10));
++        android.graphics.drawable.GradientDrawable background = new android.graphics.drawable.GradientDrawable();
++        background.setCornerRadius(AndroidUtilities.dp(20));
++        background.setColor(0xFF3A7BFF);
++        button.setBackground(background);
++        column.addView(button, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL, 0, 20, 0, 0));
++        cover.addView(column, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER));
++        Runnable open = () -> VoidGramHiddenChats.authenticateFresh(() -> {
++            unlocked.add(key(account, dialogId));
++            AndroidUtilities.removeFromParent(cover);
++        });
++        button.setOnClickListener(v -> open.run());
++        ((ViewGroup) fragmentView).addView(cover, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
++        AndroidUtilities.runOnUIThread(open, 350);
 +    }
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java
