@@ -134,6 +134,9 @@ for name, fill in classic_fills.items():
 # makes SpringBoard render it afresh.
 (icons / "AyuOriginalChibi.icon").rename(icons / "AyuMeiMei.icon")
 
+# Easter egg (Settings → VoidGram → More → Other): @natsuk1n_dev's music, played from the bundle.
+shutil.copy2(root / "assets/easter/NatsukinMusic.mp3", source / "submodules/TelegramUI/Resources/NatsukinMusic.mp3")
+
 for badge_name in ("ExteraBadge", "ExteraDeveloperBadge"):
     badge_src = root / "assets" / "branding" / f"{badge_name}.imageset"
     if badge_src.is_dir():

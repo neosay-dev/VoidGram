@@ -169,6 +169,91 @@ index 0de2d106..d839d3f7 100644
              link(8, .creditNeistvGitHub, "neistv", "GitHub"),
              link(8, .creditNeistvTelegram, "@neistv", "Telegram")
          ])
+diff --git a/submodules/SettingsUI/Sources/AyuNatsukinMusic.swift b/submodules/SettingsUI/Sources/AyuNatsukinMusic.swift
+new file mode 100644
+index 00000000..c291dfcf
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuNatsukinMusic.swift
+@@ -0,0 +1,79 @@
++import Foundation
++import UIKit
++import AVFoundation
++import AppBundle
++
++/// Easter egg on Settings → VoidGram → More → Other: a small, faint button at the bottom of the
++/// page that plays @natsuk1n_dev's music (NatsukinMusic.mp3 in the app bundle). A second tap stops
++/// it; leaving the page stops it too.
++final class AyuNatsukinMusicButton: UIButton, AVAudioPlayerDelegate {
++    private var player: AVAudioPlayer?
++    private let russian: Bool
++
++    init(russian: Bool) {
++        self.russian = russian
++        super.init(frame: CGRect())
++        self.titleLabel?.font = UIFont.systemFont(ofSize: 12.0, weight: .medium)
++        self.setTitleColor(UIColor.secondaryLabel, for: .normal)
++        self.backgroundColor = UIColor.tertiarySystemFill
++        self.contentEdgeInsets = UIEdgeInsets(top: 5.0, left: 10.0, bottom: 5.0, right: 10.0)
++        self.layer.cornerRadius = 12.0
++        self.layer.cornerCurve = .continuous
++        self.alpha = 0.35
++        self.accessibilityHint = russian ? "Включает или останавливает песню" : "Plays or stops the song"
++        self.addTarget(self, action: #selector(self.pressed), for: .touchUpInside)
++        self.updateTitle()
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    deinit {
++        self.player?.stop()
++    }
++
++    private var isPlaying: Bool {
++        return self.player?.isPlaying ?? false
++    }
++
++    private func updateTitle() {
++        let base = self.russian ? "музыка @natsuk1n_dev-а" : "@natsuk1n_dev's music"
++        self.setTitle((self.isPlaying ? "■ " : "♪ ") + base, for: .normal)
++        self.sizeToFit()
++        UIView.animate(withDuration: 0.2, animations: {
++            self.alpha = self.isPlaying ? 0.7 : 0.35
++        })
++    }
++
++    @objc private func pressed() {
++        if self.isPlaying {
++            self.stop()
++            return
++        }
++        if self.player == nil {
++            guard let url = getAppBundle().url(forResource: "NatsukinMusic", withExtension: "mp3") ?? Bundle.main.url(forResource: "NatsukinMusic", withExtension: "mp3"), let player = try? AVAudioPlayer(contentsOf: url) else {
++                return
++            }
++            player.delegate = self
++            player.prepareToPlay()
++            self.player = player
++        }
++        // Heard with the silent switch on, alongside whatever else plays.
++        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
++        try? AVAudioSession.sharedInstance().setActive(true)
++        self.player?.currentTime = 0.0
++        self.player?.play()
++        UIImpactFeedbackGenerator(style: .light).impactOccurred()
++        self.updateTitle()
++    }
++
++    func stop() {
++        self.player?.stop()
++        self.updateTitle()
++    }
++
++    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
++        self.updateTitle()
++    }
++}
 diff --git a/submodules/SettingsUI/Sources/AyuPlayerNightLookController.swift b/submodules/SettingsUI/Sources/AyuPlayerNightLookController.swift
 new file mode 100644
 index 00000000..39617320
@@ -499,6 +584,33 @@ index 00000000..4f5ef8ec
 +    }
 +    return ItemListController(context: context, state: signal)
 +}
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
+index a19e4727..e0cecf8e 100644
+--- a/submodules/SettingsUI/Sources/AyuSettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
+@@ -144,6 +144,22 @@ func ayuOtherSettingsController(context: AccountContext, navigation: NavigationC
+     }
+     let controller = ItemListController(context: context, state: signal)
+     present = { [weak controller] in controller?.present($0, in: .window(.root)) }
++    // Easter egg: a small, faint button at the bottom plays @natsuk1n_dev's music.
++    let music = AyuNatsukinMusicButton(russian: context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru"))
++    music.autoresizingMask = [.flexibleLeftMargin, .flexibleRightMargin, .flexibleTopMargin]
++    controller.didAppear = { [weak controller] _ in
++        guard let controller else { return }
++        if music.superview == nil {
++            controller.view.addSubview(music)
++        }
++        music.sizeToFit()
++        let bounds = controller.view.bounds
++        music.center = CGPoint(x: bounds.midX, y: bounds.height - controller.view.safeAreaInsets.bottom - music.bounds.height / 2.0 - 16.0)
++        controller.view.bringSubviewToFront(music)
++    }
++    controller.didDisappear = { _ in
++        music.stop()
++    }
+     return controller
+ }
+ 
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsSearch.swift b/submodules/SettingsUI/Sources/AyuSettingsSearch.swift
 index 283ff405..b7ef9371 100644
 --- a/submodules/SettingsUI/Sources/AyuSettingsSearch.swift

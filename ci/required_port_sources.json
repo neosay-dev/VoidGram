@@ -272,5 +272,7 @@
   "submodules/TelegramUI/Sources/AyuUserLyrics.swift",
   "submodules/TelegramUIPreferences/Sources/AyuPowerSaving.swift",
   "submodules/SettingsUI/Sources/AyuPlayerNightLookController.swift",
-  "submodules/TelegramUIPreferences/Sources/AyuPlayerNightLook.swift"
+  "submodules/TelegramUIPreferences/Sources/AyuPlayerNightLook.swift",
+  "submodules/SettingsUI/Sources/AyuNatsukinMusic.swift",
+  "submodules/TelegramUI/Resources/NatsukinMusic.mp3"
 ]
