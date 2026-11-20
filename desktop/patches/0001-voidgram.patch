@@ -47923,6 +47923,20 @@ index 6178f5d..c92a0d9 100644
  		.longAppName = QCoreApplication::applicationName(),
  		.displayAppName = AppName.utf16(),
  		.displayAppDescription = AppName.utf16(),
+diff --git a/Telegram/SourceFiles/core/core_settings.h b/Telegram/SourceFiles/core/core_settings.h
+index a3fd048..182521c 100644
+--- a/Telegram/SourceFiles/core/core_settings.h
++++ b/Telegram/SourceFiles/core/core_settings.h
+@@ -668,7 +668,8 @@ public:
+ 	}
+ 	void setTabbedSelectorSectionEnabled(bool enabled);
+ 	[[nodiscard]] bool thirdSectionInfoEnabled() const {
+-		return _thirdSectionInfoEnabled;
++		// VoidGram: a profile opens in place of the chat, as a pushed screen on iOS, never in a third column.
++		return false;
+ 	}
+ 	void setThirdSectionInfoEnabled(bool enabled);
+ 	[[nodiscard]] rpl::producer<bool> thirdSectionInfoEnabledValue() const;
 diff --git a/Telegram/SourceFiles/core/crash_report_window.cpp b/Telegram/SourceFiles/core/crash_report_window.cpp
 index 12298a1..4e4dcfa 100644
 --- a/Telegram/SourceFiles/core/crash_report_window.cpp
@@ -48079,8 +48093,85 @@ index e0e294e..61d6af9 100644
  	}
  	return rpl::single(Data::StarsRating());
  }
+diff --git a/Telegram/SourceFiles/dialogs/dialogs.style b/Telegram/SourceFiles/dialogs/dialogs.style
+index 5dcfae3..2517e28 100644
+--- a/Telegram/SourceFiles/dialogs/dialogs.style
++++ b/Telegram/SourceFiles/dialogs/dialogs.style
+@@ -75,46 +75,52 @@ infoForumTopicIcon: ForumTopicIcon {
+ 	textTop: 4px;
+ }
+ 
+-dialogsUnreadFont: font(12px bold);
+-dialogsUnreadHeight: 19px;
+-dialogsUnreadPadding: 5px;
++dialogsUnreadFont: font(12px semibold);
++dialogsUnreadHeight: 20px;
++dialogsUnreadPadding: 6px;
+ 
+ dialogsRipple: RippleAnimation(defaultRippleAnimation) {
+ 	color: dialogsRippleBg;
+ }
+ 
+-dialogsTextFont: normalFont;
+-dialogsTextStyle: defaultTextStyle;
+-dialogsDateFont: font(13px);
++dialogsTextFont: font(15px);
++// VoidGram: Telegram iOS chat list metrics (ChatListItem): text 15, name 16 semibold, date 14.
++dialogsTextStyle: TextStyle(defaultTextStyle) {
++	font: font(15px);
++}
++dialogsNameStyle: TextStyle(semiboldTextStyle) {
++	font: font(16px semibold);
++}
++dialogsDateFont: font(14px);
+ dialogsDateSkip: 5px;
+ 
+-dialogsRowHeight: 62px;
++dialogsRowHeight: 76px;
+ dialogsFilterPadding: point(7px, 7px);
+ dialogsFilterSkip: 4px;
+ 
+ defaultDialogRow: DialogRow {
+ 	height: dialogsRowHeight;
+-	padding: margins(10px, 8px, 10px, 8px);
+-	photoSize: 46px;
+-	nameLeft: 68px;
+-	nameTop: 10px;
+-	textLeft: 68px;
+-	textTop: 34px;
++	padding: margins(10px, 8px, 16px, 8px);
++	photoSize: 60px;
++	nameLeft: 80px;
++	nameTop: 12px;
++	textLeft: 80px;
++	textTop: 38px;
+ }
+ communityRequestableListItem: PeerListItem(defaultPeerListItem) {
+-	height: dialogsRowHeight;            // == st::defaultDialogRow.height (62px)
+-	photoSize: 46px;                     // == st::defaultDialogRow.photoSize
++	height: dialogsRowHeight;            // == st::defaultDialogRow.height (76px)
++	photoSize: 60px;                     // == st::defaultDialogRow.photoSize
+ 	photoPosition: point(10px, 8px);     // == st::defaultDialogRow.padding left/top (10,8)
+-	namePosition: point(68px, 10px);     // == st::defaultDialogRow.nameLeft / nameTop
+-	statusPosition: point(68px, 34px);   // == st::defaultDialogRow.textLeft / textTop
++	namePosition: point(80px, 12px);     // == st::defaultDialogRow.nameLeft / nameTop
++	statusPosition: point(80px, 38px);   // == st::defaultDialogRow.textLeft / textTop
+ }
+ communityRequestableList: PeerList(defaultPeerList) {
+ 	item: communityRequestableListItem;
+ }
+ taggedDialogRow: DialogRow(defaultDialogRow) {
+-	height: 72px;
+-	textTop: 30px;
+-	tagTop: 52px;
++	height: 90px;
++	textTop: 38px;
++	tagTop: 64px;
+ }
+ forumDialogRow: DialogRow(defaultDialogRow) {
+ 	height: 80px;
 diff --git a/Telegram/SourceFiles/dialogs/dialogs_entry.cpp b/Telegram/SourceFiles/dialogs/dialogs_entry.cpp
-index 1eb99ad..fef28c6 100644
+index 1eb99ad..a2b728e 100644
 --- a/Telegram/SourceFiles/dialogs/dialogs_entry.cpp
 +++ b/Telegram/SourceFiles/dialogs/dialogs_entry.cpp
 @@ -27,6 +27,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
@@ -48104,12 +48195,12 @@ index 1eb99ad..fef28c6 100644
 +			: nullptr;
  		_chatListNameText.setText(
 -			st::semiboldTextStyle,
-+			VoidGram::StyledTextStyle(st::semiboldTextStyle, voidStyle),
++			VoidGram::StyledTextStyle(st::dialogsNameStyle, voidStyle),
  			chatListName(),
  			Ui::NameTextOptions());
  	}
 diff --git a/Telegram/SourceFiles/dialogs/ui/dialogs_layout.cpp b/Telegram/SourceFiles/dialogs/ui/dialogs_layout.cpp
-index 855c500..d956199 100644
+index 855c500..6a243f1 100644
 --- a/Telegram/SourceFiles/dialogs/ui/dialogs_layout.cpp
 +++ b/Telegram/SourceFiles/dialogs/ui/dialogs_layout.cpp
 @@ -50,6 +50,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
@@ -48121,6 +48212,48 @@ index 855c500..d956199 100644
  
  // AyuGram includes
  #include "ayu/features/filters/filters_controller.h"
+@@ -107,7 +109,7 @@ void PaintRowTopRight(
+ 		: st::dialogsDateFg);
+ 	p.drawText(
+ 		rectForName.left() + rectForName.width() + st::dialogsDateSkip,
+-		rectForName.top() + st::semiboldFont->height - st::normalFont->descent,
++		rectForName.top() + st::dialogsNameStyle.font->height - st::normalFont->descent,
+ 		text);
+ }
+ 
+@@ -576,7 +578,7 @@ void PaintRow(
+ 		nameleft,
+ 		context.st->nameTop,
+ 		namewidth,
+-		st::semiboldFont->height);
++		st::dialogsNameStyle.font->height);
+ 
+ 	const auto promoted = (history && history->useTopPromotion())
+ 		&& !context.search;
+@@ -874,7 +876,7 @@ void PaintRow(
+ 		sendStateIcon->paint(p, rectForName.topLeft() + QPoint(rectForName.width(), 0), context.width);
+ 	}
+ 
+-	p.setFont(st::semiboldFont);
++	p.setFont(st::dialogsNameStyle.font);
+ 	const auto paintPeerBadge = [&](int rowNameWidth) {
+ 		const auto badgeWidth = rowBadge.drawGetWidth(p, {
+ 			.peer = from,
+@@ -934,12 +936,12 @@ void PaintRow(
+ 			: (flags & Flag::MyNotes)
+ 			? tr::lng_my_notes(tr::now)
+ 			: tr::lng_hidden_author_messages(tr::now);
+-		const auto textWidth = st::semiboldFont->width(text);
++		const auto textWidth = st::dialogsNameStyle.font->width(text);
+ 		if (!context.search && (flags & Flag::VerifyCodes)) {
+ 			paintPeerBadge(textWidth);
+ 		}
+ 		if (textWidth > rectForName.width()) {
+-			text = st::semiboldFont->elided(text, rectForName.width());
++			text = st::dialogsNameStyle.font->elided(text, rectForName.width());
+ 		}
+ 		p.setPen(context.active
+ 			? st::dialogsNameFgActive
 @@ -976,6 +978,36 @@ void PaintRow(
  			: context.selected
  			? st::dialogsNameFgOver
@@ -48158,6 +48291,32 @@ index 855c500..d956199 100644
  		rowName.draw(p, {
  			.position = rectForName.topLeft(),
  			.availableWidth = rectForName.width(),
+@@ -994,7 +1026,7 @@ void PaintRow(
+ 				+ badgeWidth
+ 				+ st::dialogsMuteIconSkip;
+ 			const auto muteTop = rectForName.top()
+-				+ (st::semiboldFont->height - muteIcon.height()) / 2;
++				+ (st::dialogsNameStyle.font->height - muteIcon.height()) / 2;
+ 			muteIcon.paint(p, muteLeft, muteTop, context.width);
+ 		}
+ 	} else if (hiddenSenderInfo) {
+@@ -1446,14 +1478,14 @@ void PaintCollapsedRow(
+ 
+ 	const auto unreadTop = (st::dialogsImportantBarHeight - st::dialogsUnreadHeight) / 2;
+ 	if (!context.narrow || !folder) {
+-		p.setFont(st::semiboldFont);
++		p.setFont(st::dialogsNameStyle.font);
+ 		p.setPen(st::dialogsNameFg);
+ 
+ 		const auto textBaseline = unreadTop
+ 			+ (st::dialogsUnreadHeight - st::dialogsUnreadFont->height) / 2
+ 			+ st::dialogsUnreadFont->ascent;
+ 		const auto left = context.narrow
+-			? ((context.width - st::semiboldFont->width(text)) / 2)
++			? ((context.width - st::dialogsNameStyle.font->width(text)) / 2)
+ 			: st::dialogsTopBarLeftPadding;
+ 			// : context.st->padding.left();
+ 		p.drawText(left, textBaseline, text);
 diff --git a/Telegram/SourceFiles/export/output/export_output_html.cpp b/Telegram/SourceFiles/export/output/export_output_html.cpp
 index 37c59e8..52e0a2e 100644
 --- a/Telegram/SourceFiles/export/output/export_output_html.cpp
@@ -48642,7 +48801,7 @@ index 40cc5e2..8b38ffd 100644
  	});
  }
 diff --git a/Telegram/SourceFiles/mainwidget.cpp b/Telegram/SourceFiles/mainwidget.cpp
-index 96cf0ba..fe28551 100644
+index 96cf0ba..5c2135e 100644
 --- a/Telegram/SourceFiles/mainwidget.cpp
 +++ b/Telegram/SourceFiles/mainwidget.cpp
 @@ -105,6 +105,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
@@ -48654,12 +48813,14 @@ index 96cf0ba..fe28551 100644
  
  
  namespace {
-@@ -292,6 +294,8 @@ MainWidget::MainWidget(
+@@ -292,6 +294,10 @@ MainWidget::MainWidget(
  	if (_dialogs) {
  		setupConnectingWidget();
  	}
 +	VoidGram::AttachEffects(this);
-+	VoidGram::InstallLiquidGlass();
++	// Liquid Glass stays off until the chat's top bar and composer are capsules over the messages, as in the
++	// redesign mockup: under every icon button on a flat panel it was only a grey circle.
++	// VoidGram::InstallLiquidGlass();
  
  	_history->cancelRequests(
  	) | rpl::on_next([=] {
@@ -48690,6 +48851,174 @@ index 13db856..d21de7a 100644
  	}());
  
  	LOG(("App ID: %1").arg(QGuiApplication::desktopFileName()));
+diff --git a/Telegram/SourceFiles/settings/sections/settings_main.cpp b/Telegram/SourceFiles/settings/sections/settings_main.cpp
+index 8b962d5..168be70 100644
+--- a/Telegram/SourceFiles/settings/sections/settings_main.cpp
++++ b/Telegram/SourceFiles/settings/sections/settings_main.cpp
+@@ -404,7 +404,7 @@ void BuildSectionButtons(SectionBuilder &builder) {
+ 		builder.addSectionButton({
+ 			.title = tr::lng_settings_my_account(),
+ 			.targetSection = InformationId(),
+-			.icon = { &st::menuIconProfile },
++			.icon = { &st::vgTileProfile, IconType::Rounded, &st::vgTileRed },
+ 			.keywords = { u"profile"_q, u"edit"_q, u"information"_q },
+ 		});
+ 	}
+@@ -412,21 +412,21 @@ void BuildSectionButtons(SectionBuilder &builder) {
+ 	builder.addSectionButton({
+ 		.title = tr::lng_settings_section_notify(),
+ 		.targetSection = NotificationsId(),
+-		.icon = { &st::menuIconNotifications },
++		.icon = { &st::vgTileNotifications, IconType::Rounded, &st::vgTileRed },
+ 		.keywords = { u"alerts"_q, u"sounds"_q, u"badge"_q },
+ 	});
+ 
+ 	builder.addSectionButton({
+ 		.title = tr::lng_settings_section_privacy(),
+ 		.targetSection = PrivacySecurityId(),
+-		.icon = { &st::menuIconLock },
++		.icon = { &st::vgTileLock, IconType::Rounded, &st::vgTileGray },
+ 		.keywords = { u"security"_q, u"passcode"_q, u"password"_q, u"2fa"_q },
+ 	});
+ 
+ 	builder.addSectionButton({
+ 		.title = tr::lng_settings_section_chat_settings(),
+ 		.targetSection = ChatId(),
+-		.icon = { &st::menuIconChatBubble },
++		.icon = { &st::vgTileChat, IconType::Rounded, &st::vgTileLightBlue },
+ 		.keywords = { u"themes"_q, u"appearance"_q, u"stickers"_q },
+ 	});
+ 
+@@ -457,7 +457,7 @@ void BuildSectionButtons(SectionBuilder &builder) {
+ 
+ 		builder.addButton({
+ 			.title = tr::lng_settings_section_filters(),
+-			.icon = { &st::menuIconShowInFolder },
++			.icon = { &st::vgTileFolders, IconType::Rounded, &st::vgTileLightBlue },
+ 			.onClick = [=] { showOther(FoldersId()); },
+ 			.keywords = { u"filters"_q, u"tabs"_q },
+ 			.shown = std::move(shownProducer),
+@@ -467,21 +467,21 @@ void BuildSectionButtons(SectionBuilder &builder) {
+ 	builder.addSectionButton({
+ 		.title = tr::lng_settings_advanced(),
+ 		.targetSection = AdvancedId(),
+-		.icon = { &st::menuIconManage },
++		.icon = { &st::vgTileManage, IconType::Rounded, &st::vgTileGray },
+ 		.keywords = { u"performance"_q, u"proxy"_q, u"experimental"_q },
+ 	});
+ 
+ 	builder.addSectionButton({
+ 		.title = tr::lng_settings_section_devices(),
+ 		.targetSection = CallsId(),
+-		.icon = { &st::menuIconUnmute },
++		.icon = { &st::vgTileSound, IconType::Rounded, &st::vgTileGreen },
+ 		.keywords = { u"sessions"_q, u"calls"_q },
+ 	});
+ 
+ 	builder.addButton({
+ 		.id = u"main/power"_q,
+ 		.title = tr::lng_settings_power_menu(),
+-		.icon = { &st::menuIconPowerUsage },
++		.icon = { &st::vgTilePower, IconType::Rounded, &st::vgTileOrange },
+ 		.onClick = [=] {
+ 			controller->show(Box(PowerSavingBox, PowerSaving::Flags()));
+ 		},
+@@ -491,7 +491,7 @@ void BuildSectionButtons(SectionBuilder &builder) {
+ 	builder.addButton({
+ 		.id = u"main/language"_q,
+ 		.title = tr::lng_settings_language(),
+-		.icon = { &st::menuIconTranslate },
++		.icon = { &st::vgTileLanguage, IconType::Rounded, &st::vgTilePurple },
+ 		.label = rpl::single(
+ 			Lang::GetInstance().id()
+ 		) | rpl::then(
+@@ -590,7 +590,7 @@ void BuildPremiumSection(SectionBuilder &builder) {
+ 	builder.addButton({
+ 		.id = u"main/business"_q,
+ 		.title = tr::lng_business_title(),
+-		.icon = { .icon = &st::menuIconShop },
++		.icon = { .icon = &st::vgTileShop, .type = IconType::Rounded, .background = &st::vgTilePurple },
+ 		.onClick = [=] { showOther(BusinessId()); },
+ 		.keywords = { u"work"_q, u"company"_q },
+ 	});
+@@ -599,7 +599,7 @@ void BuildPremiumSection(SectionBuilder &builder) {
+ 		builder.addButton({
+ 			.id = u"main/send-gift"_q,
+ 			.title = tr::lng_settings_gift_premium(),
+-			.icon = { .icon = &st::menuIconGiftPremium, .newBadge = true },
++			.icon = { .icon = &st::vgTileGift, .type = IconType::Rounded, .background = &st::vgTileRed, .newBadge = true },
+ 			.onClick = [=] { Ui::ChooseStarGiftRecipient(controller); },
+ 			.keywords = { u"present"_q, u"send"_q },
+ 		});
+@@ -616,7 +616,7 @@ void BuildHelpSection(SectionBuilder &builder) {
+ 	builder.addButton({
+ 		.id = u"main/faq"_q,
+ 		.title = tr::lng_settings_faq(),
+-		.icon = { &st::menuIconFaq },
++		.icon = { &st::vgTileFaq, IconType::Rounded, &st::vgTileLightBlue },
+ 		.onClick = [=] { OpenFaq(controller); },
+ 		.keywords = { u"help"_q, u"support"_q, u"questions"_q },
+ 	});
+@@ -624,7 +624,7 @@ void BuildHelpSection(SectionBuilder &builder) {
+ 	builder.addButton({
+ 		.id = u"main/features"_q,
+ 		.title = tr::lng_settings_features(),
+-		.icon = { &st::menuIconEmojiObjects },
++		.icon = { &st::vgTileFeatures, IconType::Rounded, &st::vgTileOrange },
+ 		.onClick = [] {
+ 			UrlClickHandler::Open(tr::lng_telegram_features_url(tr::now));
+ 		},
+@@ -634,7 +634,7 @@ void BuildHelpSection(SectionBuilder &builder) {
+ 	builder.addButton({
+ 		.id = u"main/ask-question"_q,
+ 		.title = tr::lng_settings_ask_question(),
+-		.icon = { &st::menuIconDiscussion },
++		.icon = { &st::vgTileDiscussion, IconType::Rounded, &st::vgTileBlue },
+ 		.onClick = [=] { OpenAskQuestionConfirm(controller); },
+ 		.keywords = { u"contact"_q, u"feedback"_q },
+ 	});
+@@ -819,7 +819,7 @@ const auto kMeta = BuildHelper({
+ 			.id = u"main/profile-photo"_q,
+ 			.title = tr::lng_profile_set_photo_for(tr::now),
+ 			.keywords = { u"photo"_q, u"avatar"_q, u"picture"_q, u"profile"_q },
+-			.icon = { &st::menuIconProfile },
++			.icon = { &st::vgTileProfile, IconType::Rounded, &st::vgTileRed },
+ 			.deeplink = u"tg://settings/profile-photo"_q,
+ 		};
+ 	});
+diff --git a/Telegram/SourceFiles/settings/settings.style b/Telegram/SourceFiles/settings/settings.style
+index 904ac84..46854ca 100644
+--- a/Telegram/SourceFiles/settings/settings.style
++++ b/Telegram/SourceFiles/settings/settings.style
+@@ -755,3 +755,28 @@ detailedSettingsButtonStyle: DetailedSettingsButtonStyle {
+ }
+ 
+ settingsToastStarIcon: icon {{ "toast/star", toastFg }};
++
++// VoidGram: Telegram iOS settings tiles (PresentationResourcesSettings): a white glyph on the row's colour.
++// Colours: the palette's own settings icon backgrounds (closest to iOS's red, green, orange, light blue, blue, purple, grey).
++vgTileRed: settingsIconBg1;
++vgTileGreen: settingsIconBg2;
++vgTileOrange: settingsIconBg3;
++vgTileLightBlue: settingsIconBg4;
++vgTileBlue: settingsIconBg5;
++vgTilePurple: settingsIconBg6;
++vgTileGray: settingsIconBgArchive;
++vgTileFg: settingsIconFg;
++vgTileProfile: icon {{ "menu/profile", vgTileFg }};
++vgTileNotifications: icon {{ "menu/info_notifications", vgTileFg }};
++vgTileLock: icon {{ "menu/lock", vgTileFg }};
++vgTileChat: icon {{ "menu/chat_bubble", vgTileFg }};
++vgTileFolders: icon {{ "menu/show_in_folder", vgTileFg }};
++vgTileManage: icon {{ "menu/manage", vgTileFg }};
++vgTileSound: icon {{ "menu/unmute", vgTileFg }};
++vgTilePower: icon {{ "menu/power_usage", vgTileFg }};
++vgTileLanguage: icon {{ "menu/translate", vgTileFg }};
++vgTileFaq: icon {{ "menu/faq", vgTileFg }};
++vgTileDiscussion: icon {{ "menu/discussion", vgTileFg }};
++vgTileFeatures: icon {{ "emoji/emoji_objects", vgTileFg }};
++vgTileGift: icon {{ "menu/gift_premium", vgTileFg }};
++vgTileShop: icon {{ "menu/shop", vgTileFg }};
 diff --git a/Telegram/SourceFiles/tray.cpp b/Telegram/SourceFiles/tray.cpp
 index 3ea2e08..1d080fa 100644
 --- a/Telegram/SourceFiles/tray.cpp
