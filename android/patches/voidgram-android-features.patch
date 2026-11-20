@@ -4222,11 +4222,189 @@ index 0000000..20f36d4
 +        return result;
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramTranslate.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramTranslate.java
+new file mode 100644
+index 0000000..5266ca5
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramTranslate.java
+@@ -0,0 +1,161 @@
++package org.telegram.messenger.voidgram;
++
++import android.net.Uri;
++
++import org.json.JSONArray;
++import org.json.JSONObject;
++import org.telegram.messenger.DialogObject;
++import org.telegram.messenger.MessagesStorage;
++import org.telegram.messenger.UserConfig;
++import org.telegram.messenger.Utilities;
++import org.telegram.tgnet.RequestDelegate;
++import org.telegram.tgnet.RequestDelegateTimestamp;
++import org.telegram.tgnet.TLObject;
++import org.telegram.tgnet.TLRPC;
++
++import java.io.ByteArrayOutputStream;
++import java.io.InputStream;
++import java.io.OutputStream;
++import java.net.HttpURLConnection;
++import java.net.URL;
++
++/**
++ * VoidGram translation provider, as on iOS: Telegram's own translation (Premium on the server), or
++ * Google Translate / a LibreTranslate server, for every place the app translates. Formatting of
++ * translated text is plain.
++ */
++public final class VoidGramTranslate {
++    public static final String[] PROVIDERS = {"telegram", "google", "libre"};
++
++    private VoidGramTranslate() {
++    }
++
++    public static String provider() {
++        return VoidGramDecoy.isActive() ? "telegram" : VoidGram.prefs().getString("translate_provider", "telegram");
++    }
++
++    public static void setProvider(String value) {
++        VoidGram.prefs().edit().putString("translate_provider", value).apply();
++    }
++
++    public static String libreUrl() {
++        return VoidGram.prefs().getString("translate_libre_url", "https://libretranslate.com");
++    }
++
++    public static void setLibreUrl(String value) {
++        VoidGram.prefs().edit().putString("translate_libre_url", value == null ? "" : value.trim()).apply();
++    }
++
++    public static String providerTitle(String provider) {
++        switch (provider) {
++            case "google": return "Google Translate";
++            case "libre": return "LibreTranslate";
++            default: return VoidGram.t("Telegram (как обычно)", "Telegram (as usual)");
++        }
++    }
++
++    /** Answers `messages.translateText` itself when another provider is chosen; false: send as usual. */
++    public static boolean intercept(TLObject object, RequestDelegate onComplete, RequestDelegateTimestamp onCompleteTimestamp) {
++        if (!(object instanceof TLRPC.TL_messages_translateText) || "telegram".equals(provider())) {
++            return false;
++        }
++        final TLRPC.TL_messages_translateText req = (TLRPC.TL_messages_translateText) object;
++        final int account = UserConfig.selectedAccount;
++        Utilities.globalQueue.postRunnable(() -> {
++            TLRPC.TL_messages_translateResult result = new TLRPC.TL_messages_translateResult();
++            TLRPC.TL_error error = null;
++            try {
++                if (req.text != null && !req.text.isEmpty()) {
++                    for (TLRPC.TL_textWithEntities text : req.text) {
++                        result.result.add(plain(translate(text.text, req.to_lang)));
++                    }
++                } else if (req.id != null && !req.id.isEmpty() && req.peer != null) {
++                    long dialogId = DialogObject.getPeerDialogId(req.peer);
++                    for (Integer id : req.id) {
++                        TLRPC.Message message = MessagesStorage.getInstance(account).getMessage(dialogId, id);
++                        result.result.add(plain(translate(message != null && message.message != null ? message.message : "", req.to_lang)));
++                    }
++                }
++            } catch (Throwable e) {
++                error = new TLRPC.TL_error();
++                error.code = 400;
++                error.text = "TRANSLATION_FAILED";
++            }
++            final TLObject response = error == null ? result : null;
++            final TLRPC.TL_error finalError = error;
++            Utilities.stageQueue.postRunnable(() -> {
++                if (onComplete != null) {
++                    onComplete.run(response, finalError);
++                }
++                if (onCompleteTimestamp != null) {
++                    onCompleteTimestamp.run(response, finalError, System.currentTimeMillis());
++                }
++            });
++        });
++        return true;
++    }
++
++    private static TLRPC.TL_textWithEntities plain(String text) {
++        TLRPC.TL_textWithEntities result = new TLRPC.TL_textWithEntities();
++        result.text = text == null ? "" : text;
++        return result;
++    }
++
++    private static String translate(String text, String to) throws Exception {
++        if (text == null || text.trim().isEmpty()) {
++            return text;
++        }
++        String target = to == null || to.isEmpty() ? "en" : to;
++        if ("libre".equals(provider())) {
++            String base = libreUrl().endsWith("/") ? libreUrl().substring(0, libreUrl().length() - 1) : libreUrl();
++            JSONObject body = new JSONObject();
++            body.put("q", text);
++            body.put("source", "auto");
++            body.put("target", target);
++            body.put("format", "text");
++            JSONObject json = new JSONObject(request(base + "/translate", body.toString()));
++            return json.optString("translatedText", text);
++        }
++        String url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&dt=t&tl=" + Uri.encode(target) + "&q=" + Uri.encode(text);
++        JSONArray parts = new JSONArray(request(url, null)).getJSONArray(0);
++        StringBuilder builder = new StringBuilder();
++        for (int i = 0; i < parts.length(); i++) {
++            JSONArray part = parts.optJSONArray(i);
++            if (part != null && !part.isNull(0)) {
++                builder.append(part.getString(0));
++            }
++        }
++        return builder.toString();
++    }
++
++    private static String request(String url, String postJson) throws Exception {
++        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
++        try {
++            connection.setConnectTimeout(10000);
++            connection.setReadTimeout(15000);
++            connection.setRequestProperty("User-Agent", "Mozilla/5.0 VoidGram");
++            if (postJson != null) {
++                connection.setRequestMethod("POST");
++                connection.setDoOutput(true);
++                connection.setRequestProperty("Content-Type", "application/json");
++                try (OutputStream out = connection.getOutputStream()) {
++                    out.write(postJson.getBytes("UTF-8"));
++                }
++            }
++            if (connection.getResponseCode() != 200) {
++                throw new Exception("HTTP " + connection.getResponseCode());
++            }
++            try (InputStream in = connection.getInputStream()) {
++                ByteArrayOutputStream output = new ByteArrayOutputStream();
++                byte[] buffer = new byte[16384];
++                int count;
++                while ((count = in.read(buffer)) > 0) {
++                    output.write(buffer, 0, count);
++                }
++                return output.toString("UTF-8");
++            }
++        } finally {
++            connection.disconnect();
++        }
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java b/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java
-index ab54ee3..995933f 100644
+index ab54ee3..edc83e0 100644
 --- a/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java
 +++ b/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java
-@@ -712,6 +712,8 @@ public class ConnectionsManager extends BaseController {
+@@ -413,6 +413,10 @@ public class ConnectionsManager extends BaseController {
+ 
+     public int sendRequest(final TLObject object, final RequestDelegate onComplete, final RequestDelegateTimestamp onCompleteTimestamp, final QuickAckDelegate onQuickAck, final WriteToSocketDelegate onWriteToSocket, final int flags, final int datacenterId, final int connectionType, final boolean immediate) {
+         final int requestToken = lastRequestToken.getAndIncrement();
++        // VoidGram: translation through the provider chosen in VoidGram → Chats.
++        if (org.telegram.messenger.voidgram.VoidGramTranslate.intercept(object, onComplete, onCompleteTimestamp)) {
++            return requestToken;
++        }
+         Utilities.stageQueue.postRunnable(() -> {
+             sendRequestInternal(object, onComplete, onCompleteTimestamp, onQuickAck, onWriteToSocket, flags, datacenterId, connectionType, immediate, requestToken);
+         });
+@@ -712,6 +716,8 @@ public class ConnectionsManager extends BaseController {
              packageId = "";
          }
  
@@ -4235,7 +4413,7 @@ index ab54ee3..995933f 100644
          native_init(currentAccount, version, layer, apiId, deviceModel, systemVersion, appVersion, langCode, systemLangCode, configPath, logPath, regId, cFingerprint, installer, packageId, timezoneOffset, userId, userPremium, enablePushConnection, ApplicationLoader.isNetworkOnline(), ApplicationLoader.getCurrentNetworkType(), SharedConfig.measureDevicePerformanceClass());
          checkConnection();
      }
-@@ -1026,6 +1028,8 @@ public class ConnectionsManager extends BaseController {
+@@ -1026,6 +1032,8 @@ public class ConnectionsManager extends BaseController {
      public static native int native_isTestBackend(int currentAccount);
      public static native void native_pauseNetwork(int currentAccount);
      public static native void native_setIpStrategy(int currentAccount, byte value);
@@ -4743,10 +4921,10 @@ index e2b917b..fa850e0 100644
                  break;
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java
 new file mode 100644
-index 0000000..02b7ee1
+index 0000000..2eaf60e
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,137 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.view.View;
@@ -4772,6 +4950,8 @@ index 0000000..02b7ee1
 +    private static final int ID_CONFIRM_GIFS = 9;
 +    private static final int ID_PREVIEW_VOICE = 10;
 +    private static final int ID_QUICK_STICKER = 11;
++    private static final int ID_TRANSLATE_BASE = 20;
++    private static final int ID_LIBRE_URL = 30;
 +
 +    @Override
 +    protected CharSequence getTitle() {
@@ -4795,6 +4975,16 @@ index 0000000..02b7ee1
 +        items.add(UItem.asButton(ID_FILTERS_EDIT, VoidGram.t("Шаблоны", "Patterns"), String.valueOf(org.telegram.messenger.voidgram.VoidGramFilters.count())));
 +        items.add(UItem.asCheck(ID_FILTERS_OWN, VoidGram.t("И мои сообщения", "My messages too")).setChecked(org.telegram.messenger.voidgram.VoidGramFilters.ownMessages()));
 +        items.add(UItem.asShadow(VoidGram.t("Регулярные выражения, по одному на строку, без учёта регистра. Сообщения не удаляются — просто не показываются.", "Regular expressions, one per line, case-insensitive. Messages are not deleted, just not shown.")));
++        items.add(UItem.asHeader(VoidGram.t("Перевод", "Translation")));
++        String provider = org.telegram.messenger.voidgram.VoidGramTranslate.provider();
++        for (int i = 0; i < org.telegram.messenger.voidgram.VoidGramTranslate.PROVIDERS.length; i++) {
++            String value = org.telegram.messenger.voidgram.VoidGramTranslate.PROVIDERS[i];
++            items.add(UItem.asRadio(ID_TRANSLATE_BASE + i, org.telegram.messenger.voidgram.VoidGramTranslate.providerTitle(value)).setChecked(value.equals(provider)));
++        }
++        if ("libre".equals(provider)) {
++            items.add(UItem.asButton(ID_LIBRE_URL, VoidGram.t("Сервер LibreTranslate", "LibreTranslate server"), org.telegram.messenger.voidgram.VoidGramTranslate.libreUrl().replace("https://", "")));
++        }
++        items.add(UItem.asShadow(VoidGram.t("Где бы приложение ни переводило текст, оно спросит выбранный сервис. Текст уходит этому сервису.", "Wherever the app translates text, it asks the chosen service. The text goes to that service.")));
 +        items.add(UItem.asHeader(VoidGram.t("Каналы", "Channels")));
 +        items.add(UItem.asCheck(ID_ADS, VoidGram.t("Скрывать рекламу", "Hide sponsored messages")).setChecked(VoidGramChats.hideAds()));
 +        items.add(UItem.asShadow(null));
@@ -4815,9 +5005,29 @@ index 0000000..02b7ee1
 +            case ID_FILTERS_EDIT: editPatterns(); return;
 +            case ID_CONFIRM_STICKERS: org.telegram.messenger.voidgram.VoidGramSending.setConfirmStickers(!org.telegram.messenger.voidgram.VoidGramSending.confirmStickers()); break;
 +            case ID_CONFIRM_GIFS: org.telegram.messenger.voidgram.VoidGramSending.setConfirmGifs(!org.telegram.messenger.voidgram.VoidGramSending.confirmGifs()); break;
++            case ID_LIBRE_URL: {
++                android.widget.EditText field = new android.widget.EditText(getContext());
++                field.setText(org.telegram.messenger.voidgram.VoidGramTranslate.libreUrl());
++                field.setTextColor(org.telegram.ui.ActionBar.Theme.getColor(org.telegram.ui.ActionBar.Theme.key_dialogTextBlack));
++                org.telegram.ui.ActionBar.AlertDialog.Builder builder = new org.telegram.ui.ActionBar.AlertDialog.Builder(getContext());
++                builder.setTitle(VoidGram.t("Сервер LibreTranslate", "LibreTranslate server"));
++                builder.setView(field);
++                builder.setPositiveButton(VoidGram.t("Сохранить", "Save"), (dialog, which) -> {
++                    org.telegram.messenger.voidgram.VoidGramTranslate.setLibreUrl(field.getText().toString());
++                    listView.adapter.update(true);
++                });
++                builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++                showDialog(builder.create());
++                return;
++            }
 +            case ID_QUICK_STICKER: VoidGramQuickSticker.setEnabled(!VoidGramQuickSticker.isEnabled()); break;
 +            case ID_PREVIEW_VOICE: org.telegram.messenger.voidgram.VoidGramSending.setPreviewVoice(!org.telegram.messenger.voidgram.VoidGramSending.previewVoice()); break;
-+            default: return;
++            default:
++                if (item.id >= ID_TRANSLATE_BASE && item.id < ID_TRANSLATE_BASE + org.telegram.messenger.voidgram.VoidGramTranslate.PROVIDERS.length) {
++                    org.telegram.messenger.voidgram.VoidGramTranslate.setProvider(org.telegram.messenger.voidgram.VoidGramTranslate.PROVIDERS[item.id - ID_TRANSLATE_BASE]);
++                    break;
++                }
++                return;
 +        }
 +        if (listView != null && listView.adapter != null) {
 +            listView.adapter.update(true);
