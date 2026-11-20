@@ -262,7 +262,7 @@ index 3a5413c..b59a1e4 100644
          int lastDec = 0;
          int KCount = 0;
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java b/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java
-index b1e2120..b7616e8 100644
+index b1e2120..546efbc 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java
 @@ -1214,6 +1214,8 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
@@ -309,7 +309,7 @@ index b1e2120..b7616e8 100644
          NotificationCenter.getInstance(messageObject.currentAccount).postNotificationName(NotificationCenter.messagePlayingDidStart, messageObject, oldMessageObject);
 +        // VoidGram: Last.fm "now playing".
 +        if (messageObject.isMusic()) {
-+            org.telegram.messenger.voidgram.VoidGramLastFm.trackChanged(messageObject.getMusicTitle(), messageObject.getMusicAuthor(), messageObject.getDuration());
++            org.telegram.messenger.voidgram.VoidGramLastFm.trackChanged(org.telegram.messenger.voidgram.VoidGramLyrics.title(messageObject), org.telegram.messenger.voidgram.VoidGramLyrics.artist(messageObject), messageObject.getDuration());
 +        }
 +        // VoidGram: beats of the track for music haptics.
 +        org.telegram.messenger.voidgram.VoidGramMusicHaptics.trackChanged(messageObject);
@@ -4677,10 +4677,10 @@ index 0000000..a8d9e68
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLyrics.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLyrics.java
 new file mode 100644
-index 0000000..4361737
+index 0000000..a20b069
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLyrics.java
-@@ -0,0 +1,471 @@
+@@ -0,0 +1,478 @@
 +package org.telegram.messenger.voidgram;
 +
 +import android.content.Context;
@@ -4757,12 +4757,19 @@ index 0000000..4361737
 +    }
 +
 +    public static String title(MessageObject messageObject) {
-+        String value = messageObject != null ? messageObject.getMusicTitle() : null;
++        if (messageObject == null) {
++            return "";
++        }
++        // Tags of the file fill in a missing title (VoidGramTrackTags).
++        String value = VoidGramTrackTags.resolve(messageObject, messageObject.getMusicTitle(), messageObject.getMusicAuthor())[0];
 +        return value != null ? value.trim() : "";
 +    }
 +
 +    public static String artist(MessageObject messageObject) {
-+        String value = messageObject != null ? messageObject.getMusicAuthor() : null;
++        if (messageObject == null) {
++            return "";
++        }
++        String value = VoidGramTrackTags.resolve(messageObject, messageObject.getMusicTitle(), messageObject.getMusicAuthor())[1];
 +        return value != null ? value.trim() : "";
 +    }
 +
@@ -6693,6 +6700,88 @@ index 0000000..20f36d4
 +        return result;
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramTrackTags.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramTrackTags.java
+new file mode 100644
+index 0000000..93fb4a5
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramTrackTags.java
+@@ -0,0 +1,76 @@
++package org.telegram.messenger.voidgram;
++
++import android.media.MediaMetadataRetriever;
++
++import org.telegram.messenger.FileLoader;
++import org.telegram.messenger.LocaleController;
++import org.telegram.messenger.MessageObject;
++import org.telegram.messenger.R;
++
++import java.io.File;
++import java.util.HashMap;
++
++/**
++ * Identifies the playing track from the file itself when Telegram's audio attributes are missing
++ * or useless, as on iOS: the embedded ID3 / MP4 tags. Results are remembered per file, so the
++ * player, lyrics and Last.fm use them from then on.
++ */
++public final class VoidGramTrackTags {
++    private VoidGramTrackTags() {
++    }
++
++    private static final HashMap<String, String[]> cache = new HashMap<>();
++
++    private static boolean useless(String value, MessageObject message) {
++        if (value == null) {
++            return true;
++        }
++        String trimmed = value.trim();
++        if (trimmed.isEmpty()) {
++            return true;
++        }
++        try {
++            if (trimmed.equals(LocaleController.getString(R.string.AudioUnknownArtist)) || trimmed.equals(LocaleController.getString(R.string.AudioUnknownTitle))) {
++                return true;
++            }
++        } catch (Throwable ignore) {
++        }
++        String name = message.getDocument() != null ? FileLoader.getDocumentFileName(message.getDocument()) : null;
++        return name != null && (trimmed.equals(name) || name.startsWith(trimmed + "."));
++    }
++
++    /** {title, artist} with tags filling in what Telegram does not know. */
++    public static String[] resolve(MessageObject message, String title, String artist) {
++        if (message == null || !useless(title, message) && !useless(artist, message)) {
++            return new String[]{title, artist};
++        }
++        File file = FileLoader.getInstance(message.currentAccount).getPathToMessage(message.messageOwner);
++        if (file == null || !file.exists()) {
++            return new String[]{title, artist};
++        }
++        String key = file.getAbsolutePath();
++        String[] tags = cache.get(key);
++        if (tags == null) {
++            tags = new String[]{null, null};
++            MediaMetadataRetriever retriever = new MediaMetadataRetriever();
++            try {
++                retriever.setDataSource(key);
++                tags[0] = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE);
++                tags[1] = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST);
++                if (tags[1] == null || tags[1].trim().isEmpty()) {
++                    tags[1] = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST);
++                }
++            } catch (Throwable ignore) {
++            } finally {
++                try {
++                    retriever.release();
++                } catch (Throwable ignore) {
++                }
++            }
++            cache.put(key, tags);
++        }
++        String resolvedTitle = useless(title, message) && tags[0] != null && !tags[0].trim().isEmpty() ? tags[0].trim() : title;
++        String resolvedArtist = useless(artist, message) && tags[1] != null && !tags[1].trim().isEmpty() ? tags[1].trim() : artist;
++        return new String[]{resolvedTitle, resolvedArtist};
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramTranscribe.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramTranscribe.java
 new file mode 100644
 index 0000000..452e814
@@ -7450,7 +7539,7 @@ index 5dc090f..3f4b262 100644
  
      void measureTime(MessageObject messageObject) {
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
-index a54b134..eda05f8 100644
+index a54b134..b73a5c3 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 @@ -1246,6 +1246,11 @@ public class ChatActivity extends BaseFragment implements
@@ -7474,7 +7563,7 @@ index a54b134..eda05f8 100644
      private final static int forward = 11;
      private final static int delete = 12;
      private final static int chat_enc_timer = 13;
-@@ -1707,6 +1714,14 @@ public class ChatActivity extends BaseFragment implements
+@@ -1707,6 +1714,15 @@ public class ChatActivity extends BaseFragment implements
      private final static int view_as_topics = 59;
  
      private final static int search = 40;
@@ -7486,10 +7575,11 @@ index a54b134..eda05f8 100644
 +    private final static int voidgram_chat_tools = 9205;
 +    private final static int voidgram_hide_chat = 9206;
 +    private final static int voidgram_lock_chat = 9207;
++    private final static int voidgram_download_all = 9208;
  
      private final static int topic_close = 60;
      private final static int open_forum = 61;
-@@ -2195,6 +2210,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -2195,6 +2211,10 @@ public class ChatActivity extends BaseFragment implements
          @Override
          public void onTextChanged(final CharSequence text, boolean bigChange, boolean fromDraft) {
              MediaController.getInstance().setInputFieldHasText(!TextUtils.isEmpty(text) || chatActivityEnterView.isEditingMessage());
@@ -7500,7 +7590,7 @@ index a54b134..eda05f8 100644
              if (mentionContainer != null && mentionContainer.getAdapter() != null) {
                  mentionContainer.getAdapter().searchUsernameOrHashtag(text, chatActivityEnterView.getCursorPosition(), messages, false, false);
              }
-@@ -2835,6 +2854,15 @@ public class ChatActivity extends BaseFragment implements
+@@ -2835,6 +2855,15 @@ public class ChatActivity extends BaseFragment implements
          }
  
          dialog_id_Long = dialog_id;
@@ -7516,7 +7606,7 @@ index a54b134..eda05f8 100644
  
          transitionAnimationGlobalIndex = NotificationCenter.getGlobalInstance().setAnimationInProgress(transitionAnimationGlobalIndex, new int[0]);
  
-@@ -3336,8 +3364,16 @@ public class ChatActivity extends BaseFragment implements
+@@ -3336,8 +3365,16 @@ public class ChatActivity extends BaseFragment implements
          }
      }
  
@@ -7533,7 +7623,7 @@ index a54b134..eda05f8 100644
          super.onFragmentDestroy();
          if (messageMetricsView != null) {
              messageMetricsView.finish();
-@@ -3746,6 +3782,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -3746,6 +3783,8 @@ public class ChatActivity extends BaseFragment implements
                          getMessagesController().getTopicsController().toggleViewForumAsMessages(-dialog_id, false);
                          TopicsFragment.prepareToSwitchAnimation(ChatActivity.this);
                      }
@@ -7542,10 +7632,12 @@ index a54b134..eda05f8 100644
                  } else if (id == copy) {
                      SpannableStringBuilder str = new SpannableStringBuilder();
                      long previousUid = 0;
-@@ -3988,6 +4026,30 @@ public class ChatActivity extends BaseFragment implements
+@@ -3988,6 +4027,32 @@ public class ChatActivity extends BaseFragment implements
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/help", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
                  } else if (id == bot_settings) {
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/settings", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
++                } else if (id == voidgram_download_all) {
++                    org.telegram.ui.voidgram.VoidGramBulkDownload.start(ChatActivity.this);
 +                } else if (id == voidgram_lock_chat) {
 +                    boolean lock = !org.telegram.ui.voidgram.VoidGramChatLock.isLocked(currentAccount, dialog_id);
 +                    org.telegram.ui.voidgram.VoidGramChatLock.setLocked(currentAccount, dialog_id, lock);
@@ -7573,7 +7665,7 @@ index a54b134..eda05f8 100644
                  } else if (id == search) {
                      openSearchWithText(isSupportedTags() ? "" : null);
                  } else if (id == translate) {
-@@ -4398,6 +4460,22 @@ public class ChatActivity extends BaseFragment implements
+@@ -4398,6 +4463,23 @@ public class ChatActivity extends BaseFragment implements
              if (searchItem != null) {
                  headerItem.lazilyAddSubItem(search, R.drawable.msg_search, LocaleController.getString(R.string.Search));
              }
@@ -7582,6 +7674,7 @@ index a54b134..eda05f8 100644
 +            }
 +            if (chatMode == 0 && !isTopic && org.telegram.messenger.voidgram.VoidGramChatExport.canExport(currentAccount, dialog_id)) {
 +                headerItem.lazilyAddSubItem(voidgram_export_chat, R.drawable.msg_shareout, org.telegram.messenger.voidgram.VoidGram.t("Экспорт чата", "Export chat"));
++                headerItem.lazilyAddSubItem(voidgram_download_all, R.drawable.msg_download, org.telegram.messenger.voidgram.VoidGram.t("Скачать все медиа", "Download all media"));
 +            }
 +            if (chatMode == 0 && !isTopic && !org.telegram.messenger.voidgram.VoidGramDecoy.isActive()) {
 +                headerItem.lazilyAddSubItem(voidgram_lock_chat, R.drawable.msg_permissions, org.telegram.ui.voidgram.VoidGramChatLock.isLocked(currentAccount, dialog_id) ? org.telegram.messenger.voidgram.VoidGram.t("Снять замок", "Remove the lock") : org.telegram.messenger.voidgram.VoidGram.t("Заблокировать чат", "Lock chat"));
@@ -7596,7 +7689,7 @@ index a54b134..eda05f8 100644
              if (ChatObject.isBoostSupported(currentChat) && (getUserConfig().isPremium() || ChatObject.isBoosted(chatInfo) || ChatObject.hasAdminRights(currentChat))) {
                  RLottieDrawable drawable = new RLottieDrawable(R.raw.boosts, dp(24), dp(24));
                  headerItem.lazilyAddSubItem(boost_group, drawable, LocaleController.getString(ChatObject.isChannelAndNotMegaGroup(currentChat) ? R.string.BoostingBoostChannelMenu : R.string.BoostingBoostGroupMenu));
-@@ -6727,7 +6805,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -6727,7 +6809,8 @@ public class ChatActivity extends BaseFragment implements
                      scrolled = super.scrollVerticallyBy(dy, recycler, state);
                  }
                  final boolean allowPullingDownScroll = !isInPollAddOptionMode() && !hasSelectedMessages();
@@ -7606,7 +7699,7 @@ index a54b134..eda05f8 100644
                      if (pullingDownOffset == 0 && pullingDownDrawable != null) {
                          if (nextChannels != null && !nextChannels.isEmpty()) {
                              pullingDownDrawable.updateDialog(nextChannels.get(0));
-@@ -6861,6 +6940,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -6861,6 +6944,10 @@ public class ChatActivity extends BaseFragment implements
                      } else if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
                          pollHintCell = null;
                          wasManualScroll = true;
@@ -7617,7 +7710,7 @@ index a54b134..eda05f8 100644
                          scrollingFloatingDate = true;
                          scrollingFloatingTopic = true;
                          checkTextureViewPosition = true;
-@@ -7392,7 +7475,7 @@ public class ChatActivity extends BaseFragment implements
+@@ -7392,7 +7479,7 @@ public class ChatActivity extends BaseFragment implements
                  } else {
                      String username = ChatObject.getPublicUsername(chat);
                      if (username != null) {
@@ -7626,7 +7719,7 @@ index a54b134..eda05f8 100644
                      }
                  }
              } else if (object instanceof TLRPC.User) {
-@@ -7401,7 +7484,7 @@ public class ChatActivity extends BaseFragment implements
+@@ -7401,7 +7488,7 @@ public class ChatActivity extends BaseFragment implements
                      searchUserMessages(user, null);
                  } else {
                      if (UserObject.getPublicUsername(user) != null) {
@@ -7635,7 +7728,7 @@ index a54b134..eda05f8 100644
                      } else {
                          String name = UserObject.getFirstName(user, false);
                          Spannable spannable = new SpannableString(name + " ");
-@@ -9045,6 +9128,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -9045,6 +9132,10 @@ public class ChatActivity extends BaseFragment implements
              });
          }
  
@@ -7646,7 +7739,7 @@ index a54b134..eda05f8 100644
          return fragmentView;
      }
  
-@@ -10820,6 +10907,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -10820,6 +10911,9 @@ public class ChatActivity extends BaseFragment implements
                  actionModeViews.add(actionMode.addItemWithWidth(forward, R.drawable.msg_forward, dp(48), LocaleController.getString(R.string.Forward)));
              }
              actionModeViews.add(actionMode.addItemWithWidth(share, R.drawable.msg_shareout, dp(48), LocaleController.getString(R.string.ShareFile)));
@@ -7656,7 +7749,7 @@ index a54b134..eda05f8 100644
              actionModeViews.add(actionMode.addItemWithWidth(delete, R.drawable.msg_delete, dp(48), LocaleController.getString(R.string.Delete)));
          } else {
              actionModeViews.add(actionMode.addItemWithWidth(edit, R.drawable.msg_edit, dp(48), LocaleController.getString(R.string.Edit)));
-@@ -13272,6 +13362,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -13272,6 +13366,10 @@ public class ChatActivity extends BaseFragment implements
      }
  
      public void performHistoryClear(long threadId, boolean revoke, boolean canDeleteHistory) {
@@ -7667,7 +7760,7 @@ index a54b134..eda05f8 100644
          if (topicsTabs != null && UserObject.isBotForum(currentUser)) {
              topicsTabs.setAllTopicsHidden(true);
          }
-@@ -21371,7 +21465,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -21371,7 +21469,8 @@ public class ChatActivity extends BaseFragment implements
          if (postponedScroll) {
              postponedScrollToLastMessageQueryIndex = 0;
          }
@@ -7677,7 +7770,7 @@ index a54b134..eda05f8 100644
          layOutWidgetsForSideMenu(messArr);
  
          boolean universalNotify = false;
-@@ -22807,8 +22902,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -22807,8 +22906,9 @@ public class ChatActivity extends BaseFragment implements
          } else if (id == NotificationCenter.didReceiveNewMessages) {
              FileLog.d("ChatActivity didReceiveNewMessages start");
              long did = (Long) args[0];
@@ -7688,7 +7781,7 @@ index a54b134..eda05f8 100644
              if (did == dialog_id) {
                  boolean scheduled = (Boolean) args[2];
                  int mode = (Integer) args[3];
-@@ -28135,6 +28231,13 @@ public class ChatActivity extends BaseFragment implements
+@@ -28135,6 +28235,13 @@ public class ChatActivity extends BaseFragment implements
      @Override
      public void onTransitionAnimationEnd(boolean isOpen, boolean backward) {
          super.onTransitionAnimationEnd(isOpen, backward);
@@ -7702,7 +7795,7 @@ index a54b134..eda05f8 100644
          if (isOpen) {
              if (backward) {
                  if (showPinBulletin && pinBulletin != null) {
-@@ -31957,6 +32060,23 @@ public class ChatActivity extends BaseFragment implements
+@@ -31957,6 +32064,23 @@ public class ChatActivity extends BaseFragment implements
                  icons.add(R.drawable.msg_calendar2);
              }
  
@@ -7726,7 +7819,7 @@ index a54b134..eda05f8 100644
              if (options.isEmpty() && optionsView == null) {
                  return false;
              }
-@@ -34293,6 +34413,21 @@ public class ChatActivity extends BaseFragment implements
+@@ -34293,6 +34417,21 @@ public class ChatActivity extends BaseFragment implements
          }
          boolean preserveDim = false;
          switch (option) {
@@ -8405,6 +8498,127 @@ index 0000000..20a79be
 +                }
 +            }
 +        }
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramBulkDownload.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramBulkDownload.java
+new file mode 100644
+index 0000000..294adea
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramBulkDownload.java
+@@ -0,0 +1,115 @@
++package org.telegram.ui.voidgram;
++
++import org.telegram.messenger.AccountInstance;
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.MediaController;
++import org.telegram.messenger.MessageObject;
++import org.telegram.messenger.MessagesController;
++import org.telegram.messenger.R;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.tgnet.ConnectionsManager;
++import org.telegram.tgnet.TLRPC;
++import org.telegram.ui.ActionBar.AlertDialog;
++import org.telegram.ui.ChatActivity;
++import org.telegram.ui.Components.BulletinFactory;
++
++import java.util.ArrayList;
++
++/**
++ * "Download all media" of a chat, as on iOS: photos, videos and files are found on the server
++ * (up to 500) and saved one at a time to the gallery and Downloads, with Telegram's own progress.
++ */
++public final class VoidGramBulkDownload {
++    private VoidGramBulkDownload() {
++    }
++
++    private static final int LIMIT = 500;
++
++    public static void start(ChatActivity chat) {
++        if (chat == null || chat.getParentActivity() == null) {
++            return;
++        }
++        if (chat.isPeerNoForwards()) {
++            BulletinFactory.of(chat).createErrorBulletin(VoidGram.t("Этот чат защищён от сохранения", "This chat is protected from saving")).show();
++            return;
++        }
++        AlertDialog.Builder builder = new AlertDialog.Builder(chat.getParentActivity());
++        builder.setTitle(VoidGram.t("Скачать все медиа", "Download all media"));
++        builder.setItems(new CharSequence[]{
++                VoidGram.t("Фото и видео", "Photos and videos"),
++                VoidGram.t("Файлы", "Files"),
++                VoidGram.t("Музыка", "Music")
++        }, (d, which) -> collect(chat, which));
++        builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++        chat.showDialog(builder.create());
++    }
++
++    private static void collect(ChatActivity chat, int kind) {
++        final int account = chat.getCurrentAccount();
++        final long dialogId = chat.getDialogId();
++        final ArrayList<MessageObject> found = new ArrayList<>();
++        final AlertDialog progress = new AlertDialog(chat.getParentActivity(), AlertDialog.ALERT_TYPE_SPINNER);
++        progress.show();
++        final int[] offset = {0};
++        final Runnable[] page = new Runnable[1];
++        page[0] = () -> {
++            TLRPC.TL_messages_search req = new TLRPC.TL_messages_search();
++            req.peer = MessagesController.getInstance(account).getInputPeer(dialogId);
++            req.q = "";
++            req.limit = 100;
++            req.offset_id = offset[0];
++            req.filter = kind == 0 ? new TLRPC.TL_inputMessagesFilterPhotoVideo() : kind == 1 ? new TLRPC.TL_inputMessagesFilterDocument() : new TLRPC.TL_inputMessagesFilterMusic();
++            ConnectionsManager.getInstance(account).sendRequest(req, (response, error) -> AndroidUtilities.runOnUIThread(() -> {
++                boolean more = false;
++                if (response instanceof TLRPC.messages_Messages) {
++                    TLRPC.messages_Messages result = (TLRPC.messages_Messages) response;
++                    MessagesController.getInstance(account).putUsers(result.users, false);
++                    MessagesController.getInstance(account).putChats(result.chats, false);
++                    int next = Integer.MAX_VALUE;
++                    for (TLRPC.Message message : result.messages) {
++                        next = Math.min(next, message.id);
++                        if (message.noforwards || message.media == null || message.media.ttl_seconds > 0) {
++                            continue;
++                        }
++                        found.add(new MessageObject(account, message, false, false));
++                    }
++                    more = !result.messages.isEmpty() && found.size() < LIMIT && next != Integer.MAX_VALUE && (offset[0] == 0 || next < offset[0]);
++                    if (more) {
++                        offset[0] = next;
++                    }
++                }
++                if (more) {
++                    progress.setMessage(VoidGram.t("Найдено: ", "Found: ") + found.size());
++                    AndroidUtilities.runOnUIThread(page[0], 250);
++                    return;
++                }
++                try {
++                    progress.dismiss();
++                } catch (Throwable ignore) {
++                }
++                confirm(chat, found);
++            }));
++        };
++        page[0].run();
++    }
++
++    private static void confirm(ChatActivity chat, ArrayList<MessageObject> found) {
++        if (found.isEmpty()) {
++            BulletinFactory.of(chat).createErrorBulletin(VoidGram.t("Здесь нечего скачивать", "Nothing to download here")).show();
++            return;
++        }
++        while (found.size() > LIMIT) {
++            found.remove(found.size() - 1);
++        }
++        AlertDialog.Builder builder = new AlertDialog.Builder(chat.getParentActivity());
++        builder.setTitle(VoidGram.t("Скачать все медиа", "Download all media"));
++        builder.setMessage(VoidGram.t("Найдено файлов: ", "Files found: ") + found.size() + VoidGram.t(". Они скачаются по одному и сохранятся в галерею и «Загрузки».", ". They will download one at a time and be saved to the gallery and Downloads."));
++        builder.setPositiveButton(VoidGram.t("Скачать", "Download"), (d, w) -> MediaController.saveFilesFromMessages(chat.getParentActivity(), AccountInstance.getInstance(chat.getCurrentAccount()), found, count -> {
++            if (count > 0) {
++                BulletinFactory.of(chat).createSimpleBulletin(R.raw.ic_download, VoidGram.t("Сохранено файлов: ", "Files saved: ") + count).show();
++            }
++        }));
++        builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++        chat.showDialog(builder.create());
 +    }
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatExportSheet.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatExportSheet.java
