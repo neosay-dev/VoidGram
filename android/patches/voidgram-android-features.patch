@@ -8572,7 +8572,7 @@ index e6478ee..1576e94 100644
              return frozenDialogsList;
          }
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
-index 1dd2ffe..5794bec 100644
+index 1dd2ffe..1ee2795 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
 @@ -458,6 +458,11 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
@@ -8597,12 +8597,14 @@ index 1dd2ffe..5794bec 100644
          isResumed = false;
          WidgetMedia.onAppPaused(true);
          PipCoordinator.getInstance().onActivityPause(this);
-@@ -7209,6 +7217,8 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
+@@ -7209,6 +7217,10 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
      @Override
      protected void onResume() {
          super.onResume();
 +        // VoidGram streamer mode.
 +        org.telegram.messenger.voidgram.VoidGramExtras.applyStreamerMode(getWindow());
++        // VoidGram: snow, leaves and other effects over the app.
++        org.telegram.ui.voidgram.VoidGramOverlayEffects.attach(this);
          WidgetMedia.onAppPaused(false);
          isResumed = true;
          PipCoordinator.getInstance().onActivityResume(this);
@@ -10291,10 +10293,10 @@ index 0000000..e6d2e84
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramInterfaceActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramInterfaceActivity.java
 new file mode 100644
-index 0000000..2f37a48
+index 0000000..9242940
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramInterfaceActivity.java
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,140 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.view.View;
@@ -10323,6 +10325,10 @@ index 0000000..2f37a48
 +    private static final int ID_STREAMER = 100;
 +    private static final int ID_NAME_GUARD = 101;
 +    private static final int ID_BLACK_HOLE = 102;
++    private static final int ID_EFFECT = 103;
++    private static final int ID_SNOW = 104;
++    private static final int ID_AMOUNT = 105;
++    private static final int ID_SPEED = 106;
 +
 +    @Override
 +    protected CharSequence getTitle() {
@@ -10343,6 +10349,17 @@ index 0000000..2f37a48
 +        check(items, 4, VoidGram.t("Запятая после упоминания", "Comma after a mention"));
 +        items.add(UItem.asCheck(ID_BLACK_HOLE, VoidGram.t("«Чёрная дыра» при очистке чата", "\"Black hole\" when clearing a chat")).setChecked(VoidGramBlackHole.isEnabled()));
 +        items.add(UItem.asShadow(VoidGram.t("Упоминание в начале сообщения вставляется как «@ник, ».", "A mention at the start of a message is inserted as \"@name, \".")));
++        items.add(UItem.asHeader(VoidGram.t("Эффекты", "Effects")));
++        String effect = VoidGramOverlayEffects.effect();
++        items.add(UItem.asButton(ID_EFFECT, VoidGram.t("Эффект поверх Telegram", "Effect over Telegram"), VoidGramOverlayEffects.title(effect)));
++        if ("snow".equals(effect)) {
++            items.add(UItem.asButton(ID_SNOW, VoidGram.t("Вид снега", "Snow look"), VoidGramOverlayEffects.title(VoidGramOverlayEffects.snowShape())));
++        }
++        if (!"none".equals(effect)) {
++            items.add(UItem.asButton(ID_AMOUNT, VoidGram.t("Количество", "Amount"), VoidGramOverlayEffects.amount() + "×"));
++            items.add(UItem.asButton(ID_SPEED, VoidGram.t("Скорость", "Speed"), VoidGramOverlayEffects.speed() + "×"));
++        }
++        items.add(UItem.asShadow(VoidGram.t("Снег, листья, дождь, звёзды или конфетти поверх приложения; нажатиям не мешают. Если анимации в системе выключены, эффекты не показываются.", "Snow, leaves, rain, stars or confetti over the app; they never block taps. With system animations off, effects are hidden.")));
 +        items.add(UItem.asHeader(VoidGram.t("Приватность", "Privacy")));
 +        check(items, 5, VoidGram.t("Скрыть мой номер в Настройках", "Hide my number in Settings"));
 +        check(items, 6, VoidGram.t("Открывать ссылки без вопроса", "Open links without asking"));
@@ -10361,6 +10378,39 @@ index 0000000..2f37a48
 +                org.telegram.messenger.voidgram.VoidGramExtras.applyStreamerMode(getParentActivity().getWindow());
 +            }
 +            listView.adapter.update(true);
++            return;
++        }
++        if (item.id == ID_EFFECT || item.id == ID_SNOW || item.id == ID_AMOUNT || item.id == ID_SPEED) {
++            final int which = item.id;
++            CharSequence[] titles;
++            if (which == ID_EFFECT || which == ID_SNOW) {
++                String[] values = which == ID_EFFECT ? VoidGramOverlayEffects.EFFECTS : VoidGramOverlayEffects.SNOW_SHAPES;
++                titles = new CharSequence[values.length];
++                for (int i = 0; i < values.length; i++) {
++                    titles[i] = VoidGramOverlayEffects.title(values[i]);
++                }
++            } else {
++                titles = new CharSequence[VoidGramOverlayEffects.STEPS.length];
++                for (int i = 0; i < titles.length; i++) {
++                    titles[i] = VoidGramOverlayEffects.STEPS[i] + "×";
++                }
++            }
++            org.telegram.ui.ActionBar.AlertDialog.Builder builder = new org.telegram.ui.ActionBar.AlertDialog.Builder(getContext());
++            builder.setTitle(item.text);
++            builder.setItems(titles, (d, index) -> {
++                if (which == ID_EFFECT) {
++                    VoidGramOverlayEffects.setEffect(VoidGramOverlayEffects.EFFECTS[index]);
++                } else if (which == ID_SNOW) {
++                    VoidGramOverlayEffects.setSnowShape(VoidGramOverlayEffects.SNOW_SHAPES[index]);
++                } else if (which == ID_AMOUNT) {
++                    VoidGramOverlayEffects.setAmount(VoidGramOverlayEffects.STEPS[index]);
++                } else {
++                    VoidGramOverlayEffects.setSpeed(VoidGramOverlayEffects.STEPS[index]);
++                }
++                VoidGramOverlayEffects.attach(getParentActivity());
++                listView.adapter.update(true);
++            });
++            showDialog(builder.create());
 +            return;
 +        }
 +        if (item.id == ID_BLACK_HOLE) {
@@ -11710,6 +11760,265 @@ index 0000000..24a525b
 +            }
 +            present(fragment, title, result != null ? result : status == 401 ? VoidGram.t("Неверный ключ API.", "Invalid API key.") : VoidGram.t("ИИ не ответил (код ", "The AI did not answer (code ") + status + ").");
 +        });
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramOverlayEffects.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramOverlayEffects.java
+new file mode 100644
+index 0000000..b05ab75
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramOverlayEffects.java
+@@ -0,0 +1,253 @@
++package org.telegram.ui.voidgram;
++
++import android.app.Activity;
++import android.content.Context;
++import android.graphics.Canvas;
++import android.graphics.Paint;
++import android.view.View;
++import android.view.ViewGroup;
++import android.widget.FrameLayout;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramDecoy;
++
++import java.util.Random;
++
++/**
++ * Decorations over the whole app, as on iOS: falling snow (dots, snowflakes or the VoidGram
++ * mark), autumn leaves, rain, stars or confetti. Nothing here takes touches; with animations
++ * turned off in the system the effect is not shown.
++ */
++public final class VoidGramOverlayEffects {
++    private VoidGramOverlayEffects() {
++    }
++
++    public static final String[] EFFECTS = {"none", "snow", "leaves", "rain", "stars", "confetti"};
++    public static final String[] SNOW_SHAPES = {"dots", "flakes", "voidgram"};
++    public static final float[] STEPS = {0.25f, 0.5f, 1f, 1.5f, 2f, 3f};
++
++    public static String effect() {
++        return VoidGram.prefs().getString("overlay_effect", "none");
++    }
++
++    public static void setEffect(String value) {
++        VoidGram.prefs().edit().putString("overlay_effect", value).apply();
++    }
++
++    public static String snowShape() {
++        return VoidGram.prefs().getString("overlay_snow", "flakes");
++    }
++
++    public static void setSnowShape(String value) {
++        VoidGram.prefs().edit().putString("overlay_snow", value).apply();
++    }
++
++    public static float amount() {
++        return VoidGram.prefs().getFloat("overlay_amount", 1f);
++    }
++
++    public static void setAmount(float value) {
++        VoidGram.prefs().edit().putFloat("overlay_amount", value).apply();
++    }
++
++    public static float speed() {
++        return VoidGram.prefs().getFloat("overlay_speed", 1f);
++    }
++
++    public static void setSpeed(float value) {
++        VoidGram.prefs().edit().putFloat("overlay_speed", value).apply();
++    }
++
++    public static String title(String value) {
++        switch (value) {
++            case "snow": return VoidGram.t("Снег", "Snow");
++            case "leaves": return VoidGram.t("Осенние листья", "Autumn leaves");
++            case "rain": return VoidGram.t("Дождь", "Rain");
++            case "stars": return VoidGram.t("Звёзды", "Stars");
++            case "confetti": return VoidGram.t("Конфетти", "Confetti");
++            case "dots": return VoidGram.t("Точки", "Dots");
++            case "flakes": return VoidGram.t("Снежинки", "Snowflakes");
++            case "voidgram": return VoidGram.t("Знак VoidGram", "VoidGram mark");
++            default: return VoidGram.t("Выключено", "Off");
++        }
++    }
++
++    /** LaunchActivity.onResume and the settings: shows, updates or removes the effect. */
++    public static void attach(Activity activity) {
++        if (activity == null) {
++            return;
++        }
++        View decor = activity.getWindow().getDecorView();
++        if (!(decor instanceof ViewGroup)) {
++            return;
++        }
++        ViewGroup root = (ViewGroup) decor;
++        EffectView existing = null;
++        for (int i = 0; i < root.getChildCount(); i++) {
++            if (root.getChildAt(i) instanceof EffectView) {
++                existing = (EffectView) root.getChildAt(i);
++            }
++        }
++        boolean animationsOff = false;
++        try {
++            animationsOff = android.provider.Settings.Global.getFloat(activity.getContentResolver(), android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f;
++        } catch (Throwable ignore) {
++        }
++        String effect = effect();
++        if ("none".equals(effect) || animationsOff || VoidGramDecoy.isActive()) {
++            if (existing != null) {
++                root.removeView(existing);
++            }
++            return;
++        }
++        if (existing == null) {
++            existing = new EffectView(activity);
++            root.addView(existing, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
++        }
++        existing.configure(effect, snowShape(), amount(), speed());
++        existing.bringToFront();
++    }
++
++    private static final class EffectView extends View {
++        private final Random random = new Random();
++        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
++        private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
++        private String effect = "none";
++        private String shape = "flakes";
++        private float speed = 1f;
++        private float[] x = new float[0];
++        private float[] y;
++        private float[] size;
++        private float[] drift;
++        private float[] velocity;
++        private float[] phase;
++        private int[] color;
++        private long lastFrame;
++
++        EffectView(Context context) {
++            super(context);
++            setClickable(false);
++            setFocusable(false);
++            setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
++            textPaint.setTextAlign(Paint.Align.CENTER);
++        }
++
++        void configure(String effect, String shape, float amount, float speed) {
++            boolean changed = !effect.equals(this.effect) || !shape.equals(this.shape) || Math.abs(this.speed - speed) > 0.01f;
++            this.effect = effect;
++            this.shape = shape;
++            this.speed = speed;
++            int base = "rain".equals(effect) ? 90 : "stars".equals(effect) ? 60 : "confetti".equals(effect) ? 70 : "leaves".equals(effect) ? 18 : 55;
++            int count = Math.max(4, Math.min(300, (int) (base * amount)));
++            if (changed || count != x.length) {
++                x = new float[count];
++                y = new float[count];
++                size = new float[count];
++                drift = new float[count];
++                velocity = new float[count];
++                phase = new float[count];
++                color = new int[count];
++                for (int i = 0; i < count; i++) {
++                    reset(i, true);
++                }
++            }
++            invalidate();
++        }
++
++        private static final int[] CONFETTI = {0xFFFF2D55, 0xFFFFCC00, 0xFF34C759, 0xFF0A84FF, 0xFFBF5AF2, 0xFFFF9500};
++
++        private void reset(int i, boolean anywhere) {
++            int width = Math.max(1, getWidth() > 0 ? getWidth() : AndroidUtilities.displaySize.x);
++            int height = Math.max(1, getHeight() > 0 ? getHeight() : AndroidUtilities.displaySize.y);
++            x[i] = random.nextFloat() * width;
++            y[i] = anywhere ? random.nextFloat() * height : -AndroidUtilities.dp(20);
++            phase[i] = random.nextFloat() * 6.28f;
++            drift[i] = (random.nextFloat() - 0.5f) * AndroidUtilities.dp(30);
++            color[i] = CONFETTI[random.nextInt(CONFETTI.length)];
++            switch (effect) {
++                case "rain":
++                    size[i] = AndroidUtilities.dp(10 + random.nextInt(14));
++                    velocity[i] = AndroidUtilities.dp(700 + random.nextInt(400));
++                    break;
++                case "stars":
++                    size[i] = AndroidUtilities.dp(1) + random.nextFloat() * AndroidUtilities.dp(2.5f);
++                    velocity[i] = 0;
++                    break;
++                case "leaves":
++                    size[i] = AndroidUtilities.dp(14 + random.nextInt(10));
++                    velocity[i] = AndroidUtilities.dp(40 + random.nextInt(50));
++                    break;
++                case "confetti":
++                    size[i] = AndroidUtilities.dp(4 + random.nextInt(5));
++                    velocity[i] = AndroidUtilities.dp(90 + random.nextInt(110));
++                    break;
++                default:
++                    size[i] = "dots".equals(shape) ? AndroidUtilities.dp(1.5f) + random.nextFloat() * AndroidUtilities.dp(2.5f) : AndroidUtilities.dp(9 + random.nextInt(9));
++                    velocity[i] = AndroidUtilities.dp(30 + random.nextInt(60));
++                    break;
++            }
++        }
++
++        @Override
++        protected void onDraw(Canvas canvas) {
++            long now = System.currentTimeMillis();
++            float dt = lastFrame == 0 ? 0 : Math.min(0.05f, (now - lastFrame) / 1000f);
++            lastFrame = now;
++            int height = getHeight();
++            float t = now / 1000f;
++            for (int i = 0; i < x.length; i++) {
++                y[i] += velocity[i] * speed * dt;
++                if (y[i] > height + AndroidUtilities.dp(30)) {
++                    reset(i, false);
++                }
++                float px = x[i] + (float) Math.sin(t * 0.8f * speed + phase[i]) * drift[i];
++                switch (effect) {
++                    case "rain":
++                        paint.setColor(0x669FC4FF);
++                        paint.setStrokeWidth(AndroidUtilities.dp(1.2f));
++                        canvas.drawLine(x[i], y[i], x[i] - size[i] * 0.15f, y[i] + size[i], paint);
++                        break;
++                    case "stars": {
++                        float alpha = 0.35f + 0.65f * (0.5f + 0.5f * (float) Math.sin(t * 2f * speed + phase[i]));
++                        paint.setColor(0xFFFFFFFF);
++                        paint.setAlpha((int) (alpha * 200));
++                        canvas.drawCircle(x[i], y[i], size[i], paint);
++                        break;
++                    }
++                    case "leaves":
++                        textPaint.setTextSize(size[i]);
++                        canvas.save();
++                        canvas.rotate((float) Math.sin(t * speed + phase[i]) * 40f, px, y[i]);
++                        canvas.drawText(i % 2 == 0 ? "🍂" : "🍁", px, y[i], textPaint);
++                        canvas.restore();
++                        break;
++                    case "confetti":
++                        paint.setColor(color[i]);
++                        canvas.save();
++                        canvas.rotate(t * 180f * speed + phase[i] * 57f, px, y[i]);
++                        canvas.drawRect(px - size[i] / 2f, y[i] - size[i] / 4f, px + size[i] / 2f, y[i] + size[i] / 4f, paint);
++                        canvas.restore();
++                        break;
++                    default:
++                        if ("dots".equals(shape)) {
++                            paint.setColor(0xCCFFFFFF);
++                            canvas.drawCircle(px, y[i], size[i], paint);
++                        } else {
++                            textPaint.setTextSize(size[i]);
++                            textPaint.setColor(0xDDFFFFFF);
++                            canvas.drawText("voidgram".equals(shape) ? "✦" : "❄", px, y[i], textPaint);
++                        }
++                        break;
++                }
++            }
++            postInvalidateOnAnimation();
++        }
++
++        @Override
++        protected void onDetachedFromWindow() {
++            super.onDetachedFromWindow();
++            lastFrame = 0;
++        }
 +    }
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramPeerSearchActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramPeerSearchActivity.java
