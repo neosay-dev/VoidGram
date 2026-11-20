@@ -8249,6 +8249,19 @@ index 529eb5c..e8358f5 100644
          return (dialogListStories != null && dialogListStories.size() > 0) || hasSelfStories();
      }
  
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/VoIPFragment.java b/TMessagesProj/src/main/java/org/telegram/ui/VoIPFragment.java
+index 496f769..76b4afb 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/VoIPFragment.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/VoIPFragment.java
+@@ -1268,6 +1268,8 @@ public class VoIPFragment implements
+             initRenderers();
+         }
+ 
++        // VoidGram: in-call statistics at the top of the screen.
++        org.telegram.ui.voidgram.VoidGramCallStats.attach(frameLayout);
+         return frameLayout;
+     }
+ 
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramAudioToVoice.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramAudioToVoice.java
 new file mode 100644
 index 0000000..b2d9d40
@@ -8619,6 +8632,76 @@ index 0000000..294adea
 +        }));
 +        builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
 +        chat.showDialog(builder.create());
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramCallStats.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramCallStats.java
+new file mode 100644
+index 0000000..dd70630
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramCallStats.java
+@@ -0,0 +1,64 @@
++package org.telegram.ui.voidgram;
++
++import android.graphics.Color;
++import android.util.TypedValue;
++import android.view.Gravity;
++import android.view.ViewGroup;
++import android.widget.FrameLayout;
++import android.widget.TextView;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voip.VoIPService;
++import org.telegram.ui.Components.LayoutHelper;
++
++/**
++ * In-call statistics, as on iOS: while a call runs, the engine's debug line (bitrate, latency,
++ * loss) is shown at the top of the screen and refreshed every two seconds.
++ */
++public final class VoidGramCallStats {
++    private VoidGramCallStats() {
++    }
++
++    public static boolean isEnabled() {
++        return VoidGram.prefs().getBoolean("call_stats", false);
++    }
++
++    public static void setEnabled(boolean value) {
++        VoidGram.prefs().edit().putBoolean("call_stats", value).apply();
++    }
++
++    /** VoIPFragment.createView: adds the line to the call screen when turned on. */
++    public static void attach(ViewGroup root) {
++        if (root == null || !isEnabled()) {
++            return;
++        }
++        TextView label = new TextView(root.getContext());
++        label.setTextColor(Color.WHITE);
++        label.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 10);
++        label.setTypeface(android.graphics.Typeface.MONOSPACE);
++        label.setBackgroundColor(0x88000000);
++        label.setPadding(AndroidUtilities.dp(8), AndroidUtilities.dp(4), AndroidUtilities.dp(8), AndroidUtilities.dp(4));
++        label.setClickable(false);
++        label.setFocusable(false);
++        root.addView(label, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP, 0, 0, 0, 0));
++        label.setPadding(AndroidUtilities.dp(8), AndroidUtilities.statusBarHeight + AndroidUtilities.dp(4), AndroidUtilities.dp(8), AndroidUtilities.dp(4));
++        Runnable[] tick = new Runnable[1];
++        tick[0] = () -> {
++            if (label.getParent() == null) {
++                return;
++            }
++            VoIPService service = VoIPService.getSharedInstance();
++            String text = null;
++            try {
++                text = service != null ? service.getDebugString() : null;
++            } catch (Throwable ignore) {
++            }
++            label.setText(text == null || text.isEmpty() ? VoidGram.t("Статистика звонка появится после соединения", "Call statistics appear once connected") : text.trim());
++            if (service != null) {
++                AndroidUtilities.runOnUIThread(tick[0], 2000);
++            }
++        };
++        tick[0].run();
 +    }
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatExportSheet.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatExportSheet.java
@@ -12275,10 +12358,10 @@ index 0000000..e1c2c2e
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java
 new file mode 100644
-index 0000000..50e111e
+index 0000000..6d372f3
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java
-@@ -0,0 +1,244 @@
+@@ -0,0 +1,253 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.content.Context;
@@ -12319,6 +12402,7 @@ index 0000000..50e111e
 +    private static final int ID_SMART_FOLDERS = 14;
 +    private static final int ID_PROXY_FASTEST = 15;
 +    private static final int ID_PROXY_IMPORT = 16;
++    private static final int ID_CALL_STATS = 17;
 +
 +    @Override
 +    protected CharSequence getTitle() {
@@ -12336,6 +12420,10 @@ index 0000000..50e111e
 +        items.add(UItem.asButton(ID_PROXY_FASTEST, R.drawable.msg2_data, VoidGram.t("Самый быстрый прокси", "Fastest proxy")));
 +        items.add(UItem.asButton(ID_PROXY_IMPORT, R.drawable.msg_link, VoidGram.t("Импорт прокси из буфера", "Import proxies from the clipboard")));
 +        items.add(UItem.asShadow(VoidGram.t("Пингует все сохранённые прокси и включает самый быстрый. Импорт добавляет все ссылки tg://proxy, t.me/proxy и tg://socks из скопированного текста.", "Pings every saved proxy and turns on the fastest. Import adds every tg://proxy, t.me/proxy and tg://socks link in the copied text.")));
++
++        items.add(UItem.asHeader(VoidGram.t("Звонки", "Calls")));
++        items.add(UItem.asCheck(ID_CALL_STATS, VoidGram.t("Статистика во время звонка", "In-call statistics")).setChecked(VoidGramCallStats.isEnabled()));
++        items.add(UItem.asShadow(VoidGram.t("Битрейт, задержка и потери вверху экрана звонка, раз в две секунды.", "Bitrate, latency and loss at the top of the call screen, every two seconds.")));
 +
 +        items.add(UItem.asHeader(VoidGram.t("Музыка", "Music")));
 +        items.add(UItem.asButton(ID_LASTFM, R.drawable.msg_media, VoidGramLastFm.isConnected() ? VoidGramLastFm.username() : VoidGram.t("Подключить Last.fm", "Connect Last.fm"), VoidGramLastFm.isConnected() ? VoidGram.t("вкл.", "on") : ""));
@@ -12397,6 +12485,10 @@ index 0000000..50e111e
 +            case ID_PREMIUM:
 +                VoidGramPremium.setLocal(!VoidGramPremium.isLocal());
 +                getNotificationCenter().postNotificationName(org.telegram.messenger.NotificationCenter.currentUserPremiumStatusChanged);
++                update();
++                break;
++            case ID_CALL_STATS:
++                VoidGramCallStats.setEnabled(!VoidGramCallStats.isEnabled());
 +                update();
 +                break;
 +            case ID_PROXY_FASTEST:
