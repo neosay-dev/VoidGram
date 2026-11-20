@@ -48343,6 +48343,47 @@ index 199d6dc..c8fd51b 100644
  	};
  	TextUtilities::ParseEntities(result, Ui::ItemTextNoMonoOptions().flags);
  	result.entities.push_front(
+diff --git a/Telegram/SourceFiles/history/history_widget.cpp b/Telegram/SourceFiles/history/history_widget.cpp
+index 520fd33..f5efa15 100644
+--- a/Telegram/SourceFiles/history/history_widget.cpp
++++ b/Telegram/SourceFiles/history/history_widget.cpp
+@@ -11348,6 +11348,36 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
+ 	p.setInactive(
+ 		controller()->isGifPausedAtLeastFor(Window::GifPauseReason::Any));
+ 	p.fillRect(myrtlrect(0, backy, width(), backh), st::historyReplyBg);
++	{
++		// VoidGram: the composer as Telegram iOS 26 draws it: a capsule around the text field and a circle
++		// behind the attach and the send buttons.
++		PainterHighQualityEnabler hq(p);
++		p.setPen(Qt::NoPen);
++		p.setBrush(st::windowBgOver);
++		const auto fieldTop = _field->y() - st::historySendPadding + 4;
++		const auto fieldBottom = _field->y() + fieldHeight() + st::historySendPadding - 4;
++		const auto circle = [&](QWidget *button) {
++			if (!button || button->isHidden()) {
++				return;
++			}
++			const auto g = button->geometry();
++			const auto side = std::min(g.width(), fieldBottom - fieldTop);
++			p.drawEllipse(QRect(g.x() + (g.width() - side) / 2, fieldBottom - side, side, side));
++		};
++		circle(_attachToggle.data());
++		circle(_send.get());
++		const auto left = (_attachToggle && !_attachToggle->isHidden())
++			? (_attachToggle->x() + _attachToggle->width() + 4)
++			: (_field->x() - st::historySendPadding);
++		const auto right = (_send && !_send->isHidden())
++			? (_send->x() - 4)
++			: (_field->x() + _field->width() + st::historySendPadding);
++		if (right > left) {
++			const auto capsule = QRect(left, fieldTop, right - left, fieldBottom - fieldTop);
++			const auto radius = std::min(capsule.height(), 40) / 2.;
++			p.drawRoundedRect(capsule, radius, radius);
++		}
++	}
+ 
+ 	const auto media = (!_previewDrawPreview && drawMsgText)
+ 		? drawMsgText->media()
 diff --git a/Telegram/SourceFiles/history/view/history_view_message.cpp b/Telegram/SourceFiles/history/view/history_view_message.cpp
 index 9c0462e..ecdde3d 100644
 --- a/Telegram/SourceFiles/history/view/history_view_message.cpp
@@ -48456,6 +48497,88 @@ index 9c0462e..ecdde3d 100644
  			from->name(),
  			Ui::NameTextOptions());
  	}
+diff --git a/Telegram/SourceFiles/history/view/history_view_top_bar_widget.cpp b/Telegram/SourceFiles/history/view/history_view_top_bar_widget.cpp
+index bb75eeb..c44f9e2 100644
+--- a/Telegram/SourceFiles/history/view/history_view_top_bar_widget.cpp
++++ b/Telegram/SourceFiles/history/view/history_view_top_bar_widget.cpp
+@@ -570,6 +570,25 @@ void TopBarWidget::paintTopBar(Painter &p) {
+ 	if (!_activeChat.key || _narrowRatio == 1.) {
+ 		return;
+ 	}
++	{
++		// VoidGram: the action buttons share one capsule, as in Telegram iOS 26.
++		auto group = QRect();
++		for (const auto button : std::initializer_list<QWidget*>{
++				_search.data(), _admins.data(), _recentActions.data(), _call.data(),
++				_groupCall.data(), _infoToggle.data(), _menuToggle.data() }) {
++			if (button && !button->isHidden()) {
++				group = group.isNull() ? button->geometry() : group.united(button->geometry());
++			}
++		}
++		if (!group.isNull()) {
++			const auto capsuleHeight = st::topBarHeight - 2 * st::topBarArrowPadding.top() / 2;
++			group = QRect(group.x() - 4, (st::topBarHeight - capsuleHeight) / 2, group.width() + 8, capsuleHeight);
++			PainterHighQualityEnabler hq(p);
++			p.setPen(Qt::NoPen);
++			p.setBrush(st::windowBgOver);
++			p.drawRoundedRect(group, group.height() / 2., group.height() / 2.);
++		}
++	}
+ 	auto nameleft = _leftTaken;
+ 	auto statusleft = nameleft;
+ 	auto nametop = st::topBarArrowPadding.top();
+@@ -694,6 +713,30 @@ void TopBarWidget::paintTopBar(Painter &p) {
+ 				TopBarNameText(namePeer, _activeChat),
+ 				Ui::NameTextOptions());
+ 		}
++		{
++			// VoidGram: the name and status sit centred in a capsule, as in Telegram iOS 26.
++			const auto textWidth = std::min(namewidth, _title.maxWidth());
++			const auto capsuleWidth = std::min(
++				std::max(textWidth, st::topBarHeight * 3) + 2 * st::topBarArrowPadding.right(),
++				width() - _leftTaken - _rightTaken);
++			const auto available = width() - _leftTaken - _rightTaken;
++			const auto capsuleLeft = _leftTaken + std::max(0, (available - capsuleWidth) / 2);
++			const auto capsuleHeight = st::topBarHeight - 2 * st::topBarArrowPadding.top() / 2;
++			const auto capsule = QRect(
++				capsuleLeft,
++				(st::topBarHeight - capsuleHeight) / 2,
++				capsuleWidth,
++				capsuleHeight);
++			PainterHighQualityEnabler hq(p);
++			p.setPen(Qt::NoPen);
++			p.setBrush(st::windowBgOver);
++			p.drawRoundedRect(capsule, capsule.height() / 2., capsule.height() / 2.);
++			const auto inner = capsuleWidth - 2 * st::topBarArrowPadding.right();
++			nameleft = capsuleLeft + st::topBarArrowPadding.right() + (inner - textWidth) / 2;
++			namewidth = inner;
++			statusleft = capsuleLeft + st::topBarArrowPadding.right();
++			statuswidth = inner;
++		}
+ 		if (const auto info = namePeer->botVerifyDetails()) {
+ 			if (!_titleBadge.ready(info)) {
+ 				_titleBadge.set(
+@@ -1275,8 +1318,7 @@ void TopBarWidget::updateControlsGeometry() {
+ 				middle - infoSt.photoPosition.x(),
+ 				_narrowRatio);
+ 		}
+-		_info->moveToLeft(_leftTaken, otherButtonsTop);
+-		_leftTaken += _info->width();
++		// VoidGram: the avatar sits at the right edge (placed with the right-side buttons below).
+ 	} else if (_activeChat.key.topic()
+ 		|| _activeChat.section == Section::ChatsList) {
+ 		_leftTaken += st::normalFont->spacew;
+@@ -1312,6 +1354,10 @@ void TopBarWidget::updateControlsGeometry() {
+ 	}
+ 
+ 	_rightTaken = 0;
++	if (_info && !_info->isHidden()) {
++		_info->moveToRight(st::topBarArrowPadding.right() / 2, otherButtonsTop);
++		_rightTaken += _info->width() + st::topBarArrowPadding.right();
++	}
+ 	_menuToggle->moveToRight(_rightTaken, otherButtonsTop);
+ 	if (_menuToggle->isHidden()) {
+ 		_rightTaken += (_menuToggle->width() - _search->width());
 diff --git a/Telegram/SourceFiles/history/view/reactions/history_view_reactions.cpp b/Telegram/SourceFiles/history/view/reactions/history_view_reactions.cpp
 index b25c8d2..6fcd601 100644
 --- a/Telegram/SourceFiles/history/view/reactions/history_view_reactions.cpp
