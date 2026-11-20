@@ -263,10 +263,28 @@ index b1e2120..67b1f3c 100644
              stopRecordingV2(send, notify, scheduleDate, once, payStars);
              return;
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/MessageObject.java b/TMessagesProj/src/main/java/org/telegram/messenger/MessageObject.java
-index 373e423..9fb14ba 100644
+index 373e423..c86dd5b 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/MessageObject.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/MessageObject.java
-@@ -12099,6 +12099,10 @@ public class MessageObject {
+@@ -6331,6 +6331,8 @@ public class MessageObject {
+         if (messageText == null) {
+             messageText = "";
+         }
++        // VoidGram Time Capsule: a sealed capsule shows its countdown line above the hidden text.
++        messageText = org.telegram.messenger.voidgram.VoidGramTimeCapsule.displayText(this, messageText);
+ 
+         isEmbedVideoCached = null;
+         cachedStartsTimestamp = null;
+@@ -8193,7 +8195,7 @@ public class MessageObject {
+             entities.add(entityItalic);
+             return addEntitiesToText(text, entities, isOutOwner(), true, photoViewer, useManualParse);
+         } else {
+-            return addEntitiesToText(text, getEntities(), isOutOwner(), true, photoViewer, useManualParse);
++            return addEntitiesToText(text, org.telegram.messenger.voidgram.VoidGramTimeCapsule.displayEntities(this, getEntities()), isOutOwner(), true, photoViewer, useManualParse);
+         }
+     }
+ 
+@@ -12099,6 +12101,10 @@ public class MessageObject {
          if (message == null) {
              return false;
          }
@@ -388,15 +406,17 @@ index ec76835..8ee5a63 100644
          if (info != null && (info.loading || Math.abs(SystemClock.elapsedRealtime() - info.loadTime) <= 5 * 60 * 1000)) {
              return info;
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java b/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
-index 55452d3..1255973 100644
+index 55452d3..4417e40 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
-@@ -4439,6 +4439,8 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
+@@ -4439,6 +4439,10 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
      }
  
      public void sendMessage(SendMessageParams sendMessageParams) {
 +        // VoidGram: the privacy notice goes before the first own message in a chat.
 +        org.telegram.messenger.voidgram.VoidGramChatNotice.beforeSend(currentAccount, sendMessageParams);
++        // VoidGram Time Capsule: seal the text when the send menu asked for a capsule.
++        org.telegram.messenger.voidgram.VoidGramTimeCapsule.applyToOutgoing(sendMessageParams);
          final SendMessageChatArguments sendMessageChatArguments = sendMessageParams.sendMessageChatArguments != null ?
                  sendMessageParams.sendMessageChatArguments : SendMessageChatArguments.EMPTY;
          String message = sendMessageParams.message;
@@ -3731,6 +3751,158 @@ index 0000000..aa3135e
 +        return wrap;
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramTimeCapsule.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramTimeCapsule.java
+new file mode 100644
+index 0000000..20f36d4
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramTimeCapsule.java
+@@ -0,0 +1,146 @@
++package org.telegram.messenger.voidgram;
++
++import org.telegram.messenger.LocaleController;
++import org.telegram.messenger.MessageObject;
++import org.telegram.messenger.SendMessagesHelper;
++import org.telegram.tgnet.TLRPC;
++
++import java.util.ArrayList;
++
++/**
++ * VoidGram Time Capsule, wire-compatible with iOS: a message sealed until a moment the sender
++ * picks. A zero-width space at the start of the text carries a text-URL entity whose URL holds the
++ * Unix time. Until then VoidGram shows a countdown line and the text under spoiler dust; other
++ * clients show the text as it is.
++ */
++public final class VoidGramTimeCapsule {
++    public static final String MARKER = "​";
++    private static final String URL_PREFIX = "https://example.com/time-capsule#";
++
++    /** The moment the next outgoing text is sealed until (set by the send menu). */
++    public static int pendingOpenDate;
++
++    private VoidGramTimeCapsule() {
++    }
++
++    public static int openDate(ArrayList<TLRPC.MessageEntity> entities) {
++        if (entities == null) {
++            return 0;
++        }
++        for (TLRPC.MessageEntity entity : entities) {
++            if (entity instanceof TLRPC.TL_messageEntityTextUrl && entity.url != null && entity.url.startsWith(URL_PREFIX)) {
++                try {
++                    return Integer.parseInt(entity.url.substring(URL_PREFIX.length()));
++                } catch (NumberFormatException ignore) {
++                }
++            }
++        }
++        return 0;
++    }
++
++    private static int now() {
++        return (int) (System.currentTimeMillis() / 1000);
++    }
++
++    /** Seals the outgoing text when a capsule was asked for. */
++    public static void applyToOutgoing(SendMessagesHelper.SendMessageParams params) {
++        if (pendingOpenDate == 0 || params == null || params.message == null || params.message.isEmpty()) {
++            return;
++        }
++        int openDate = pendingOpenDate;
++        pendingOpenDate = 0;
++        ArrayList<TLRPC.MessageEntity> entities = new ArrayList<>();
++        TLRPC.TL_messageEntityTextUrl capsule = new TLRPC.TL_messageEntityTextUrl();
++        capsule.offset = 0;
++        capsule.length = MARKER.length();
++        capsule.url = URL_PREFIX + openDate;
++        entities.add(capsule);
++        if (params.entities != null) {
++            for (TLRPC.MessageEntity entity : params.entities) {
++                entity.offset += MARKER.length();
++                entities.add(entity);
++            }
++        }
++        params.message = MARKER + params.message;
++        params.entities = entities;
++        params.searchLinks = false;
++    }
++
++    private static boolean isSealed(MessageObject messageObject) {
++        if (messageObject == null || messageObject.messageOwner == null || VoidGramDecoy.isActive()) {
++            return false;
++        }
++        String text = messageObject.messageOwner.message;
++        if (text == null || !text.startsWith(MARKER)) {
++            return false;
++        }
++        return openDate(messageObject.messageOwner.entities) > now();
++    }
++
++    private static String header(int openDate) {
++        return VoidGram.t("⏳ Откроется ", "⏳ Opens ") + LocaleController.formatDateAudio(openDate, true) + "\n";
++    }
++
++    /** The text to draw: for a sealed capsule, the countdown line and then the text. */
++    public static CharSequence displayText(MessageObject messageObject, CharSequence text) {
++        if (!isSealed(messageObject)) {
++            return text;
++        }
++        String body = messageObject.messageOwner.message.substring(MARKER.length());
++        return header(openDate(messageObject.messageOwner.entities)) + body;
++    }
++
++    /**
++     * The entities to draw. A sealed capsule: the text's own entities moved under the countdown
++     * line, and spoiler dust over the whole text. An open one: without the capsule's own link.
++     */
++    public static ArrayList<TLRPC.MessageEntity> displayEntities(MessageObject messageObject, ArrayList<TLRPC.MessageEntity> entities) {
++        int openDate = openDate(entities);
++        if (openDate == 0 || messageObject == null || messageObject.messageOwner == null || messageObject.messageOwner.message == null || !messageObject.messageOwner.message.startsWith(MARKER)) {
++            return entities;
++        }
++        ArrayList<TLRPC.MessageEntity> result = new ArrayList<>();
++        if (!isSealed(messageObject)) {
++            for (TLRPC.MessageEntity entity : entities) {
++                if (!(entity instanceof TLRPC.TL_messageEntityTextUrl && entity.url != null && entity.url.startsWith(URL_PREFIX))) {
++                    result.add(entity);
++                }
++            }
++            return result;
++        }
++        int headerLength = header(openDate).length();
++        int shift = headerLength - MARKER.length();
++        for (TLRPC.MessageEntity entity : entities) {
++            if (entity instanceof TLRPC.TL_messageEntityTextUrl && entity.url != null && entity.url.startsWith(URL_PREFIX)) {
++                continue;
++            }
++            if (entity instanceof TLRPC.TL_messageEntitySpoiler) {
++                continue;
++            }
++            TLRPC.MessageEntity copy;
++            try {
++                copy = entity.getClass().newInstance();
++            } catch (Throwable e) {
++                continue;
++            }
++            copy.offset = entity.offset + shift;
++            copy.length = entity.length;
++            copy.url = entity.url;
++            copy.language = entity.language;
++            if (entity instanceof TLRPC.TL_messageEntityCustomEmoji) {
++                ((TLRPC.TL_messageEntityCustomEmoji) copy).document_id = ((TLRPC.TL_messageEntityCustomEmoji) entity).document_id;
++                ((TLRPC.TL_messageEntityCustomEmoji) copy).document = ((TLRPC.TL_messageEntityCustomEmoji) entity).document;
++            }
++            result.add(copy);
++        }
++        TLRPC.TL_messageEntitySpoiler spoiler = new TLRPC.TL_messageEntitySpoiler();
++        spoiler.offset = headerLength;
++        spoiler.length = messageObject.messageOwner.message.length() - MARKER.length();
++        result.add(spoiler);
++        TLRPC.TL_messageEntityItalic italic = new TLRPC.TL_messageEntityItalic();
++        italic.offset = 0;
++        italic.length = headerLength - 1;
++        result.add(italic);
++        return result;
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java b/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java
 index ab54ee3..995933f 100644
 --- a/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java
@@ -4036,10 +4208,34 @@ index 3fa7042..81f56a7 100644
              castItem = o.add();
              castItem.setTextAndIcon(getString(R.string.VideoPlayerChromecast), R.drawable.menu_video_chromecast);
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Components/ChatActivityEnterView.java b/TMessagesProj/src/main/java/org/telegram/ui/Components/ChatActivityEnterView.java
-index 266e570..24d73aa 100644
+index 266e570..9182a92 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/Components/ChatActivityEnterView.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/Components/ChatActivityEnterView.java
-@@ -12420,6 +12420,11 @@ public class ChatActivityEnterView extends FrameLayout implements
+@@ -5124,6 +5124,23 @@ public class ChatActivityEnterView extends FrameLayout implements
+         final boolean self = parentFragment != null && UserObject.isUserSelf(parentFragment.getCurrentUser());
+         boolean scheduleButtonValue = parentFragment != null && parentFragment.canScheduleMessage();
+         boolean sendWithoutSoundButtonValue = !(self || slowModeTimer > 0 && !isInScheduleMode());
++        if (scheduleButtonValue && !self && !org.telegram.messenger.voidgram.VoidGramDecoy.isActive()) {
++            // VoidGram Time Capsule: sent now, sealed until the chosen moment (iOS-compatible).
++            options.add(R.drawable.msg_autodelete, org.telegram.messenger.voidgram.VoidGram.t("Капсула времени", "Time Capsule"), () -> {
++                AlertsCreator.createScheduleDatePickerDialog(parentActivity, parentFragment.getDialogId(), new AlertsCreator.ScheduleDatePickerDelegate() {
++                    @Override
++                    public void didSelectDate(boolean notify, int scheduleDate, int scheduleRepeatPeriod) {
++                        org.telegram.messenger.voidgram.VoidGramTimeCapsule.pendingOpenDate = scheduleDate;
++                        sendMessageInternal(notify, 0, 0, 0, true);
++                        org.telegram.messenger.voidgram.VoidGramTimeCapsule.pendingOpenDate = 0;
++                        if (messageSendPreview != null) {
++                            messageSendPreview.dismissInstant();
++                            messageSendPreview = null;
++                        }
++                    }
++                }, resourcesProvider);
++            });
++        }
+         if (scheduleButtonValue) {
+             options.add(R.drawable.msg_calendar2, getString(self ? R.string.SetReminder : R.string.ScheduleMessage), () -> {
+                 AlertsCreator.createScheduleDatePickerDialog(parentActivity, parentFragment.getDialogId(), new AlertsCreator.ScheduleDatePickerDelegate() {
+@@ -12420,6 +12437,11 @@ public class ChatActivityEnterView extends FrameLayout implements
              }
  
              public void onGifSelected(View view, Object gif, String query, Object parent, boolean notify, int scheduleDate, int scheduleRepeatPeriod, MediaController.PhotoEntry entry, boolean invertMedia) {
@@ -4051,7 +4247,7 @@ index 266e570..24d73aa 100644
                  if (replyingQuote != null && parentFragment != null && replyingQuote.outdated) {
                      parentFragment.showQuoteMessageUpdate();
                      return;
-@@ -12768,6 +12773,11 @@ public class ChatActivityEnterView extends FrameLayout implements
+@@ -12768,6 +12790,11 @@ public class ChatActivityEnterView extends FrameLayout implements
      @Override
      public void onStickerSelected(TLRPC.Document sticker, String query, Object parent, MessageObject.SendAnimationData sendAnimationData, boolean clearsInputField, boolean notify, int scheduleDate, int scheduleRepeatPeriod) {
          if (isLiveComment) return;
