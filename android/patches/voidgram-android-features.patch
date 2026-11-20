@@ -1186,6 +1186,435 @@ index 0000000..d824b69
 +        }
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChatExport.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChatExport.java
+new file mode 100644
+index 0000000..8392451
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChatExport.java
+@@ -0,0 +1,423 @@
++package org.telegram.messenger.voidgram;
++
++import android.util.JsonWriter;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.ApplicationLoader;
++import org.telegram.messenger.DialogObject;
++import org.telegram.messenger.FileLoader;
++import org.telegram.messenger.MessagesController;
++import org.telegram.messenger.UserObject;
++import org.telegram.messenger.Utilities;
++import org.telegram.tgnet.ConnectionsManager;
++import org.telegram.tgnet.TLRPC;
++
++import java.io.File;
++import java.io.FileInputStream;
++import java.io.FileOutputStream;
++import java.io.OutputStreamWriter;
++import java.text.SimpleDateFormat;
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.Locale;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipOutputStream;
++
++/**
++ * Chat export, as on iOS: the history is read page by page from the server and written to a ZIP
++ * with result.json (Telegram Desktop layout), messages.html and the media already on the device.
++ * Protected chats and self-destructing messages are not exported.
++ */
++public final class VoidGramChatExport {
++    private VoidGramChatExport() {
++    }
++
++    public interface Listener {
++        void onProgress(int messages, long mediaBytes);
++
++        /** file != null on success; error is a readable reason otherwise. */
++        void onDone(File file, String error);
++    }
++
++    public static final long MEDIA_BUDGET = 1_000_000_000L;
++    public static final int MAX_MESSAGES = 100_000;
++
++    private static final class Row {
++        int id;
++        int date;
++        String from;
++        String fromId;
++        String text;
++        boolean service;
++        int replyTo;
++        String photo;
++        String file;
++        String fileName;
++        String mediaStatus;
++    }
++
++    /** Whether this chat may be exported at all. */
++    public static boolean canExport(int account, long dialogId) {
++        if (DialogObject.isEncryptedDialog(dialogId) || VoidGramDecoy.isActive()) {
++            return false;
++        }
++        MessagesController controller = MessagesController.getInstance(account);
++        if (dialogId < 0) {
++            TLRPC.Chat chat = controller.getChat(-dialogId);
++            return chat != null && !chat.noforwards;
++        }
++        TLRPC.User user = controller.getUser(dialogId);
++        return user != null;
++    }
++
++    /** Starts the export; the returned Runnable cancels it. */
++    public static Runnable start(int account, long dialogId, boolean includeMedia, Listener listener) {
++        final boolean[] cancelled = new boolean[1];
++        final Job job = new Job(account, dialogId, includeMedia, listener, cancelled);
++        Utilities.globalQueue.postRunnable(job::begin);
++        return () -> {
++            cancelled[0] = true;
++            Utilities.globalQueue.postRunnable(job::discard);
++        };
++    }
++
++    private static final class Job {
++        final int account;
++        final long dialogId;
++        final boolean includeMedia;
++        final Listener listener;
++        final boolean[] cancelled;
++        final ArrayList<Row> rows = new ArrayList<>();
++        final HashMap<Long, String> names = new HashMap<>();
++        final HashSet<String> usedNames = new HashSet<>();
++        TLRPC.InputPeer peer;
++        String title = "Chat";
++        File zipFile;
++        ZipOutputStream zip;
++        long mediaBytes;
++        int offsetId;
++        boolean finished;
++
++        Job(int account, long dialogId, boolean includeMedia, Listener listener, boolean[] cancelled) {
++            this.account = account;
++            this.dialogId = dialogId;
++            this.includeMedia = includeMedia;
++            this.listener = listener;
++            this.cancelled = cancelled;
++        }
++
++        void begin() {
++            try {
++                MessagesController controller = MessagesController.getInstance(account);
++                peer = controller.getInputPeer(dialogId);
++                if (dialogId < 0) {
++                    TLRPC.Chat chat = controller.getChat(-dialogId);
++                    if (chat == null || chat.noforwards) {
++                        fail(VoidGram.t("Этот чат защищён от копирования", "This chat is protected from copying"));
++                        return;
++                    }
++                    title = chat.title;
++                } else {
++                    TLRPC.User user = controller.getUser(dialogId);
++                    if (user == null) {
++                        fail(VoidGram.t("Чат не найден", "Chat not found"));
++                        return;
++                    }
++                    title = UserObject.getUserName(user);
++                }
++                File dir = new File(new File(ApplicationLoader.applicationContext.getFilesDir(), "cache"), "voidgram_export");
++                dir.mkdirs();
++                String safe = title.replaceAll("[\\\\/:*?\"<>|\\n\\r]", "_");
++                if (safe.length() > 40) {
++                    safe = safe.substring(0, 40);
++                }
++                zipFile = new File(dir, "VoidGram-" + safe + "-" + new SimpleDateFormat("yyyy-MM-dd_HH-mm", Locale.US).format(new Date()) + ".zip");
++                zip = new ZipOutputStream(new FileOutputStream(zipFile));
++                nextPage();
++            } catch (Throwable e) {
++                fail(VoidGram.t("Не удалось создать файл", "The file could not be created"));
++            }
++        }
++
++        void nextPage() {
++            if (cancelled[0]) {
++                return;
++            }
++            TLRPC.TL_messages_getHistory req = new TLRPC.TL_messages_getHistory();
++            req.peer = peer;
++            req.offset_id = offsetId;
++            req.limit = 100;
++            ConnectionsManager.getInstance(account).sendRequest(req, (response, error) -> Utilities.globalQueue.postRunnable(() -> {
++                if (cancelled[0]) {
++                    return;
++                }
++                if (error != null) {
++                    if (error.text != null && error.text.startsWith("FLOOD_WAIT_")) {
++                        int seconds = Utilities.parseInt(error.text);
++                        Utilities.globalQueue.postRunnable(this::nextPage, Math.max(1, Math.min(seconds, 300)) * 1000L);
++                    } else {
++                        fail(VoidGram.t("Ошибка сети: ", "Network error: ") + error.text);
++                    }
++                    return;
++                }
++                if (!(response instanceof TLRPC.messages_Messages)) {
++                    fail(VoidGram.t("Сервер не ответил", "The server did not answer"));
++                    return;
++                }
++                page((TLRPC.messages_Messages) response);
++            }));
++        }
++
++        void page(TLRPC.messages_Messages result) {
++            for (TLRPC.User user : result.users) {
++                names.put(user.id, UserObject.getUserName(user));
++            }
++            for (TLRPC.Chat chat : result.chats) {
++                names.put(-chat.id, chat.title);
++                if (chat.id == -dialogId && chat.noforwards) {
++                    fail(VoidGram.t("Этот чат защищён от копирования", "This chat is protected from copying"));
++                    return;
++                }
++            }
++            if (result.messages.isEmpty()) {
++                complete();
++                return;
++            }
++            int next = Integer.MAX_VALUE;
++            for (TLRPC.Message message : result.messages) {
++                if (message.id > 0) {
++                    next = Math.min(next, message.id);
++                }
++            }
++            if (next == Integer.MAX_VALUE || offsetId != 0 && next >= offsetId) {
++                complete();
++                return;
++            }
++            int oldOffset = offsetId;
++            offsetId = next;
++            try {
++                for (TLRPC.Message message : result.messages) {
++                    if (message instanceof TLRPC.TL_messageEmpty || oldOffset != 0 && message.id >= oldOffset) {
++                        continue;
++                    }
++                    if (rows.size() >= MAX_MESSAGES) {
++                        break;
++                    }
++                    rows.add(row(message));
++                }
++            } catch (Throwable e) {
++                fail(VoidGram.t("Не удалось записать файл", "The file could not be written"));
++                return;
++            }
++            final int count = rows.size();
++            final long bytes = mediaBytes;
++            AndroidUtilities.runOnUIThread(() -> listener.onProgress(count, bytes));
++            if (rows.size() >= MAX_MESSAGES) {
++                complete();
++            } else {
++                nextPage();
++            }
++        }
++
++        Row row(TLRPC.Message message) throws Exception {
++            Row row = new Row();
++            row.id = message.id;
++            row.date = message.date;
++            row.service = message instanceof TLRPC.TL_messageService;
++            long fromId = MessageObjectHelper.fromId(message, dialogId);
++            row.from = names.get(fromId);
++            row.fromId = fromId == 0 ? null : (fromId > 0 ? "user" + fromId : "channel" + -fromId);
++            if (message.reply_to != null) {
++                row.replyTo = message.reply_to.reply_to_msg_id;
++            }
++            boolean expiring = message.ttl > 0 || message.media != null && message.media.ttl_seconds > 0 || message.noforwards;
++            row.text = expiring ? "" : (row.service ? MessageObjectHelper.serviceText(message) : message.message != null ? message.message : "");
++            if (expiring) {
++                row.mediaStatus = "Protected or expiring content omitted";
++            } else if (message.media != null && !(message.media instanceof TLRPC.TL_messageMediaEmpty) && !(message.media instanceof TLRPC.TL_messageMediaWebPage)) {
++                boolean photo = message.media instanceof TLRPC.TL_messageMediaPhoto;
++                boolean document = message.media instanceof TLRPC.TL_messageMediaDocument;
++                if ((photo || document) && includeMedia) {
++                    File source = FileLoader.getInstance(account).getPathToMessage(message);
++                    if (source != null && source.exists() && source.length() > 0 && mediaBytes + source.length() <= MEDIA_BUDGET) {
++                        String name = photo ? "photo.jpg" : FileLoader.getDocumentFileName(message.media.document);
++                        if (name == null || name.isEmpty()) {
++                            name = source.getName();
++                        }
++                        String path = "media/" + message.id + "_" + name.replaceAll("[\\\\/:*?\"<>|]", "_");
++                        if (usedNames.add(path)) {
++                            zip.putNextEntry(new ZipEntry(path));
++                            try (FileInputStream in = new FileInputStream(source)) {
++                                byte[] buffer = new byte[65536];
++                                int read;
++                                while ((read = in.read(buffer)) > 0) {
++                                    zip.write(buffer, 0, read);
++                                }
++                            }
++                            zip.closeEntry();
++                            mediaBytes += source.length();
++                        }
++                        if (photo) {
++                            row.photo = path;
++                        } else {
++                            row.file = path;
++                        }
++                        row.fileName = name;
++                    } else {
++                        row.mediaStatus = "Media not cached or exceeds export budget";
++                    }
++                } else if (photo || document) {
++                    row.mediaStatus = "Media excluded by export settings";
++                } else {
++                    row.mediaStatus = "Additional media type; no local file exported";
++                }
++            }
++            return row;
++        }
++
++        void complete() {
++            if (finished || cancelled[0]) {
++                return;
++            }
++            try {
++                java.util.Collections.sort(rows, (a, b) -> Integer.compare(a.id, b.id));
++                zip.putNextEntry(new ZipEntry("result.json"));
++                JsonWriter json = new JsonWriter(new OutputStreamWriter(new NonClosing(zip), "UTF-8"));
++                json.setIndent(" ");
++                json.beginObject();
++                json.name("name").value(title);
++                json.name("type").value(dialogId > 0 ? "personal_chat" : "public_supergroup");
++                json.name("id").value(Math.abs(dialogId));
++                json.name("exported_by").value("VoidGram");
++                json.name("messages").beginArray();
++                SimpleDateFormat iso = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US);
++                for (Row row : rows) {
++                    json.beginObject();
++                    json.name("id").value(row.id);
++                    json.name("type").value(row.service ? "service" : "message");
++                    json.name("date").value(iso.format(new Date(row.date * 1000L)));
++                    json.name("date_unixtime").value(String.valueOf(row.date));
++                    if (row.from != null) json.name("from").value(row.from);
++                    if (row.fromId != null) json.name("from_id").value(row.fromId);
++                    if (row.replyTo != 0) json.name("reply_to_message_id").value(row.replyTo);
++                    if (row.photo != null) json.name("photo").value(row.photo);
++                    if (row.file != null) json.name("file").value(row.file);
++                    if (row.fileName != null) json.name("file_name").value(row.fileName);
++                    if (row.mediaStatus != null) json.name("media_status").value(row.mediaStatus);
++                    json.name("text").value(row.text);
++                    json.endObject();
++                }
++                json.endArray();
++                json.endObject();
++                json.flush();
++                zip.closeEntry();
++
++                zip.putNextEntry(new ZipEntry("messages.html"));
++                OutputStreamWriter html = new OutputStreamWriter(new NonClosing(zip), "UTF-8");
++                html.write("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>");
++                html.write(escape(title));
++                html.write("</title><style>body{font:15px system-ui,sans-serif;background:#0e1116;color:#e6e6e6;margin:0;padding:16px}"
++                        + ".m{max-width:720px;margin:6px auto;padding:8px 12px;border-radius:12px;background:#1b2028}"
++                        + ".s{text-align:center;color:#8a93a0;background:none}.f{color:#8ab4ff;font-weight:600}"
++                        + ".d{color:#8a93a0;font-size:12px;float:right}.t{white-space:pre-wrap;word-wrap:break-word}"
++                        + "img{max-width:100%;border-radius:8px;margin-top:6px}a{color:#8ab4ff}.n{color:#8a93a0;font-size:12px}"
++                        + "@media(prefers-color-scheme:light){body{background:#f3f4f6;color:#111}.m{background:#fff}}</style></head><body>");
++                html.write("<h2 style=\"text-align:center\">" + escape(title) + "</h2>");
++                SimpleDateFormat human = new SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.US);
++                for (Row row : rows) {
++                    html.write("<div class=\"m" + (row.service ? " s" : "") + "\" id=\"m" + row.id + "\">");
++                    if (!row.service) {
++                        html.write("<span class=\"d\">" + human.format(new Date(row.date * 1000L)) + "</span>");
++                        if (row.from != null) html.write("<div class=\"f\">" + escape(row.from) + "</div>");
++                        if (row.replyTo != 0) html.write("<div class=\"n\"><a href=\"#m" + row.replyTo + "\">↩ #" + row.replyTo + "</a></div>");
++                    }
++                    if (row.photo != null) html.write("<img src=\"" + escape(row.photo) + "\" loading=\"lazy\">");
++                    if (row.file != null) html.write("<div><a href=\"" + escape(row.file) + "\">📎 " + escape(row.fileName != null ? row.fileName : row.file) + "</a></div>");
++                    if (row.text != null && !row.text.isEmpty()) html.write("<div class=\"t\">" + escape(row.text) + "</div>");
++                    if (row.mediaStatus != null && row.photo == null && row.file == null) html.write("<div class=\"n\">" + escape(row.mediaStatus) + "</div>");
++                    html.write("</div>");
++                }
++                html.write("</body></html>");
++                html.flush();
++                zip.closeEntry();
++                zip.close();
++                finished = true;
++                final File file = zipFile;
++                AndroidUtilities.runOnUIThread(() -> listener.onDone(file, null));
++            } catch (Throwable e) {
++                fail(VoidGram.t("Не удалось записать файл", "The file could not be written"));
++            }
++        }
++
++        void fail(String reason) {
++            if (finished) {
++                return;
++            }
++            finished = true;
++            discard();
++            AndroidUtilities.runOnUIThread(() -> listener.onDone(null, reason));
++        }
++
++        void discard() {
++            try {
++                if (zip != null) {
++                    zip.close();
++                }
++            } catch (Throwable ignore) {
++            }
++            if (zipFile != null && (!finished || cancelled[0])) {
++                zipFile.delete();
++            }
++        }
++    }
++
++    private static String escape(String text) {
++        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;");
++    }
++
++    /** Writers on a zip entry must not close the whole archive. */
++    private static final class NonClosing extends java.io.FilterOutputStream {
++        NonClosing(java.io.OutputStream out) {
++            super(out);
++        }
++
++        @Override
++        public void write(byte[] b, int off, int len) throws java.io.IOException {
++            out.write(b, off, len);
++        }
++
++        @Override
++        public void close() throws java.io.IOException {
++            flush();
++        }
++    }
++
++    private static final class MessageObjectHelper {
++        static long fromId(TLRPC.Message message, long dialogId) {
++            if (message.from_id instanceof TLRPC.TL_peerUser) {
++                return message.from_id.user_id;
++            } else if (message.from_id instanceof TLRPC.TL_peerChannel) {
++                return -message.from_id.channel_id;
++            } else if (message.from_id instanceof TLRPC.TL_peerChat) {
++                return -message.from_id.chat_id;
++            }
++            return dialogId;
++        }
++
++        static String serviceText(TLRPC.Message message) {
++            if (message.action == null) {
++                return "";
++            }
++            String name = message.action.getClass().getSimpleName();
++            if (name.startsWith("TL_messageAction")) {
++                name = name.substring("TL_messageAction".length());
++            }
++            if (message.action.title != null && !message.action.title.isEmpty()) {
++                return name + ": " + message.action.title;
++            }
++            return name;
++        }
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChatNotice.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChatNotice.java
 new file mode 100644
 index 0000000..5c73fef
@@ -5180,7 +5609,7 @@ index 5dc090f..42ae0c5 100644
  
      void measureTime(MessageObject messageObject) {
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
-index a54b134..6e4fad6 100644
+index a54b134..79a4339 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 @@ -1246,6 +1246,10 @@ public class ChatActivity extends BaseFragment implements
@@ -5203,7 +5632,7 @@ index a54b134..6e4fad6 100644
      private final static int forward = 11;
      private final static int delete = 12;
      private final static int chat_enc_timer = 13;
-@@ -1707,6 +1713,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -1707,6 +1713,11 @@ public class ChatActivity extends BaseFragment implements
      private final static int view_as_topics = 59;
  
      private final static int search = 40;
@@ -5211,10 +5640,11 @@ index a54b134..6e4fad6 100644
 +    private final static int voidgram_ghost_chat = 9201;
 +    /** VoidGram: notifications for important posts in a muted chat. */
 +    private final static int voidgram_important_posts = 9203;
++    private final static int voidgram_export_chat = 9204;
  
      private final static int topic_close = 60;
      private final static int open_forum = 61;
-@@ -2835,6 +2845,15 @@ public class ChatActivity extends BaseFragment implements
+@@ -2835,6 +2846,15 @@ public class ChatActivity extends BaseFragment implements
          }
  
          dialog_id_Long = dialog_id;
@@ -5230,7 +5660,7 @@ index a54b134..6e4fad6 100644
  
          transitionAnimationGlobalIndex = NotificationCenter.getGlobalInstance().setAnimationInProgress(transitionAnimationGlobalIndex, new int[0]);
  
-@@ -3336,8 +3355,16 @@ public class ChatActivity extends BaseFragment implements
+@@ -3336,8 +3356,16 @@ public class ChatActivity extends BaseFragment implements
          }
      }
  
@@ -5247,7 +5677,7 @@ index a54b134..6e4fad6 100644
          super.onFragmentDestroy();
          if (messageMetricsView != null) {
              messageMetricsView.finish();
-@@ -3746,6 +3773,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -3746,6 +3774,8 @@ public class ChatActivity extends BaseFragment implements
                          getMessagesController().getTopicsController().toggleViewForumAsMessages(-dialog_id, false);
                          TopicsFragment.prepareToSwitchAnimation(ChatActivity.this);
                      }
@@ -5256,10 +5686,12 @@ index a54b134..6e4fad6 100644
                  } else if (id == copy) {
                      SpannableStringBuilder str = new SpannableStringBuilder();
                      long previousUid = 0;
-@@ -3988,6 +4017,14 @@ public class ChatActivity extends BaseFragment implements
+@@ -3988,6 +4018,16 @@ public class ChatActivity extends BaseFragment implements
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/help", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
                  } else if (id == bot_settings) {
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/settings", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
++                } else if (id == voidgram_export_chat) {
++                    org.telegram.ui.voidgram.VoidGramChatExportSheet.show(ChatActivity.this, currentAccount, dialog_id);
 +                } else if (id == voidgram_important_posts) {
 +                    org.telegram.messenger.voidgram.VoidGramImportantPosts.showEditor(getParentActivity(), currentAccount, dialog_id);
 +                } else if (id == voidgram_ghost_chat) {
@@ -5271,12 +5703,15 @@ index a54b134..6e4fad6 100644
                  } else if (id == search) {
                      openSearchWithText(isSupportedTags() ? "" : null);
                  } else if (id == translate) {
-@@ -4398,6 +4435,12 @@ public class ChatActivity extends BaseFragment implements
+@@ -4398,6 +4438,15 @@ public class ChatActivity extends BaseFragment implements
              if (searchItem != null) {
                  headerItem.lazilyAddSubItem(search, R.drawable.msg_search, LocaleController.getString(R.string.Search));
              }
 +            if (currentChat != null && !org.telegram.messenger.voidgram.VoidGramDecoy.isActive()) {
 +                headerItem.lazilyAddSubItem(voidgram_important_posts, R.drawable.msg_mute, org.telegram.messenger.voidgram.VoidGram.t("Важные посты", "Important posts"));
++            }
++            if (chatMode == 0 && !isTopic && org.telegram.messenger.voidgram.VoidGramChatExport.canExport(currentAccount, dialog_id)) {
++                headerItem.lazilyAddSubItem(voidgram_export_chat, R.drawable.msg_shareout, org.telegram.messenger.voidgram.VoidGram.t("Экспорт чата", "Export chat"));
 +            }
 +            if (org.telegram.messenger.voidgram.VoidGramGhost.isEnabled(currentAccount) && !DialogObject.isEncryptedDialog(dialog_id)) {
 +                headerItem.lazilyAddSubItem(voidgram_ghost_chat, R.drawable.msg_secret, org.telegram.messenger.voidgram.VoidGram.t("Призрак в этом чате", "Ghost in this chat"));
@@ -5284,7 +5719,7 @@ index a54b134..6e4fad6 100644
              if (ChatObject.isBoostSupported(currentChat) && (getUserConfig().isPremium() || ChatObject.isBoosted(chatInfo) || ChatObject.hasAdminRights(currentChat))) {
                  RLottieDrawable drawable = new RLottieDrawable(R.raw.boosts, dp(24), dp(24));
                  headerItem.lazilyAddSubItem(boost_group, drawable, LocaleController.getString(ChatObject.isChannelAndNotMegaGroup(currentChat) ? R.string.BoostingBoostChannelMenu : R.string.BoostingBoostGroupMenu));
-@@ -6727,7 +6770,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -6727,7 +6776,8 @@ public class ChatActivity extends BaseFragment implements
                      scrolled = super.scrollVerticallyBy(dy, recycler, state);
                  }
                  final boolean allowPullingDownScroll = !isInPollAddOptionMode() && !hasSelectedMessages();
@@ -5294,7 +5729,7 @@ index a54b134..6e4fad6 100644
                      if (pullingDownOffset == 0 && pullingDownDrawable != null) {
                          if (nextChannels != null && !nextChannels.isEmpty()) {
                              pullingDownDrawable.updateDialog(nextChannels.get(0));
-@@ -6861,6 +6905,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -6861,6 +6911,10 @@ public class ChatActivity extends BaseFragment implements
                      } else if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
                          pollHintCell = null;
                          wasManualScroll = true;
@@ -5305,7 +5740,7 @@ index a54b134..6e4fad6 100644
                          scrollingFloatingDate = true;
                          scrollingFloatingTopic = true;
                          checkTextureViewPosition = true;
-@@ -7392,7 +7440,7 @@ public class ChatActivity extends BaseFragment implements
+@@ -7392,7 +7446,7 @@ public class ChatActivity extends BaseFragment implements
                  } else {
                      String username = ChatObject.getPublicUsername(chat);
                      if (username != null) {
@@ -5314,7 +5749,7 @@ index a54b134..6e4fad6 100644
                      }
                  }
              } else if (object instanceof TLRPC.User) {
-@@ -7401,7 +7449,7 @@ public class ChatActivity extends BaseFragment implements
+@@ -7401,7 +7455,7 @@ public class ChatActivity extends BaseFragment implements
                      searchUserMessages(user, null);
                  } else {
                      if (UserObject.getPublicUsername(user) != null) {
@@ -5323,7 +5758,7 @@ index a54b134..6e4fad6 100644
                      } else {
                          String name = UserObject.getFirstName(user, false);
                          Spannable spannable = new SpannableString(name + " ");
-@@ -10820,6 +10868,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -10820,6 +10874,9 @@ public class ChatActivity extends BaseFragment implements
                  actionModeViews.add(actionMode.addItemWithWidth(forward, R.drawable.msg_forward, dp(48), LocaleController.getString(R.string.Forward)));
              }
              actionModeViews.add(actionMode.addItemWithWidth(share, R.drawable.msg_shareout, dp(48), LocaleController.getString(R.string.ShareFile)));
@@ -5333,7 +5768,7 @@ index a54b134..6e4fad6 100644
              actionModeViews.add(actionMode.addItemWithWidth(delete, R.drawable.msg_delete, dp(48), LocaleController.getString(R.string.Delete)));
          } else {
              actionModeViews.add(actionMode.addItemWithWidth(edit, R.drawable.msg_edit, dp(48), LocaleController.getString(R.string.Edit)));
-@@ -21371,7 +21422,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -21371,7 +21428,8 @@ public class ChatActivity extends BaseFragment implements
          if (postponedScroll) {
              postponedScrollToLastMessageQueryIndex = 0;
          }
@@ -5343,7 +5778,7 @@ index a54b134..6e4fad6 100644
          layOutWidgetsForSideMenu(messArr);
  
          boolean universalNotify = false;
-@@ -22807,8 +22859,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -22807,8 +22865,9 @@ public class ChatActivity extends BaseFragment implements
          } else if (id == NotificationCenter.didReceiveNewMessages) {
              FileLog.d("ChatActivity didReceiveNewMessages start");
              long did = (Long) args[0];
@@ -5354,7 +5789,7 @@ index a54b134..6e4fad6 100644
              if (did == dialog_id) {
                  boolean scheduled = (Boolean) args[2];
                  int mode = (Integer) args[3];
-@@ -31957,6 +32010,17 @@ public class ChatActivity extends BaseFragment implements
+@@ -31957,6 +32016,17 @@ public class ChatActivity extends BaseFragment implements
                  icons.add(R.drawable.msg_calendar2);
              }
  
@@ -5372,7 +5807,7 @@ index a54b134..6e4fad6 100644
              if (options.isEmpty() && optionsView == null) {
                  return false;
              }
-@@ -34293,6 +34357,17 @@ public class ChatActivity extends BaseFragment implements
+@@ -34293,6 +34363,17 @@ public class ChatActivity extends BaseFragment implements
          }
          boolean preserveDim = false;
          switch (option) {
@@ -5726,6 +6161,100 @@ index 529eb5c..e8358f5 100644
          return (dialogListStories != null && dialogListStories.size() > 0) || hasSelfStories();
      }
  
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatExportSheet.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatExportSheet.java
+new file mode 100644
+index 0000000..53c13b2
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatExportSheet.java
+@@ -0,0 +1,88 @@
++package org.telegram.ui.voidgram;
++
++import android.content.Intent;
++import android.net.Uri;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.ApplicationLoader;
++import org.telegram.messenger.R;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramChatExport;
++import org.telegram.ui.ActionBar.AlertDialog;
++import org.telegram.ui.ActionBar.BaseFragment;
++import org.telegram.ui.Components.BulletinFactory;
++
++import java.io.File;
++
++/** Chat menu → Export chat: choose media, show progress, share the ZIP. */
++public final class VoidGramChatExportSheet {
++    private VoidGramChatExportSheet() {
++    }
++
++    public static void show(BaseFragment fragment, int account, long dialogId) {
++        if (fragment == null || fragment.getParentActivity() == null) {
++            return;
++        }
++        if (!VoidGramChatExport.canExport(account, dialogId)) {
++            BulletinFactory.of(fragment).createErrorBulletin(VoidGram.t("Этот чат нельзя экспортировать", "This chat cannot be exported")).show();
++            return;
++        }
++        AlertDialog.Builder builder = new AlertDialog.Builder(fragment.getParentActivity());
++        builder.setTitle(VoidGram.t("Экспорт чата", "Export chat"));
++        builder.setMessage(VoidGram.t(
++                "Вся история чата будет сохранена в ZIP: result.json (формат Telegram Desktop), messages.html и медиа, которые уже загружены на устройство (до 1 ГБ). Защищённые и исчезающие сообщения не сохраняются.",
++                "The whole chat history goes into a ZIP: result.json (Telegram Desktop format), messages.html and media already on this device (up to 1 GB). Protected and disappearing messages are not saved."));
++        builder.setPositiveButton(VoidGram.t("С медиа", "With media"), (d, w) -> run(fragment, account, dialogId, true));
++        builder.setNeutralButton(VoidGram.t("Только текст", "Text only"), (d, w) -> run(fragment, account, dialogId, false));
++        builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++        fragment.showDialog(builder.create());
++    }
++
++    private static void run(BaseFragment fragment, int account, long dialogId, boolean media) {
++        AlertDialog progress = new AlertDialog(fragment.getParentActivity(), AlertDialog.ALERT_TYPE_MESSAGE);
++        progress.setTitle(VoidGram.t("Экспорт чата", "Export chat"));
++        progress.setMessage(VoidGram.t("Подготовка…", "Preparing…"));
++        final Runnable[] cancel = new Runnable[1];
++        progress.setNegativeButton(VoidGram.t("Отмена", "Cancel"), (d, w) -> {
++            if (cancel[0] != null) {
++                cancel[0].run();
++            }
++        });
++        progress.setCanceledOnTouchOutside(false);
++        progress.setCancelable(false);
++        fragment.showDialog(progress);
++        cancel[0] = VoidGramChatExport.start(account, dialogId, media, new VoidGramChatExport.Listener() {
++            @Override
++            public void onProgress(int messages, long mediaBytes) {
++                progress.setMessage(VoidGram.t("Сообщений: ", "Messages: ") + messages + (mediaBytes > 0 ? "\n" + VoidGram.t("Медиа: ", "Media: ") + AndroidUtilities.formatFileSize(mediaBytes) : ""));
++            }
++
++            @Override
++            public void onDone(File file, String error) {
++                try {
++                    progress.dismiss();
++                } catch (Throwable ignore) {
++                }
++                if (file == null) {
++                    BulletinFactory.of(fragment).createErrorBulletin(error != null ? error : VoidGram.t("Экспорт не удался", "Export failed")).show();
++                    return;
++                }
++                share(fragment, file);
++            }
++        });
++    }
++
++    private static void share(BaseFragment fragment, File file) {
++        try {
++            Uri uri = androidx.core.content.FileProvider.getUriForFile(fragment.getParentActivity(), ApplicationLoader.getApplicationId() + ".provider", file);
++            Intent intent = new Intent(Intent.ACTION_SEND);
++            intent.setType("application/zip");
++            intent.putExtra(Intent.EXTRA_STREAM, uri);
++            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
++            fragment.getParentActivity().startActivity(Intent.createChooser(intent, VoidGram.t("Экспорт чата", "Export chat")));
++            BulletinFactory.of(fragment).createSimpleBulletin(R.raw.done, VoidGram.t("Экспорт готов", "Export ready")).show();
++        } catch (Throwable e) {
++            BulletinFactory.of(fragment).createErrorBulletin(VoidGram.t("Не удалось открыть файл", "The file could not be opened")).show();
++        }
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java
 new file mode 100644
 index 0000000..2eaf60e
