@@ -171,10 +171,10 @@ index 0de2d106..d839d3f7 100644
          ])
 diff --git a/submodules/SettingsUI/Sources/AyuNatsukinMusic.swift b/submodules/SettingsUI/Sources/AyuNatsukinMusic.swift
 new file mode 100644
-index 00000000..c291dfcf
+index 00000000..b039ed1c
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuNatsukinMusic.swift
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,85 @@
 +import Foundation
 +import UIKit
 +import AVFoundation
@@ -190,10 +190,16 @@ index 00000000..c291dfcf
 +    init(russian: Bool) {
 +        self.russian = russian
 +        super.init(frame: CGRect())
-+        self.titleLabel?.font = UIFont.systemFont(ofSize: 12.0, weight: .medium)
-+        self.setTitleColor(UIColor.secondaryLabel, for: .normal)
++        var configuration = UIButton.Configuration.plain()
++        configuration.contentInsets = NSDirectionalEdgeInsets(top: 5.0, leading: 10.0, bottom: 5.0, trailing: 10.0)
++        configuration.baseForegroundColor = UIColor.secondaryLabel
++        configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
++            var attributes = attributes
++            attributes.font = UIFont.systemFont(ofSize: 12.0, weight: .medium)
++            return attributes
++        }
++        self.configuration = configuration
 +        self.backgroundColor = UIColor.tertiarySystemFill
-+        self.contentEdgeInsets = UIEdgeInsets(top: 5.0, left: 10.0, bottom: 5.0, right: 10.0)
 +        self.layer.cornerRadius = 12.0
 +        self.layer.cornerCurve = .continuous
 +        self.alpha = 0.35
@@ -216,7 +222,7 @@ index 00000000..c291dfcf
 +
 +    private func updateTitle() {
 +        let base = self.russian ? "музыка @natsuk1n_dev-а" : "@natsuk1n_dev's music"
-+        self.setTitle((self.isPlaying ? "■ " : "♪ ") + base, for: .normal)
++        self.configuration?.title = (self.isPlaying ? "■ " : "♪ ") + base
 +        self.sizeToFit()
 +        UIView.animate(withDuration: 0.2, animations: {
 +            self.alpha = self.isPlaying ? 0.7 : 0.35
