@@ -6275,10 +6275,10 @@ index 5dc090f..3f4b262 100644
  
      void measureTime(MessageObject messageObject) {
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
-index a54b134..f9d0c56 100644
+index a54b134..0491433 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
-@@ -1246,6 +1246,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -1246,6 +1246,11 @@ public class ChatActivity extends BaseFragment implements
      public final static int OPTION_DELETE = 1;
      public final static int OPTION_FORWARD = 2;
      public final static int OPTION_COPY = 3;
@@ -6286,10 +6286,11 @@ index a54b134..f9d0c56 100644
 +    public final static int OPTION_VOIDGRAM_EDIT_HISTORY = 9101;
 +    /** VoidGram: copy the message and chat ids. */
 +    public final static int OPTION_VOIDGRAM_COPY_ID = 9102;
++    public final static int OPTION_VOIDGRAM_TOOLS = 9103;
      public final static int OPTION_SAVE_TO_GALLERY = 4;
      public final static int OPTION_APPLY_LOCALIZATION_OR_THEME = 5;
      public final static int OPTION_SHARE = 6;
-@@ -1674,6 +1678,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -1674,6 +1679,8 @@ public class ChatActivity extends BaseFragment implements
      };
  
      private final static int copy = 10;
@@ -6298,7 +6299,7 @@ index a54b134..f9d0c56 100644
      private final static int forward = 11;
      private final static int delete = 12;
      private final static int chat_enc_timer = 13;
-@@ -1707,6 +1713,11 @@ public class ChatActivity extends BaseFragment implements
+@@ -1707,6 +1714,12 @@ public class ChatActivity extends BaseFragment implements
      private final static int view_as_topics = 59;
  
      private final static int search = 40;
@@ -6307,10 +6308,11 @@ index a54b134..f9d0c56 100644
 +    /** VoidGram: notifications for important posts in a muted chat. */
 +    private final static int voidgram_important_posts = 9203;
 +    private final static int voidgram_export_chat = 9204;
++    private final static int voidgram_chat_tools = 9205;
  
      private final static int topic_close = 60;
      private final static int open_forum = 61;
-@@ -2195,6 +2206,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -2195,6 +2208,10 @@ public class ChatActivity extends BaseFragment implements
          @Override
          public void onTextChanged(final CharSequence text, boolean bigChange, boolean fromDraft) {
              MediaController.getInstance().setInputFieldHasText(!TextUtils.isEmpty(text) || chatActivityEnterView.isEditingMessage());
@@ -6321,7 +6323,7 @@ index a54b134..f9d0c56 100644
              if (mentionContainer != null && mentionContainer.getAdapter() != null) {
                  mentionContainer.getAdapter().searchUsernameOrHashtag(text, chatActivityEnterView.getCursorPosition(), messages, false, false);
              }
-@@ -2835,6 +2850,15 @@ public class ChatActivity extends BaseFragment implements
+@@ -2835,6 +2852,15 @@ public class ChatActivity extends BaseFragment implements
          }
  
          dialog_id_Long = dialog_id;
@@ -6337,7 +6339,7 @@ index a54b134..f9d0c56 100644
  
          transitionAnimationGlobalIndex = NotificationCenter.getGlobalInstance().setAnimationInProgress(transitionAnimationGlobalIndex, new int[0]);
  
-@@ -3336,8 +3360,16 @@ public class ChatActivity extends BaseFragment implements
+@@ -3336,8 +3362,16 @@ public class ChatActivity extends BaseFragment implements
          }
      }
  
@@ -6354,7 +6356,7 @@ index a54b134..f9d0c56 100644
          super.onFragmentDestroy();
          if (messageMetricsView != null) {
              messageMetricsView.finish();
-@@ -3746,6 +3778,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -3746,6 +3780,8 @@ public class ChatActivity extends BaseFragment implements
                          getMessagesController().getTopicsController().toggleViewForumAsMessages(-dialog_id, false);
                          TopicsFragment.prepareToSwitchAnimation(ChatActivity.this);
                      }
@@ -6363,10 +6365,12 @@ index a54b134..f9d0c56 100644
                  } else if (id == copy) {
                      SpannableStringBuilder str = new SpannableStringBuilder();
                      long previousUid = 0;
-@@ -3988,6 +4022,16 @@ public class ChatActivity extends BaseFragment implements
+@@ -3988,6 +4024,18 @@ public class ChatActivity extends BaseFragment implements
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/help", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
                  } else if (id == bot_settings) {
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/settings", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
++                } else if (id == voidgram_chat_tools) {
++                    org.telegram.ui.voidgram.VoidGramOnlineTools.showChatTools(ChatActivity.this, currentAccount, dialog_id, messages);
 +                } else if (id == voidgram_export_chat) {
 +                    org.telegram.ui.voidgram.VoidGramChatExportSheet.show(ChatActivity.this, currentAccount, dialog_id);
 +                } else if (id == voidgram_important_posts) {
@@ -6380,7 +6384,7 @@ index a54b134..f9d0c56 100644
                  } else if (id == search) {
                      openSearchWithText(isSupportedTags() ? "" : null);
                  } else if (id == translate) {
-@@ -4398,6 +4442,15 @@ public class ChatActivity extends BaseFragment implements
+@@ -4398,6 +4446,18 @@ public class ChatActivity extends BaseFragment implements
              if (searchItem != null) {
                  headerItem.lazilyAddSubItem(search, R.drawable.msg_search, LocaleController.getString(R.string.Search));
              }
@@ -6390,13 +6394,16 @@ index a54b134..f9d0c56 100644
 +            if (chatMode == 0 && !isTopic && org.telegram.messenger.voidgram.VoidGramChatExport.canExport(currentAccount, dialog_id)) {
 +                headerItem.lazilyAddSubItem(voidgram_export_chat, R.drawable.msg_shareout, org.telegram.messenger.voidgram.VoidGram.t("Экспорт чата", "Export chat"));
 +            }
++            if (chatMode == 0 && !org.telegram.messenger.voidgram.VoidGramDecoy.isActive() && !DialogObject.isEncryptedDialog(dialog_id)) {
++                headerItem.lazilyAddSubItem(voidgram_chat_tools, R.drawable.msg_stats, org.telegram.messenger.voidgram.VoidGram.t("Статистика и ИИ", "Statistics and AI"));
++            }
 +            if (org.telegram.messenger.voidgram.VoidGramGhost.isEnabled(currentAccount) && !DialogObject.isEncryptedDialog(dialog_id)) {
 +                headerItem.lazilyAddSubItem(voidgram_ghost_chat, R.drawable.msg_secret, org.telegram.messenger.voidgram.VoidGram.t("Призрак в этом чате", "Ghost in this chat"));
 +            }
              if (ChatObject.isBoostSupported(currentChat) && (getUserConfig().isPremium() || ChatObject.isBoosted(chatInfo) || ChatObject.hasAdminRights(currentChat))) {
                  RLottieDrawable drawable = new RLottieDrawable(R.raw.boosts, dp(24), dp(24));
                  headerItem.lazilyAddSubItem(boost_group, drawable, LocaleController.getString(ChatObject.isChannelAndNotMegaGroup(currentChat) ? R.string.BoostingBoostChannelMenu : R.string.BoostingBoostGroupMenu));
-@@ -6727,7 +6780,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -6727,7 +6787,8 @@ public class ChatActivity extends BaseFragment implements
                      scrolled = super.scrollVerticallyBy(dy, recycler, state);
                  }
                  final boolean allowPullingDownScroll = !isInPollAddOptionMode() && !hasSelectedMessages();
@@ -6406,7 +6413,7 @@ index a54b134..f9d0c56 100644
                      if (pullingDownOffset == 0 && pullingDownDrawable != null) {
                          if (nextChannels != null && !nextChannels.isEmpty()) {
                              pullingDownDrawable.updateDialog(nextChannels.get(0));
-@@ -6861,6 +6915,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -6861,6 +6922,10 @@ public class ChatActivity extends BaseFragment implements
                      } else if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
                          pollHintCell = null;
                          wasManualScroll = true;
@@ -6417,7 +6424,7 @@ index a54b134..f9d0c56 100644
                          scrollingFloatingDate = true;
                          scrollingFloatingTopic = true;
                          checkTextureViewPosition = true;
-@@ -7392,7 +7450,7 @@ public class ChatActivity extends BaseFragment implements
+@@ -7392,7 +7457,7 @@ public class ChatActivity extends BaseFragment implements
                  } else {
                      String username = ChatObject.getPublicUsername(chat);
                      if (username != null) {
@@ -6426,7 +6433,7 @@ index a54b134..f9d0c56 100644
                      }
                  }
              } else if (object instanceof TLRPC.User) {
-@@ -7401,7 +7459,7 @@ public class ChatActivity extends BaseFragment implements
+@@ -7401,7 +7466,7 @@ public class ChatActivity extends BaseFragment implements
                      searchUserMessages(user, null);
                  } else {
                      if (UserObject.getPublicUsername(user) != null) {
@@ -6435,7 +6442,7 @@ index a54b134..f9d0c56 100644
                      } else {
                          String name = UserObject.getFirstName(user, false);
                          Spannable spannable = new SpannableString(name + " ");
-@@ -10820,6 +10878,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -10820,6 +10885,9 @@ public class ChatActivity extends BaseFragment implements
                  actionModeViews.add(actionMode.addItemWithWidth(forward, R.drawable.msg_forward, dp(48), LocaleController.getString(R.string.Forward)));
              }
              actionModeViews.add(actionMode.addItemWithWidth(share, R.drawable.msg_shareout, dp(48), LocaleController.getString(R.string.ShareFile)));
@@ -6445,7 +6452,7 @@ index a54b134..f9d0c56 100644
              actionModeViews.add(actionMode.addItemWithWidth(delete, R.drawable.msg_delete, dp(48), LocaleController.getString(R.string.Delete)));
          } else {
              actionModeViews.add(actionMode.addItemWithWidth(edit, R.drawable.msg_edit, dp(48), LocaleController.getString(R.string.Edit)));
-@@ -21371,7 +21432,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -21371,7 +21439,8 @@ public class ChatActivity extends BaseFragment implements
          if (postponedScroll) {
              postponedScrollToLastMessageQueryIndex = 0;
          }
@@ -6455,7 +6462,7 @@ index a54b134..f9d0c56 100644
          layOutWidgetsForSideMenu(messArr);
  
          boolean universalNotify = false;
-@@ -22807,8 +22869,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -22807,8 +22876,9 @@ public class ChatActivity extends BaseFragment implements
          } else if (id == NotificationCenter.didReceiveNewMessages) {
              FileLog.d("ChatActivity didReceiveNewMessages start");
              long did = (Long) args[0];
@@ -6466,7 +6473,7 @@ index a54b134..f9d0c56 100644
              if (did == dialog_id) {
                  boolean scheduled = (Boolean) args[2];
                  int mode = (Integer) args[3];
-@@ -28135,6 +28198,13 @@ public class ChatActivity extends BaseFragment implements
+@@ -28135,6 +28205,13 @@ public class ChatActivity extends BaseFragment implements
      @Override
      public void onTransitionAnimationEnd(boolean isOpen, boolean backward) {
          super.onTransitionAnimationEnd(isOpen, backward);
@@ -6480,7 +6487,7 @@ index a54b134..f9d0c56 100644
          if (isOpen) {
              if (backward) {
                  if (showPinBulletin && pinBulletin != null) {
-@@ -31957,6 +32027,17 @@ public class ChatActivity extends BaseFragment implements
+@@ -31957,6 +32034,23 @@ public class ChatActivity extends BaseFragment implements
                  icons.add(R.drawable.msg_calendar2);
              }
  
@@ -6495,15 +6502,25 @@ index a54b134..f9d0c56 100644
 +                options.add(OPTION_VOIDGRAM_COPY_ID);
 +                icons.add(R.drawable.msg_copy);
 +            }
++            // VoidGram: VirusTotal and AI for this message.
++            if (message != null && message.getId() > 0 && !org.telegram.messenger.voidgram.VoidGramDecoy.isActive() && (message.getDocument() != null || message.isPhoto() || message.messageOwner != null && message.messageOwner.message != null && (message.messageOwner.message.length() > 80 || org.telegram.ui.voidgram.VoidGramOnlineTools.firstUrl(message.messageOwner.message) != null))) {
++                items.add(org.telegram.messenger.voidgram.VoidGram.t("Инструменты VoidGram", "VoidGram tools"));
++                options.add(OPTION_VOIDGRAM_TOOLS);
++                icons.add(R.drawable.msg_settings);
++            }
              if (options.isEmpty() && optionsView == null) {
                  return false;
              }
-@@ -34293,6 +34374,17 @@ public class ChatActivity extends BaseFragment implements
+@@ -34293,6 +34387,21 @@ public class ChatActivity extends BaseFragment implements
          }
          boolean preserveDim = false;
          switch (option) {
 +            case OPTION_VOIDGRAM_EDIT_HISTORY: {
 +                org.telegram.messenger.voidgram.VoidGramHistory.showEdits(this, selectedObject);
++                break;
++            }
++            case OPTION_VOIDGRAM_TOOLS: {
++                org.telegram.ui.voidgram.VoidGramOnlineTools.showMessageTools(ChatActivity.this, selectedObject);
 +                break;
 +            }
 +            case OPTION_VOIDGRAM_COPY_ID: {
@@ -8283,6 +8300,604 @@ index 0000000..1c86390
 +        return false;
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramOnlineTools.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramOnlineTools.java
+new file mode 100644
+index 0000000..23e4b08
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramOnlineTools.java
+@@ -0,0 +1,592 @@
++package org.telegram.ui.voidgram;
++
++import android.util.Base64;
++
++import org.json.JSONArray;
++import org.json.JSONObject;
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.FileLoader;
++import org.telegram.messenger.MessageObject;
++import org.telegram.messenger.MessagesController;
++import org.telegram.messenger.UserObject;
++import org.telegram.messenger.Utilities;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.tgnet.ConnectionsManager;
++import org.telegram.tgnet.TLRPC;
++import org.telegram.ui.ActionBar.AlertDialog;
++import org.telegram.ui.ActionBar.BaseFragment;
++
++import java.io.ByteArrayOutputStream;
++import java.io.File;
++import java.io.FileInputStream;
++import java.io.InputStream;
++import java.io.OutputStream;
++import java.net.HttpURLConnection;
++import java.net.URL;
++import java.net.URLEncoder;
++import java.security.MessageDigest;
++import java.text.DateFormat;
++import java.util.ArrayList;
++import java.util.Calendar;
++import java.util.Collections;
++import java.util.Date;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Locale;
++import java.util.Map;
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
++
++/**
++ * VirusTotal checks, AI summaries and local chat statistics, as on iOS. Each runs only when the
++ * user taps it, with the user's own API key; files are checked by SHA-256 and never uploaded.
++ */
++public final class VoidGramOnlineTools {
++    private VoidGramOnlineTools() {
++    }
++
++    public static final String DEFAULT_AI_ENDPOINT = "https://api.openai.com/v1/chat/completions";
++    public static final String DEFAULT_AI_MODEL = "gpt-4o-mini";
++    private static final Pattern LINK = Pattern.compile("https?://[^\\s<>\"«»]+", Pattern.CASE_INSENSITIVE);
++
++    public static String virusTotalKey() {
++        return VoidGram.prefs().getString("vt_key", "");
++    }
++
++    public static void setVirusTotalKey(String value) {
++        VoidGram.prefs().edit().putString("vt_key", value == null ? "" : value.trim()).apply();
++    }
++
++    public static String aiKey() {
++        return VoidGram.prefs().getString("ai_key", "");
++    }
++
++    public static void setAiKey(String value) {
++        VoidGram.prefs().edit().putString("ai_key", value == null ? "" : value.trim()).apply();
++    }
++
++    public static String aiEndpoint() {
++        String value = VoidGram.prefs().getString("ai_endpoint", "");
++        return value.isEmpty() ? DEFAULT_AI_ENDPOINT : value;
++    }
++
++    public static void setAiEndpoint(String value) {
++        VoidGram.prefs().edit().putString("ai_endpoint", value == null ? "" : value.trim()).apply();
++    }
++
++    public static String aiModel() {
++        String value = VoidGram.prefs().getString("ai_model", "");
++        return value.isEmpty() ? DEFAULT_AI_MODEL : value;
++    }
++
++    public static void setAiModel(String value) {
++        VoidGram.prefs().edit().putString("ai_model", value == null ? "" : value.trim()).apply();
++    }
++
++    static void present(BaseFragment fragment, String title, String message) {
++        if (fragment == null || fragment.getParentActivity() == null) {
++            return;
++        }
++        AlertDialog.Builder builder = new AlertDialog.Builder(fragment.getParentActivity());
++        builder.setTitle(title);
++        builder.setMessage(message);
++        builder.setPositiveButton("OK", null);
++        builder.setNeutralButton(VoidGram.t("Копировать", "Copy"), (d, w) -> AndroidUtilities.addToClipboard(message));
++        fragment.showDialog(builder.create());
++    }
++
++    private static void missingKey(BaseFragment fragment, String what) {
++        present(fragment, what, VoidGram.t("Добавьте ключ API в VoidGram → Инструменты → Онлайн-инструменты.", "Add an API key in VoidGram → Tools → Online tools."));
++    }
++
++    public static String firstUrl(CharSequence text) {
++        if (text == null) {
++            return null;
++        }
++        Matcher matcher = LINK.matcher(text);
++        return matcher.find() ? matcher.group() : null;
++    }
++
++    // ---- Message menu ----
++
++    /** Message menu → VoidGram tools. */
++    public static void showMessageTools(BaseFragment fragment, MessageObject message) {
++        if (fragment == null || fragment.getParentActivity() == null || message == null) {
++            return;
++        }
++        ArrayList<CharSequence> titles = new ArrayList<>();
++        ArrayList<Runnable> actions = new ArrayList<>();
++        String url = firstUrl(message.messageOwner != null ? message.messageOwner.message : null);
++        if (url != null) {
++            titles.add(VoidGram.t("Проверить ссылку (VirusTotal)", "Check the link (VirusTotal)"));
++            actions.add(() -> checkUrl(fragment, url));
++        }
++        if (message.getDocument() != null || message.isPhoto()) {
++            titles.add(VoidGram.t("Проверить файл (VirusTotal)", "Check the file (VirusTotal)"));
++            actions.add(() -> {
++                File file = FileLoader.getInstance(message.currentAccount).getPathToMessage(message.messageOwner);
++                if (file == null || !file.exists()) {
++                    present(fragment, "VirusTotal", VoidGram.t("Сначала загрузите файл.", "Download the file first."));
++                } else {
++                    String name = message.getDocument() != null ? FileLoader.getDocumentFileName(message.getDocument()) : "photo.jpg";
++                    checkFile(fragment, file, name == null || name.isEmpty() ? file.getName() : name);
++                }
++            });
++        }
++        String text = message.messageOwner != null ? message.messageOwner.message : null;
++        if (text != null && text.trim().length() > 80) {
++            titles.add(VoidGram.t("Кратко (ИИ)", "Summary (AI)"));
++            actions.add(() -> ask(fragment, VoidGram.t("Кратко", "Summary"), "Shorten the user's message to one to three sentences. Keep its language, names and numbers. Reply with the shortened text only.", text));
++        }
++        if (titles.isEmpty()) {
++            present(fragment, "VoidGram", VoidGram.t("Для этого сообщения инструментов нет: нет ссылки, файла или длинного текста.", "No tools for this message: it has no link, file or long text."));
++            return;
++        }
++        AlertDialog.Builder builder = new AlertDialog.Builder(fragment.getParentActivity());
++        builder.setTitle(VoidGram.t("Инструменты VoidGram", "VoidGram tools"));
++        builder.setItems(titles.toArray(new CharSequence[0]), (d, which) -> actions.get(which).run());
++        fragment.showDialog(builder.create());
++    }
++
++    // ---- Chat menu ----
++
++    /** Chat menu → Statistics and AI. */
++    public static void showChatTools(BaseFragment fragment, int account, long dialogId, List<MessageObject> loaded) {
++        if (fragment == null || fragment.getParentActivity() == null) {
++            return;
++        }
++        CharSequence[] titles = {
++                VoidGram.t("Статистика чата", "Chat statistics"),
++                VoidGram.t("Что я пропустил (ИИ)", "What did I miss (AI)"),
++                VoidGram.t("Итоги года", "Year in review")
++        };
++        AlertDialog.Builder builder = new AlertDialog.Builder(fragment.getParentActivity());
++        builder.setTitle(VoidGram.t("Статистика и ИИ", "Statistics and AI"));
++        builder.setItems(titles, (d, which) -> {
++            ArrayList<MessageObject> newest = new ArrayList<>();
++            if (loaded != null) {
++                for (MessageObject message : loaded) {
++                    if (message != null && message.getId() > 0 && message.messageOwner != null) {
++                        newest.add(message);
++                    }
++                }
++            }
++            if (which == 0) {
++                chatStats(fragment, newest.subList(0, Math.min(100, newest.size())));
++            } else if (which == 1) {
++                whatDidIMiss(fragment, newest.subList(0, Math.min(60, newest.size())));
++            } else {
++                yearInReview(fragment, account, dialogId);
++            }
++        });
++        fragment.showDialog(builder.create());
++    }
++
++    private static String authorName(int account, TLRPC.Message message) {
++        MessagesController controller = MessagesController.getInstance(account);
++        if (message.from_id instanceof TLRPC.TL_peerUser) {
++            TLRPC.User user = controller.getUser(message.from_id.user_id);
++            return user != null ? UserObject.getUserName(user) : "?";
++        }
++        long chatId = message.from_id instanceof TLRPC.TL_peerChannel ? message.from_id.channel_id : message.from_id instanceof TLRPC.TL_peerChat ? message.from_id.chat_id : 0;
++        if (chatId == 0 && message.peer_id != null) {
++            chatId = message.peer_id.channel_id != 0 ? message.peer_id.channel_id : message.peer_id.chat_id;
++        }
++        TLRPC.Chat chat = chatId != 0 ? controller.getChat(chatId) : null;
++        return chat != null ? chat.title : "?";
++    }
++
++    private static void chatStats(BaseFragment fragment, List<MessageObject> messages) {
++        String title = VoidGram.t("Статистика чата", "Chat statistics");
++        if (messages.isEmpty()) {
++            present(fragment, title, VoidGram.t("Нет загруженных сообщений.", "No loaded messages."));
++            return;
++        }
++        HashMap<String, Integer> authors = new HashMap<>();
++        int[] hours = new int[24];
++        int characters = 0;
++        Calendar calendar = Calendar.getInstance();
++        int oldest = Integer.MAX_VALUE;
++        for (MessageObject message : messages) {
++            String name = authorName(message.currentAccount, message.messageOwner);
++            authors.put(name, (authors.containsKey(name) ? authors.get(name) : 0) + 1);
++            calendar.setTimeInMillis(message.messageOwner.date * 1000L);
++            hours[calendar.get(Calendar.HOUR_OF_DAY)]++;
++            characters += message.messageOwner.message != null ? message.messageOwner.message.length() : 0;
++            oldest = Math.min(oldest, message.messageOwner.date);
++        }
++        int busiest = 0;
++        for (int i = 1; i < 24; i++) {
++            if (hours[i] > hours[busiest]) {
++                busiest = i;
++            }
++        }
++        String since = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(new Date(oldest * 1000L));
++        String top = top(authors, 5, ": ");
++        present(fragment, title, VoidGram.russian()
++                ? "По последним " + messages.size() + " сообщениям (с " + since + "):\n\n" + top + "\n\nСамый активный час: " + busiest + ":00\nСимволов: " + characters
++                : "Over the last " + messages.size() + " messages (since " + since + "):\n\n" + top + "\n\nBusiest hour: " + busiest + ":00\nCharacters: " + characters);
++    }
++
++    private static String top(Map<String, Integer> counts, int limit, String separator) {
++        ArrayList<Map.Entry<String, Integer>> entries = new ArrayList<>(counts.entrySet());
++        Collections.sort(entries, (a, b) -> Integer.compare(b.getValue(), a.getValue()));
++        StringBuilder builder = new StringBuilder();
++        for (int i = 0; i < Math.min(limit, entries.size()); i++) {
++            if (builder.length() > 0) {
++                builder.append('\n');
++            }
++            builder.append(entries.get(i).getKey()).append(separator).append(entries.get(i).getValue());
++        }
++        return builder.toString();
++    }
++
++    private static void whatDidIMiss(BaseFragment fragment, List<MessageObject> messages) {
++        String title = VoidGram.t("Что я пропустил", "What did I miss");
++        StringBuilder transcript = new StringBuilder();
++        for (int i = messages.size() - 1; i >= 0; i--) {
++            MessageObject message = messages.get(i);
++            String text = message.messageOwner.message;
++            if (text == null || text.isEmpty()) {
++                continue;
++            }
++            transcript.append(authorName(message.currentAccount, message.messageOwner)).append(": ").append(text).append('\n');
++        }
++        if (transcript.length() == 0) {
++            present(fragment, title, VoidGram.t("В чате нет текстовых сообщений.", "No text messages in this chat."));
++            return;
++        }
++        ask(fragment, title, VoidGram.t("Кратко перескажи переписку по-русски: главные темы, решения и вопросы ко мне. Не больше 6 пунктов.", "Summarise the conversation briefly: main topics, decisions and questions for me. At most 6 bullet points."), transcript.toString());
++    }
++
++    private static void yearInReview(BaseFragment fragment, int account, long dialogId) {
++        String title = VoidGram.t("Итоги года", "Year in review");
++        Calendar calendar = Calendar.getInstance();
++        int year = calendar.get(Calendar.YEAR);
++        calendar.set(year, Calendar.JANUARY, 1, 0, 0, 0);
++        final int start = (int) (calendar.getTimeInMillis() / 1000);
++        AlertDialog progress = new AlertDialog(fragment.getParentActivity(), AlertDialog.ALERT_TYPE_SPINNER);
++        progress.show();
++        ArrayList<TLRPC.Message> collected = new ArrayList<>();
++        final TLRPC.InputPeer peer = MessagesController.getInstance(account).getInputPeer(dialogId);
++        final int[] offset = {0};
++        final Runnable[] page = new Runnable[1];
++        page[0] = () -> {
++            TLRPC.TL_messages_getHistory req = new TLRPC.TL_messages_getHistory();
++            req.peer = peer;
++            req.offset_id = offset[0];
++            req.limit = 100;
++            ConnectionsManager.getInstance(account).sendRequest(req, (response, error) -> AndroidUtilities.runOnUIThread(() -> {
++                boolean done = true;
++                if (response instanceof TLRPC.messages_Messages) {
++                    TLRPC.messages_Messages result = (TLRPC.messages_Messages) response;
++                    MessagesController.getInstance(account).putUsers(result.users, false);
++                    MessagesController.getInstance(account).putChats(result.chats, false);
++                    int next = Integer.MAX_VALUE;
++                    for (TLRPC.Message message : result.messages) {
++                        if (message.id > 0) {
++                            next = Math.min(next, message.id);
++                        }
++                        if (message.date >= start && !(message instanceof TLRPC.TL_messageService) && !(message instanceof TLRPC.TL_messageEmpty)) {
++                            collected.add(message);
++                        }
++                    }
++                    boolean older = false;
++                    for (TLRPC.Message message : result.messages) {
++                        if (message.date < start) {
++                            older = true;
++                            break;
++                        }
++                    }
++                    if (!result.messages.isEmpty() && !older && collected.size() < 20000 && next != Integer.MAX_VALUE && (offset[0] == 0 || next < offset[0])) {
++                        offset[0] = next;
++                        done = false;
++                        AndroidUtilities.runOnUIThread(page[0], 300);
++                    }
++                }
++                if (done) {
++                    try {
++                        progress.dismiss();
++                    } catch (Throwable ignore) {
++                    }
++                    present(fragment, title, yearText(account, year, start, collected));
++                }
++            }));
++        };
++        page[0].run();
++    }
++
++    private static String yearText(int account, int year, int start, ArrayList<TLRPC.Message> messages) {
++        if (messages.isEmpty()) {
++            return VoidGram.t("За этот год в этом чате нет сообщений.", "No messages in this chat this year.");
++        }
++        HashMap<String, Integer> authors = new HashMap<>();
++        HashMap<String, Integer> words = new HashMap<>();
++        HashMap<String, Integer> emoji = new HashMap<>();
++        HashMap<Integer, Integer> days = new HashMap<>();
++        int[] months = new int[12];
++        int media = 0;
++        int voice = 0;
++        int mine = 0;
++        Calendar calendar = Calendar.getInstance();
++        for (TLRPC.Message message : messages) {
++            String name = authorName(account, message);
++            authors.put(name, (authors.containsKey(name) ? authors.get(name) : 0) + 1);
++            calendar.setTimeInMillis(message.date * 1000L);
++            months[calendar.get(Calendar.MONTH)]++;
++            int day = calendar.get(Calendar.DAY_OF_YEAR);
++            days.put(day, (days.containsKey(day) ? days.get(day) : 0) + 1);
++            if (message.out) {
++                mine++;
++            }
++            if (message.media != null && !(message.media instanceof TLRPC.TL_messageMediaEmpty) && !(message.media instanceof TLRPC.TL_messageMediaWebPage)) {
++                if (MessageObject.isVoiceMessage(message) || MessageObject.isRoundVideoMessage(message)) {
++                    voice++;
++                } else {
++                    media++;
++                }
++            }
++            String text = message.message == null ? "" : message.message;
++            for (String word : text.toLowerCase(Locale.getDefault()).split("[^\\p{L}]+")) {
++                if (word.length() >= 4) {
++                    words.put(word, (words.containsKey(word) ? words.get(word) : 0) + 1);
++                }
++            }
++            for (int i = 0; i < text.length(); ) {
++                int code = text.codePointAt(i);
++                int length = Character.charCount(code);
++                if (code >= 0x1F300 && code <= 0x1FAFF || code >= 0x2600 && code <= 0x27BF) {
++                    String symbol = new String(Character.toChars(code));
++                    emoji.put(symbol, (emoji.containsKey(symbol) ? emoji.get(symbol) : 0) + 1);
++                }
++                i += length;
++            }
++        }
++        int busiestMonth = 0;
++        for (int i = 1; i < 12; i++) {
++            if (months[i] > months[busiestMonth]) {
++                busiestMonth = i;
++            }
++        }
++        int busiestDay = 0;
++        int busiestCount = 0;
++        for (Map.Entry<Integer, Integer> entry : days.entrySet()) {
++            if (entry.getValue() > busiestCount) {
++                busiestCount = entry.getValue();
++                busiestDay = entry.getKey();
++            }
++        }
++        calendar.setTimeInMillis(start * 1000L);
++        calendar.set(Calendar.DAY_OF_YEAR, Math.max(1, busiestDay));
++        String busiestDayText = DateFormat.getDateInstance(DateFormat.MEDIUM).format(calendar.getTime());
++        String[] monthNames = VoidGram.russian()
++                ? new String[]{"январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"}
++                : new java.text.DateFormatSymbols(Locale.ENGLISH).getMonths();
++        String topAuthors = top(authors, 3, " — ");
++        StringBuilder topWords = new StringBuilder();
++        for (String line : top(words, 5, "\t").split("\n")) {
++            if (line.isEmpty()) continue;
++            if (topWords.length() > 0) topWords.append(", ");
++            topWords.append(line.substring(0, line.indexOf('\t')));
++        }
++        StringBuilder topEmoji = new StringBuilder();
++        for (String line : top(emoji, 5, "\t").split("\n")) {
++            if (line.isEmpty()) continue;
++            topEmoji.append(line.substring(0, line.indexOf('\t')));
++        }
++        String wordsText = topWords.length() == 0 ? "—" : topWords.toString();
++        String emojiText = topEmoji.length() == 0 ? "—" : topEmoji.toString();
++        return VoidGram.russian()
++                ? year + ": " + messages.size() + " сообщений, из них ваших " + mine + ".\n\nБольше всех писали:\n" + topAuthors + "\n\nСамый активный месяц: " + monthNames[busiestMonth] + "\nСамый активный день: " + busiestDayText + " (" + busiestCount + ")\nМедиа: " + media + ", голосовых и кружков: " + voice + "\nЧастые слова: " + wordsText + "\nЛюбимые эмодзи: " + emojiText
++                : year + ": " + messages.size() + " messages, " + mine + " of them yours.\n\nMost active:\n" + topAuthors + "\n\nBusiest month: " + monthNames[busiestMonth] + "\nBusiest day: " + busiestDayText + " (" + busiestCount + ")\nMedia: " + media + ", voice and video messages: " + voice + "\nFrequent words: " + wordsText + "\nFavourite emoji: " + emojiText;
++    }
++
++    // ---- VirusTotal ----
++
++    private interface Http {
++        void done(int status, String body);
++    }
++
++    private static void http(String method, String url, Map<String, String> headers, String body, Http done) {
++        Utilities.globalQueue.postRunnable(() -> {
++            int status = 0;
++            String text = null;
++            HttpURLConnection connection = null;
++            try {
++                connection = (HttpURLConnection) new URL(url).openConnection();
++                connection.setConnectTimeout(30000);
++                connection.setReadTimeout(60000);
++                connection.setRequestMethod(method);
++                for (Map.Entry<String, String> header : headers.entrySet()) {
++                    connection.setRequestProperty(header.getKey(), header.getValue());
++                }
++                if (body != null) {
++                    connection.setDoOutput(true);
++                    try (OutputStream out = connection.getOutputStream()) {
++                        out.write(body.getBytes("UTF-8"));
++                    }
++                }
++                status = connection.getResponseCode();
++                InputStream in = status < 400 ? connection.getInputStream() : connection.getErrorStream();
++                if (in != null) {
++                    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
++                    byte[] buffer = new byte[8192];
++                    int read;
++                    while ((read = in.read(buffer)) > 0) {
++                        bytes.write(buffer, 0, read);
++                    }
++                    in.close();
++                    text = bytes.toString("UTF-8");
++                }
++            } catch (Throwable ignore) {
++            } finally {
++                if (connection != null) {
++                    connection.disconnect();
++                }
++            }
++            final int finalStatus = status;
++            final String finalText = text;
++            AndroidUtilities.runOnUIThread(() -> done.done(finalStatus, finalText));
++        });
++    }
++
++    private static int[] stats(String body) {
++        try {
++            JSONObject stats = new JSONObject(body).getJSONObject("data").getJSONObject("attributes").getJSONObject("last_analysis_stats");
++            return new int[]{stats.optInt("malicious"), stats.optInt("suspicious"), stats.optInt("harmless"), stats.optInt("undetected")};
++        } catch (Throwable e) {
++            return null;
++        }
++    }
++
++    private static String verdict(int[] s) {
++        String head = s[0] > 0 ? VoidGram.t("⛔️ Опасно", "⛔️ Dangerous") : s[1] > 0 ? VoidGram.t("⚠️ Подозрительно", "⚠️ Suspicious") : VoidGram.t("✅ Угроз не найдено", "✅ No threats found");
++        return head + "\n\n" + (VoidGram.russian()
++                ? "Вредоносно: " + s[0] + "\nПодозрительно: " + s[1] + "\nБезопасно: " + s[2] + "\nНе определено: " + s[3]
++                : "Malicious: " + s[0] + "\nSuspicious: " + s[1] + "\nHarmless: " + s[2] + "\nUndetected: " + s[3]);
++    }
++
++    public static void checkUrl(BaseFragment fragment, String url) {
++        String key = virusTotalKey();
++        if (key.isEmpty()) {
++            missingKey(fragment, "VirusTotal");
++            return;
++        }
++        String id = Base64.encodeToString(url.getBytes(java.nio.charset.StandardCharsets.UTF_8), Base64.NO_WRAP | Base64.URL_SAFE | Base64.NO_PADDING);
++        HashMap<String, String> headers = new HashMap<>();
++        headers.put("x-apikey", key);
++        http("GET", "https://www.virustotal.com/api/v3/urls/" + id, headers, null, (status, body) -> {
++            int[] s = status == 200 ? stats(body) : null;
++            if (s != null) {
++                present(fragment, "VirusTotal", url + "\n\n" + verdict(s));
++            } else if (status == 404) {
++                HashMap<String, String> submitHeaders = new HashMap<>(headers);
++                submitHeaders.put("Content-Type", "application/x-www-form-urlencoded");
++                String form;
++                try {
++                    form = "url=" + URLEncoder.encode(url, "UTF-8");
++                } catch (Exception e) {
++                    form = "url=" + url;
++                }
++                http("POST", "https://www.virustotal.com/api/v3/urls", submitHeaders, form, (submitStatus, submitBody) -> present(fragment, "VirusTotal", submitStatus == 200
++                        ? VoidGram.t("Ссылка отправлена на проверку. Повторите через минуту.", "The link was sent for analysis. Check again in a minute.")
++                        : VoidGram.t("VirusTotal не принял ссылку.", "VirusTotal did not accept the link.")));
++            } else {
++                present(fragment, "VirusTotal", status == 401 ? VoidGram.t("Неверный ключ API.", "Invalid API key.") : VoidGram.t("Не удалось проверить (код ", "The check failed (code ") + status + ").");
++            }
++        });
++    }
++
++    public static void checkFile(BaseFragment fragment, File file, String name) {
++        String key = virusTotalKey();
++        if (key.isEmpty()) {
++            missingKey(fragment, "VirusTotal");
++            return;
++        }
++        Utilities.globalQueue.postRunnable(() -> {
++            String hash;
++            try (FileInputStream in = new FileInputStream(file)) {
++                MessageDigest digest = MessageDigest.getInstance("SHA-256");
++                byte[] buffer = new byte[65536];
++                int read;
++                while ((read = in.read(buffer)) > 0) {
++                    digest.update(buffer, 0, read);
++                }
++                StringBuilder builder = new StringBuilder();
++                for (byte b : digest.digest()) {
++                    builder.append(String.format("%02x", b & 0xff));
++                }
++                hash = builder.toString();
++            } catch (Throwable e) {
++                return;
++            }
++            HashMap<String, String> headers = new HashMap<>();
++            headers.put("x-apikey", key);
++            http("GET", "https://www.virustotal.com/api/v3/files/" + hash, headers, null, (status, body) -> {
++                int[] s = status == 200 ? stats(body) : null;
++                String message;
++                if (s != null) {
++                    message = name + "\n\n" + verdict(s);
++                } else if (status == 404) {
++                    message = name + "\n\n" + VoidGram.t("VirusTotal ещё не видел этот файл. VoidGram не загружает ваши файлы — проверить можно на virustotal.com вручную.", "VirusTotal has not seen this file. VoidGram never uploads your files; you can check it on virustotal.com yourself.");
++                } else if (status == 401) {
++                    message = VoidGram.t("Неверный ключ API.", "Invalid API key.");
++                } else {
++                    message = VoidGram.t("Не удалось проверить (код ", "The check failed (code ") + status + ").";
++                }
++                present(fragment, "VirusTotal", message);
++            });
++        });
++    }
++
++    // ---- AI (OpenAI-compatible chat completions) ----
++
++    public static void ask(BaseFragment fragment, String title, String instructions, String prompt) {
++        String key = aiKey();
++        if (key.isEmpty()) {
++            missingKey(fragment, title);
++            return;
++        }
++        String endpoint = aiEndpoint();
++        if (!endpoint.toLowerCase(Locale.ROOT).startsWith("https://")) {
++            present(fragment, title, VoidGram.t("Адрес ИИ должен начинаться с https://", "The AI address must start with https://"));
++            return;
++        }
++        String body;
++        try {
++            JSONObject json = new JSONObject();
++            json.put("model", aiModel());
++            json.put("max_tokens", 300);
++            JSONArray messages = new JSONArray();
++            messages.put(new JSONObject().put("role", "system").put("content", instructions));
++            messages.put(new JSONObject().put("role", "user").put("content", prompt.length() > 12000 ? prompt.substring(0, 12000) : prompt));
++            json.put("messages", messages);
++            body = json.toString();
++        } catch (Throwable e) {
++            return;
++        }
++        HashMap<String, String> headers = new HashMap<>();
++        headers.put("Content-Type", "application/json");
++        headers.put("Authorization", "Bearer " + key);
++        AlertDialog progress = fragment.getParentActivity() != null ? new AlertDialog(fragment.getParentActivity(), AlertDialog.ALERT_TYPE_SPINNER) : null;
++        if (progress != null) {
++            progress.show();
++        }
++        http("POST", endpoint, headers, body, (status, response) -> {
++            if (progress != null) {
++                try {
++                    progress.dismiss();
++                } catch (Throwable ignore) {
++                }
++            }
++            String result = null;
++            if (status == 200 && response != null) {
++                try {
++                    result = new JSONObject(response).getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content").trim();
++                } catch (Throwable ignore) {
++                }
++            }
++            present(fragment, title, result != null ? result : status == 401 ? VoidGram.t("Неверный ключ API.", "Invalid API key.") : VoidGram.t("ИИ не ответил (код ", "The AI did not answer (code ") + status + ").");
++        });
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramPeerSearchActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramPeerSearchActivity.java
 new file mode 100644
 index 0000000..561c342
@@ -9095,10 +9710,10 @@ index 0000000..5ad1a7f
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java
 new file mode 100644
-index 0000000..1152c91
+index 0000000..72ab4b0
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java
-@@ -0,0 +1,195 @@
+@@ -0,0 +1,218 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.content.Context;
@@ -9131,6 +9746,10 @@ index 0000000..1152c91
 +    private static final int ID_VIDEO = 6;
 +    private static final int ID_COBALT = 7;
 +    private static final int ID_COBALT_KEY = 8;
++    private static final int ID_VT_KEY = 9;
++    private static final int ID_AI_KEY = 10;
++    private static final int ID_AI_ENDPOINT = 11;
++    private static final int ID_AI_MODEL = 12;
 +
 +    @Override
 +    protected CharSequence getTitle() {
@@ -9154,6 +9773,13 @@ index 0000000..1152c91
 +        items.add(UItem.asButton(ID_COBALT, VoidGram.t("Сервер cobalt", "cobalt server"), VoidGramVideoDownloader.cobaltServer().isEmpty() ? VoidGram.t("не задан", "not set") : VoidGramVideoDownloader.cobaltServer().replace("https://", "")));
 +        items.add(UItem.asButton(ID_COBALT_KEY, VoidGram.t("Ключ cobalt", "cobalt key"), VoidGramVideoDownloader.cobaltKey().isEmpty() ? VoidGram.t("нет", "none") : "••••"));
 +        items.add(UItem.asShadow(VoidGram.t("Ссылка на TikTok, YouTube или Instagram в поле ввода предлагает скачать видео в галерею или отправить в чат. TikTok — через tikwm.com, без ключа. YouTube и Instagram — через ваш сервер cobalt (github.com/imputnet/cobalt).", "A TikTok, YouTube or Instagram link in the message field offers to save the video to the gallery or send it to the chat. TikTok goes through tikwm.com, no key. YouTube and Instagram go through your cobalt server (github.com/imputnet/cobalt).")));
++
++        items.add(UItem.asHeader(VoidGram.t("Онлайн-инструменты", "Online tools")));
++        items.add(UItem.asButton(ID_VT_KEY, VoidGram.t("Ключ VirusTotal", "VirusTotal key"), VoidGramOnlineTools.virusTotalKey().isEmpty() ? VoidGram.t("нет", "none") : "••••"));
++        items.add(UItem.asButton(ID_AI_KEY, VoidGram.t("Ключ ИИ", "AI key"), VoidGramOnlineTools.aiKey().isEmpty() ? VoidGram.t("нет", "none") : "••••"));
++        items.add(UItem.asButton(ID_AI_ENDPOINT, VoidGram.t("Адрес ИИ", "AI address"), VoidGramOnlineTools.aiEndpoint().replace("https://", "")));
++        items.add(UItem.asButton(ID_AI_MODEL, VoidGram.t("Модель ИИ", "AI model"), VoidGramOnlineTools.aiModel()));
++        items.add(UItem.asShadow(VoidGram.t("Проверка ссылок и файлов (по SHA-256, файлы не загружаются) и пересказ — в меню сообщения → «Инструменты VoidGram». Статистика, «Что я пропустил» и итоги года — в меню чата. Подходит любой сервис, совместимый с OpenAI.", "Link and file checks (by SHA-256; files are never uploaded) and summaries are in the message menu → \"VoidGram tools\". Statistics, \"What did I miss\" and the year in review are in the chat menu. Any OpenAI-compatible service works.")));
 +
 +        items.add(UItem.asHeader("Premium"));
 +        items.add(UItem.asCheck(ID_PREMIUM, VoidGram.t("Локальный Premium", "Local Premium")).setChecked(VoidGramPremium.isLocal()));
@@ -9193,6 +9819,18 @@ index 0000000..1152c91
 +                VoidGramPremium.setLocal(!VoidGramPremium.isLocal());
 +                getNotificationCenter().postNotificationName(org.telegram.messenger.NotificationCenter.currentUserPremiumStatusChanged);
 +                update();
++                break;
++            case ID_VT_KEY:
++                askText(VoidGram.t("Ключ VirusTotal", "VirusTotal key"), VoidGramOnlineTools.virusTotalKey(), "x-apikey", true, value -> { VoidGramOnlineTools.setVirusTotalKey(value); update(); });
++                break;
++            case ID_AI_KEY:
++                askText(VoidGram.t("Ключ ИИ", "AI key"), VoidGramOnlineTools.aiKey(), "sk-…", true, value -> { VoidGramOnlineTools.setAiKey(value); update(); });
++                break;
++            case ID_AI_ENDPOINT:
++                askText(VoidGram.t("Адрес ИИ", "AI address"), VoidGramOnlineTools.aiEndpoint(), VoidGramOnlineTools.DEFAULT_AI_ENDPOINT, false, value -> { VoidGramOnlineTools.setAiEndpoint(value); update(); });
++                break;
++            case ID_AI_MODEL:
++                askText(VoidGram.t("Модель ИИ", "AI model"), VoidGramOnlineTools.aiModel(), VoidGramOnlineTools.DEFAULT_AI_MODEL, false, value -> { VoidGramOnlineTools.setAiModel(value); update(); });
 +                break;
 +            case ID_VIDEO:
 +                VoidGramVideoDownloader.setEnabled(!VoidGramVideoDownloader.isEnabled());
