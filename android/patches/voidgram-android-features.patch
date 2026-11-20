@@ -6144,7 +6144,7 @@ index 5dc090f..3f4b262 100644
  
      void measureTime(MessageObject messageObject) {
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
-index a54b134..862f6eb 100644
+index a54b134..f9d0c56 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 @@ -1246,6 +1246,10 @@ public class ChatActivity extends BaseFragment implements
@@ -6179,7 +6179,18 @@ index a54b134..862f6eb 100644
  
      private final static int topic_close = 60;
      private final static int open_forum = 61;
-@@ -2835,6 +2846,15 @@ public class ChatActivity extends BaseFragment implements
+@@ -2195,6 +2206,10 @@ public class ChatActivity extends BaseFragment implements
+         @Override
+         public void onTextChanged(final CharSequence text, boolean bigChange, boolean fromDraft) {
+             MediaController.getInstance().setInputFieldHasText(!TextUtils.isEmpty(text) || chatActivityEnterView.isEditingMessage());
++            // VoidGram: a TikTok, YouTube or Instagram link offers a video download.
++            if (!fromDraft) {
++                org.telegram.ui.voidgram.VoidGramVideoDownloader.onComposerText(ChatActivity.this, text);
++            }
+             if (mentionContainer != null && mentionContainer.getAdapter() != null) {
+                 mentionContainer.getAdapter().searchUsernameOrHashtag(text, chatActivityEnterView.getCursorPosition(), messages, false, false);
+             }
+@@ -2835,6 +2850,15 @@ public class ChatActivity extends BaseFragment implements
          }
  
          dialog_id_Long = dialog_id;
@@ -6195,7 +6206,7 @@ index a54b134..862f6eb 100644
  
          transitionAnimationGlobalIndex = NotificationCenter.getGlobalInstance().setAnimationInProgress(transitionAnimationGlobalIndex, new int[0]);
  
-@@ -3336,8 +3356,16 @@ public class ChatActivity extends BaseFragment implements
+@@ -3336,8 +3360,16 @@ public class ChatActivity extends BaseFragment implements
          }
      }
  
@@ -6212,7 +6223,7 @@ index a54b134..862f6eb 100644
          super.onFragmentDestroy();
          if (messageMetricsView != null) {
              messageMetricsView.finish();
-@@ -3746,6 +3774,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -3746,6 +3778,8 @@ public class ChatActivity extends BaseFragment implements
                          getMessagesController().getTopicsController().toggleViewForumAsMessages(-dialog_id, false);
                          TopicsFragment.prepareToSwitchAnimation(ChatActivity.this);
                      }
@@ -6221,7 +6232,7 @@ index a54b134..862f6eb 100644
                  } else if (id == copy) {
                      SpannableStringBuilder str = new SpannableStringBuilder();
                      long previousUid = 0;
-@@ -3988,6 +4018,16 @@ public class ChatActivity extends BaseFragment implements
+@@ -3988,6 +4022,16 @@ public class ChatActivity extends BaseFragment implements
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/help", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
                  } else if (id == bot_settings) {
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/settings", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
@@ -6238,7 +6249,7 @@ index a54b134..862f6eb 100644
                  } else if (id == search) {
                      openSearchWithText(isSupportedTags() ? "" : null);
                  } else if (id == translate) {
-@@ -4398,6 +4438,15 @@ public class ChatActivity extends BaseFragment implements
+@@ -4398,6 +4442,15 @@ public class ChatActivity extends BaseFragment implements
              if (searchItem != null) {
                  headerItem.lazilyAddSubItem(search, R.drawable.msg_search, LocaleController.getString(R.string.Search));
              }
@@ -6254,7 +6265,7 @@ index a54b134..862f6eb 100644
              if (ChatObject.isBoostSupported(currentChat) && (getUserConfig().isPremium() || ChatObject.isBoosted(chatInfo) || ChatObject.hasAdminRights(currentChat))) {
                  RLottieDrawable drawable = new RLottieDrawable(R.raw.boosts, dp(24), dp(24));
                  headerItem.lazilyAddSubItem(boost_group, drawable, LocaleController.getString(ChatObject.isChannelAndNotMegaGroup(currentChat) ? R.string.BoostingBoostChannelMenu : R.string.BoostingBoostGroupMenu));
-@@ -6727,7 +6776,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -6727,7 +6780,8 @@ public class ChatActivity extends BaseFragment implements
                      scrolled = super.scrollVerticallyBy(dy, recycler, state);
                  }
                  final boolean allowPullingDownScroll = !isInPollAddOptionMode() && !hasSelectedMessages();
@@ -6264,7 +6275,7 @@ index a54b134..862f6eb 100644
                      if (pullingDownOffset == 0 && pullingDownDrawable != null) {
                          if (nextChannels != null && !nextChannels.isEmpty()) {
                              pullingDownDrawable.updateDialog(nextChannels.get(0));
-@@ -6861,6 +6911,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -6861,6 +6915,10 @@ public class ChatActivity extends BaseFragment implements
                      } else if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
                          pollHintCell = null;
                          wasManualScroll = true;
@@ -6275,7 +6286,7 @@ index a54b134..862f6eb 100644
                          scrollingFloatingDate = true;
                          scrollingFloatingTopic = true;
                          checkTextureViewPosition = true;
-@@ -7392,7 +7446,7 @@ public class ChatActivity extends BaseFragment implements
+@@ -7392,7 +7450,7 @@ public class ChatActivity extends BaseFragment implements
                  } else {
                      String username = ChatObject.getPublicUsername(chat);
                      if (username != null) {
@@ -6284,7 +6295,7 @@ index a54b134..862f6eb 100644
                      }
                  }
              } else if (object instanceof TLRPC.User) {
-@@ -7401,7 +7455,7 @@ public class ChatActivity extends BaseFragment implements
+@@ -7401,7 +7459,7 @@ public class ChatActivity extends BaseFragment implements
                      searchUserMessages(user, null);
                  } else {
                      if (UserObject.getPublicUsername(user) != null) {
@@ -6293,7 +6304,7 @@ index a54b134..862f6eb 100644
                      } else {
                          String name = UserObject.getFirstName(user, false);
                          Spannable spannable = new SpannableString(name + " ");
-@@ -10820,6 +10874,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -10820,6 +10878,9 @@ public class ChatActivity extends BaseFragment implements
                  actionModeViews.add(actionMode.addItemWithWidth(forward, R.drawable.msg_forward, dp(48), LocaleController.getString(R.string.Forward)));
              }
              actionModeViews.add(actionMode.addItemWithWidth(share, R.drawable.msg_shareout, dp(48), LocaleController.getString(R.string.ShareFile)));
@@ -6303,7 +6314,7 @@ index a54b134..862f6eb 100644
              actionModeViews.add(actionMode.addItemWithWidth(delete, R.drawable.msg_delete, dp(48), LocaleController.getString(R.string.Delete)));
          } else {
              actionModeViews.add(actionMode.addItemWithWidth(edit, R.drawable.msg_edit, dp(48), LocaleController.getString(R.string.Edit)));
-@@ -21371,7 +21428,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -21371,7 +21432,8 @@ public class ChatActivity extends BaseFragment implements
          if (postponedScroll) {
              postponedScrollToLastMessageQueryIndex = 0;
          }
@@ -6313,7 +6324,7 @@ index a54b134..862f6eb 100644
          layOutWidgetsForSideMenu(messArr);
  
          boolean universalNotify = false;
-@@ -22807,8 +22865,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -22807,8 +22869,9 @@ public class ChatActivity extends BaseFragment implements
          } else if (id == NotificationCenter.didReceiveNewMessages) {
              FileLog.d("ChatActivity didReceiveNewMessages start");
              long did = (Long) args[0];
@@ -6324,7 +6335,7 @@ index a54b134..862f6eb 100644
              if (did == dialog_id) {
                  boolean scheduled = (Boolean) args[2];
                  int mode = (Integer) args[3];
-@@ -28135,6 +28194,13 @@ public class ChatActivity extends BaseFragment implements
+@@ -28135,6 +28198,13 @@ public class ChatActivity extends BaseFragment implements
      @Override
      public void onTransitionAnimationEnd(boolean isOpen, boolean backward) {
          super.onTransitionAnimationEnd(isOpen, backward);
@@ -6338,7 +6349,7 @@ index a54b134..862f6eb 100644
          if (isOpen) {
              if (backward) {
                  if (showPinBulletin && pinBulletin != null) {
-@@ -31957,6 +32023,17 @@ public class ChatActivity extends BaseFragment implements
+@@ -31957,6 +32027,17 @@ public class ChatActivity extends BaseFragment implements
                  icons.add(R.drawable.msg_calendar2);
              }
  
@@ -6356,7 +6367,7 @@ index a54b134..862f6eb 100644
              if (options.isEmpty() && optionsView == null) {
                  return false;
              }
-@@ -34293,6 +34370,17 @@ public class ChatActivity extends BaseFragment implements
+@@ -34293,6 +34374,17 @@ public class ChatActivity extends BaseFragment implements
          }
          boolean preserveDim = false;
          switch (option) {
@@ -8934,10 +8945,10 @@ index 0000000..5ad1a7f
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java
 new file mode 100644
-index 0000000..2a8dacd
+index 0000000..1152c91
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java
-@@ -0,0 +1,156 @@
+@@ -0,0 +1,195 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.content.Context;
@@ -8967,6 +8978,9 @@ index 0000000..2a8dacd
 +    private static final int ID_SPOILERS = 3;
 +    private static final int ID_NUMBERS = 4;
 +    private static final int ID_TRANSCRIBE = 5;
++    private static final int ID_VIDEO = 6;
++    private static final int ID_COBALT = 7;
++    private static final int ID_COBALT_KEY = 8;
 +
 +    @Override
 +    protected CharSequence getTitle() {
@@ -8984,6 +8998,12 @@ index 0000000..2a8dacd
 +        items.add(UItem.asShadow(android.os.Build.VERSION.SDK_INT < 33
 +                ? VoidGram.t("Нужен Android 13 или новее.", "Needs Android 13 or newer.")
 +                : VoidGram.t("Голосовые и кружки распознаёт служба речи телефона, на устройстве, если она это умеет. Нужно разрешение на микрофон; запись с микрофона не ведётся.", "Voice and round messages are read by the phone's speech service, on the device when it can. The microphone permission is needed; nothing is recorded.")));
++
++        items.add(UItem.asHeader(VoidGram.t("Скачивание видео", "Video downloads")));
++        items.add(UItem.asCheck(ID_VIDEO, VoidGram.t("Предлагать скачать видео по ссылке", "Offer to download linked videos")).setChecked(VoidGramVideoDownloader.isEnabled()));
++        items.add(UItem.asButton(ID_COBALT, VoidGram.t("Сервер cobalt", "cobalt server"), VoidGramVideoDownloader.cobaltServer().isEmpty() ? VoidGram.t("не задан", "not set") : VoidGramVideoDownloader.cobaltServer().replace("https://", "")));
++        items.add(UItem.asButton(ID_COBALT_KEY, VoidGram.t("Ключ cobalt", "cobalt key"), VoidGramVideoDownloader.cobaltKey().isEmpty() ? VoidGram.t("нет", "none") : "••••"));
++        items.add(UItem.asShadow(VoidGram.t("Ссылка на TikTok, YouTube или Instagram в поле ввода предлагает скачать видео в галерею или отправить в чат. TikTok — через tikwm.com, без ключа. YouTube и Instagram — через ваш сервер cobalt (github.com/imputnet/cobalt).", "A TikTok, YouTube or Instagram link in the message field offers to save the video to the gallery or send it to the chat. TikTok goes through tikwm.com, no key. YouTube and Instagram go through your cobalt server (github.com/imputnet/cobalt).")));
 +
 +        items.add(UItem.asHeader("Premium"));
 +        items.add(UItem.asCheck(ID_PREMIUM, VoidGram.t("Локальный Premium", "Local Premium")).setChecked(VoidGramPremium.isLocal()));
@@ -9024,6 +9044,22 @@ index 0000000..2a8dacd
 +                getNotificationCenter().postNotificationName(org.telegram.messenger.NotificationCenter.currentUserPremiumStatusChanged);
 +                update();
 +                break;
++            case ID_VIDEO:
++                VoidGramVideoDownloader.setEnabled(!VoidGramVideoDownloader.isEnabled());
++                update();
++                break;
++            case ID_COBALT:
++                askText(VoidGram.t("Сервер cobalt", "cobalt server"), VoidGramVideoDownloader.cobaltServer(), "https://cobalt.example.com", false, value -> {
++                    VoidGramVideoDownloader.setCobaltServer(value);
++                    update();
++                });
++                break;
++            case ID_COBALT_KEY:
++                askText(VoidGram.t("Ключ cobalt", "cobalt key"), VoidGramVideoDownloader.cobaltKey(), "Api-Key", true, value -> {
++                    VoidGramVideoDownloader.setCobaltKey(value);
++                    update();
++                });
++                break;
 +            case ID_TRANSCRIBE:
 +                if (android.os.Build.VERSION.SDK_INT >= 33) {
 +                    org.telegram.messenger.voidgram.VoidGramTranscribe.setEnabled(!org.telegram.messenger.voidgram.VoidGramTranscribe.isEnabled());
@@ -9051,6 +9087,20 @@ index 0000000..2a8dacd
 +        field.setHintTextColor(Theme.getColor(Theme.key_dialogTextGray3));
 +        field.setInputType(password ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
 +        return field;
++    }
++
++    private void askText(String title, String value, String hint, boolean secret, org.telegram.messenger.Utilities.Callback<String> done) {
++        EditText input = field(getContext(), hint, secret);
++        input.setText(value);
++        LinearLayout layout = new LinearLayout(getContext());
++        layout.setPadding(AndroidUtilities.dp(20), AndroidUtilities.dp(4), AndroidUtilities.dp(20), 0);
++        layout.addView(input, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
++        AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
++        builder.setTitle(title);
++        builder.setView(layout);
++        builder.setPositiveButton("OK", (d, w) -> done.run(input.getText().toString()));
++        builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++        showDialog(builder.create());
 +    }
 +
 +    private void connectLastFm() {
@@ -9092,5 +9142,374 @@ index 0000000..2a8dacd
 +    @Override
 +    protected boolean onLongClick(UItem item, View view, int position, float x, float y) {
 +        return false;
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramVideoDownloader.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramVideoDownloader.java
+new file mode 100644
+index 0000000..a0c45b7
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramVideoDownloader.java
+@@ -0,0 +1,363 @@
++package org.telegram.ui.voidgram;
++
++import android.net.Uri;
++
++import org.json.JSONArray;
++import org.json.JSONObject;
++import org.telegram.messenger.AccountInstance;
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.ApplicationLoader;
++import org.telegram.messenger.MediaController;
++import org.telegram.messenger.R;
++import org.telegram.messenger.SendMessagesHelper;
++import org.telegram.messenger.Utilities;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.ui.ActionBar.AlertDialog;
++import org.telegram.ui.ChatActivity;
++import org.telegram.ui.Components.BulletinFactory;
++
++import java.io.ByteArrayOutputStream;
++import java.io.File;
++import java.io.FileOutputStream;
++import java.io.InputStream;
++import java.io.OutputStream;
++import java.net.HttpURLConnection;
++import java.net.URL;
++import java.net.URLEncoder;
++import java.util.HashSet;
++import java.util.Locale;
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
++
++/**
++ * "Download video", as on iOS: a TikTok, YouTube or Instagram link typed in the message field
++ * offers to download the video and save it to the gallery or send it to the chat. TikTok goes
++ * through tikwm.com (free, no key); YouTube and Instagram need a cobalt server set in
++ * VoidGram → Tools; TikTok falls back to it too.
++ */
++public final class VoidGramVideoDownloader {
++    private VoidGramVideoDownloader() {
++    }
++
++    private static final String USER_AGENT = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36";
++    private static final Pattern LINK = Pattern.compile("https?://[^\\s<>\"«»]+", Pattern.CASE_INSENSITIVE);
++    private static final HashSet<String> offered = new HashSet<>();
++
++    public static boolean isEnabled() {
++        return VoidGram.prefs().getBoolean("video_downloader", true);
++    }
++
++    public static void setEnabled(boolean value) {
++        VoidGram.prefs().edit().putBoolean("video_downloader", value).apply();
++    }
++
++    public static String cobaltServer() {
++        return VoidGram.prefs().getString("cobalt_server", "");
++    }
++
++    public static void setCobaltServer(String value) {
++        VoidGram.prefs().edit().putString("cobalt_server", value == null ? "" : value.trim()).apply();
++    }
++
++    public static String cobaltKey() {
++        return VoidGram.prefs().getString("cobalt_key", "");
++    }
++
++    public static void setCobaltKey(String value) {
++        VoidGram.prefs().edit().putString("cobalt_key", value == null ? "" : value.trim()).apply();
++    }
++
++    /** "tiktok", "youtube", "instagram" or null. */
++    static String service(String link) {
++        try {
++            Uri uri = Uri.parse(link);
++            String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
++            String path = uri.getPath() == null ? "" : uri.getPath().toLowerCase(Locale.ROOT);
++            if (matches(host, "tiktok.com")) {
++                return "tiktok";
++            }
++            if (matches(host, "youtu.be")) {
++                return path.length() > 1 ? "youtube" : null;
++            }
++            if (matches(host, "youtube.com")) {
++                return path.startsWith("/watch") || path.startsWith("/shorts/") || path.startsWith("/live/") ? "youtube" : null;
++            }
++            if (matches(host, "instagram.com")) {
++                return path.startsWith("/reel") || path.startsWith("/p/") || path.startsWith("/tv/") ? "instagram" : null;
++            }
++        } catch (Throwable ignore) {
++        }
++        return null;
++    }
++
++    private static boolean matches(String host, String domain) {
++        return host.equals(domain) || host.endsWith("." + domain);
++    }
++
++    private static String title(String service) {
++        switch (service) {
++            case "tiktok": return "TikTok";
++            case "youtube": return "YouTube";
++            default: return "Instagram";
++        }
++    }
++
++    /** ChatActivity: the message field changed. */
++    public static void onComposerText(ChatActivity chat, CharSequence text) {
++        if (chat == null || text == null || text.length() == 0 || text.length() > 4096 || !isEnabled()) {
++            return;
++        }
++        Matcher matcher = LINK.matcher(text);
++        while (matcher.find()) {
++            String link = matcher.group();
++            String service = service(link);
++            if (service == null) {
++                continue;
++            }
++            if (!offered.add(link)) {
++                return;
++            }
++            BulletinFactory.of(chat).createSimpleBulletin(R.raw.ic_download, VoidGram.t("Видео ", "Video · ") + title(service), VoidGram.t("Скачать", "Download"), () -> presentActions(chat, link, service)).show();
++            return;
++        }
++    }
++
++    private static void presentActions(ChatActivity chat, String link, String service) {
++        if (chat.getParentActivity() == null) {
++            return;
++        }
++        AlertDialog.Builder builder = new AlertDialog.Builder(chat.getParentActivity());
++        builder.setTitle(VoidGram.t("Скачать видео · ", "Download video · ") + title(service));
++        builder.setItems(new CharSequence[]{VoidGram.t("Сохранить в галерею", "Save to gallery"), VoidGram.t("Отправить в чат", "Send to the chat")}, (dialog, which) -> run(chat, link, service, which == 1));
++        builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++        chat.showDialog(builder.create());
++    }
++
++    private static void run(ChatActivity chat, String link, String service, boolean send) {
++        AlertDialog progress = new AlertDialog(chat.getParentActivity(), AlertDialog.ALERT_TYPE_SPINNER);
++        progress.setCanCancel(true);
++        final boolean[] cancelled = new boolean[1];
++        progress.setOnCancelListener(d -> cancelled[0] = true);
++        progress.show();
++        final long dialogId = chat.getDialogId();
++        final int account = chat.getCurrentAccount();
++        Utilities.globalQueue.postRunnable(() -> {
++            String error = null;
++            File file = null;
++            try {
++                String direct = resolve(link, service);
++                if (!cancelled[0]) {
++                    file = download(direct, cancelled);
++                }
++            } catch (DownloadException e) {
++                error = e.getMessage();
++            } catch (Throwable e) {
++                error = VoidGram.t("Не удалось скачать видео. Проверьте интернет и попробуйте ещё раз.", "Couldn't download the video. Check the connection and try again.");
++            }
++            final File result = file;
++            final String failure = error;
++            AndroidUtilities.runOnUIThread(() -> {
++                try {
++                    progress.dismiss();
++                } catch (Throwable ignore) {
++                }
++                if (cancelled[0]) {
++                    if (result != null) {
++                        result.delete();
++                    }
++                    return;
++                }
++                if (result == null) {
++                    BulletinFactory.of(chat).createErrorBulletin(failure != null ? failure : VoidGram.t("Не удалось скачать видео.", "Couldn't download the video.")).show();
++                    return;
++                }
++                if (send) {
++                    SendMessagesHelper.prepareSendingVideo(AccountInstance.getInstance(account), result.getAbsolutePath(), null, null, null, dialogId, null, null, null, null, null, 0, null, true, 0, 0, false, false, null, null, 0, 0);
++                } else {
++                    MediaController.saveFile(result.getAbsolutePath(), chat.getParentActivity(), 1, null, "video/mp4", uri -> {
++                        BulletinFactory.of(chat).createSimpleBulletin(R.raw.done, VoidGram.t("Видео сохранено в галерею", "Video saved to the gallery")).show();
++                    });
++                }
++            });
++        });
++    }
++
++    private static final class DownloadException extends Exception {
++        DownloadException(String message) {
++            super(message);
++        }
++    }
++
++    private static String needsServer() {
++        return VoidGram.t("Для YouTube и Instagram нужен сервер cobalt. Укажите его в VoidGram → Инструменты → Скачивание видео.", "YouTube and Instagram need a cobalt server. Set it in VoidGram → Tools → Video downloads.");
++    }
++
++    private static String resolve(String link, String service) throws Exception {
++        String cobalt = cobaltServer();
++        if ("tiktok".equals(service)) {
++            try {
++                return resolveTikTok(link);
++            } catch (DownloadException e) {
++                if (cobalt.isEmpty() || e.getMessage() != null && e.getMessage().equals(notVideo())) {
++                    throw e;
++                }
++                return resolveCobalt(link, cobalt);
++            }
++        }
++        if (cobalt.isEmpty()) {
++            throw new DownloadException(needsServer());
++        }
++        return resolveCobalt(link, cobalt);
++    }
++
++    private static String notVideo() {
++        return VoidGram.t("По ссылке нет видео (например, это фотографии).", "There's no video at this link (it may be photos).");
++    }
++
++    private static String readAll(InputStream in) throws Exception {
++        ByteArrayOutputStream out = new ByteArrayOutputStream();
++        byte[] buffer = new byte[8192];
++        int read;
++        while ((read = in.read(buffer)) > 0) {
++            out.write(buffer, 0, read);
++        }
++        return out.toString("UTF-8");
++    }
++
++    private static String resolveTikTok(String link) throws Exception {
++        HttpURLConnection connection = (HttpURLConnection) new URL("https://www.tikwm.com/api/?url=" + URLEncoder.encode(link, "UTF-8") + "&hd=1").openConnection();
++        connection.setConnectTimeout(30000);
++        connection.setReadTimeout(30000);
++        connection.setRequestProperty("User-Agent", USER_AGENT);
++        JSONObject json;
++        try (InputStream in = connection.getInputStream()) {
++            json = new JSONObject(readAll(in));
++        } finally {
++            connection.disconnect();
++        }
++        JSONObject data = json.optJSONObject("data");
++        if (json.optInt("code", -1) != 0 || data == null) {
++            throw new DownloadException(VoidGram.t("Сервис не отдал видео: ", "The service returned no video: ") + json.optString("msg", "tikwm"));
++        }
++        JSONArray images = data.optJSONArray("images");
++        if (images != null && images.length() > 0) {
++            throw new DownloadException(notVideo());
++        }
++        String play = data.optString("hdplay", "");
++        if (play.isEmpty()) {
++            play = data.optString("play", "");
++        }
++        if (play.isEmpty()) {
++            throw new DownloadException(notVideo());
++        }
++        return play.startsWith("http") ? play : "https://www.tikwm.com" + (play.startsWith("/") ? play : "/" + play);
++    }
++
++    /** cobalt API (v10+): POST / with {"url": …}; the answer is a tunnel or redirect URL, or a picker. */
++    private static String resolveCobalt(String link, String server) throws Exception {
++        String base = server.trim();
++        if (!base.toLowerCase(Locale.ROOT).startsWith("http")) {
++            base = "https://" + base;
++        }
++        if (!base.endsWith("/")) {
++            base += "/";
++        }
++        HttpURLConnection connection = (HttpURLConnection) new URL(base).openConnection();
++        connection.setConnectTimeout(30000);
++        connection.setReadTimeout(60000);
++        connection.setRequestMethod("POST");
++        connection.setDoOutput(true);
++        connection.setRequestProperty("Accept", "application/json");
++        connection.setRequestProperty("Content-Type", "application/json");
++        connection.setRequestProperty("User-Agent", USER_AGENT);
++        String key = cobaltKey();
++        if (!key.isEmpty()) {
++            connection.setRequestProperty("Authorization", "Api-Key " + key);
++        }
++        JSONObject body = new JSONObject();
++        body.put("url", link);
++        body.put("videoQuality", "1080");
++        body.put("youtubeVideoCodec", "h264");
++        body.put("filenameStyle", "basic");
++        try (OutputStream out = connection.getOutputStream()) {
++            out.write(body.toString().getBytes("UTF-8"));
++        }
++        JSONObject json;
++        InputStream in = connection.getResponseCode() < 400 ? connection.getInputStream() : connection.getErrorStream();
++        try {
++            json = new JSONObject(readAll(in));
++        } finally {
++            if (in != null) {
++                in.close();
++            }
++            connection.disconnect();
++        }
++        String status = json.optString("status", "");
++        switch (status) {
++            case "tunnel":
++            case "redirect":
++            case "stream": {
++                String url = json.optString("url", "");
++                if (url.isEmpty()) {
++                    throw new DownloadException(notVideo());
++                }
++                return url;
++            }
++            case "picker": {
++                JSONArray picker = json.optJSONArray("picker");
++                if (picker != null) {
++                    for (int i = 0; i < picker.length(); i++) {
++                        JSONObject item = picker.optJSONObject(i);
++                        if (item != null && ("video".equals(item.optString("type")) || "gif".equals(item.optString("type"))) && !item.optString("url", "").isEmpty()) {
++                            return item.optString("url");
++                        }
++                    }
++                }
++                throw new DownloadException(notVideo());
++            }
++            default: {
++                JSONObject error = json.optJSONObject("error");
++                String code = error != null ? error.optString("code", status) : status;
++                throw new DownloadException(VoidGram.t("Сервис не отдал видео: ", "The service returned no video: ") + code);
++            }
++        }
++    }
++
++    private static File download(String url, boolean[] cancelled) throws Exception {
++        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
++        connection.setConnectTimeout(30000);
++        connection.setReadTimeout(60000);
++        connection.setInstanceFollowRedirects(true);
++        connection.setRequestProperty("User-Agent", USER_AGENT);
++        int code = connection.getResponseCode();
++        String type = connection.getContentType() == null ? "" : connection.getContentType().toLowerCase(Locale.ROOT);
++        if (code < 200 || code >= 300) {
++            connection.disconnect();
++            throw new DownloadException(VoidGram.t("Не удалось скачать видео (код ", "Couldn't download the video (code ") + code + ").");
++        }
++        if (type.startsWith("text/") || type.contains("json")) {
++            connection.disconnect();
++            throw new DownloadException(notVideo());
++        }
++        File dir = new File(new File(ApplicationLoader.applicationContext.getFilesDir(), "cache"), "voidgram_video");
++        dir.mkdirs();
++        File file = new File(dir, "voidgram_video_" + System.currentTimeMillis() + ".mp4");
++        try (InputStream in = connection.getInputStream(); FileOutputStream out = new FileOutputStream(file)) {
++            byte[] buffer = new byte[65536];
++            int read;
++            while ((read = in.read(buffer)) > 0) {
++                if (cancelled[0]) {
++                    break;
++                }
++                out.write(buffer, 0, read);
++            }
++        } finally {
++            connection.disconnect();
++        }
++        if (cancelled[0] || file.length() == 0) {
++            file.delete();
++            return null;
++        }
++        return file;
 +    }
 +}
