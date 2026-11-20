@@ -583,10 +583,10 @@ index 9881370..262aa9c 100644
                  if (BuildVars.LOGS_ENABLED) {
                      FileLog.d("NotificationsController: process new messages, value is " + value + " ("+dialogId+", "+isChannel+", "+messageObject.isReactionPush+", "+messageObject.isStoryReactionPush+")");
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java b/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
-index 55452d3..2151066 100644
+index 55452d3..4414524 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
-@@ -4439,6 +4439,16 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
+@@ -4439,6 +4439,18 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
      }
  
      public void sendMessage(SendMessageParams sendMessageParams) {
@@ -596,6 +596,8 @@ index 55452d3..2151066 100644
 +        }
 +        // VoidGram: the privacy notice goes before the first own message in a chat.
 +        org.telegram.messenger.voidgram.VoidGramChatNotice.beforeSend(currentAccount, sendMessageParams);
++        // VoidGram: text shortcuts and {date}/{time}/{weekday}/{clipboard}.
++        org.telegram.messenger.voidgram.VoidGramShortcuts.applyToOutgoing(sendMessageParams);
 +        // VoidGram: tracking parameters are removed from links.
 +        org.telegram.messenger.voidgram.VoidGramInterface.cleanOutgoing(sendMessageParams);
 +        // VoidGram Time Capsule: seal the text when the send menu asked for a capsule.
@@ -5644,6 +5646,148 @@ index 0000000..db8c2e1
 +        builder.show();
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramShortcuts.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramShortcuts.java
+new file mode 100644
+index 0000000..5e59d7d
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramShortcuts.java
+@@ -0,0 +1,136 @@
++package org.telegram.messenger.voidgram;
++
++import android.content.ClipData;
++import android.content.ClipboardManager;
++import android.content.Context;
++
++import org.json.JSONArray;
++import org.json.JSONObject;
++import org.telegram.messenger.ApplicationLoader;
++import org.telegram.messenger.SendMessagesHelper;
++
++import java.text.DateFormat;
++import java.text.SimpleDateFormat;
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.Locale;
++
++/**
++ * Text shortcuts and templates, as on iOS: a message that is exactly ";adr" becomes the saved
++ * text; {date}, {time}, {weekday} and {clipboard} are filled in messages that contain them.
++ */
++public final class VoidGramShortcuts {
++    private VoidGramShortcuts() {
++    }
++
++    public static final class Shortcut {
++        public final String trigger;
++        public final String text;
++
++        public Shortcut(String trigger, String text) {
++            this.trigger = trigger;
++            this.text = text;
++        }
++    }
++
++    public static ArrayList<Shortcut> list() {
++        ArrayList<Shortcut> result = new ArrayList<>();
++        try {
++            JSONArray array = new JSONArray(VoidGram.prefs().getString("shortcuts", "[]"));
++            for (int i = 0; i < array.length(); i++) {
++                JSONObject item = array.getJSONObject(i);
++                result.add(new Shortcut(item.getString("trigger"), item.getString("text")));
++            }
++        } catch (Throwable ignore) {
++        }
++        return result;
++    }
++
++    private static void save(ArrayList<Shortcut> items) {
++        JSONArray array = new JSONArray();
++        try {
++            for (int i = 0; i < Math.min(100, items.size()); i++) {
++                array.put(new JSONObject().put("trigger", items.get(i).trigger).put("text", items.get(i).text));
++            }
++        } catch (Throwable ignore) {
++        }
++        VoidGram.prefs().edit().putString("shortcuts", array.toString()).apply();
++    }
++
++    public static void put(String trigger, String text) {
++        ArrayList<Shortcut> items = list();
++        for (int i = items.size() - 1; i >= 0; i--) {
++            if (items.get(i).trigger.equals(trigger)) {
++                items.remove(i);
++            }
++        }
++        items.add(new Shortcut(trigger, text));
++        save(items);
++    }
++
++    public static void remove(String trigger) {
++        ArrayList<Shortcut> items = list();
++        for (int i = items.size() - 1; i >= 0; i--) {
++            if (items.get(i).trigger.equals(trigger)) {
++                items.remove(i);
++            }
++        }
++        save(items);
++    }
++
++    public static boolean variablesEnabled() {
++        return VoidGram.prefs().getBoolean("shortcut_variables", false);
++    }
++
++    public static void setVariablesEnabled(boolean value) {
++        VoidGram.prefs().edit().putBoolean("shortcut_variables", value).apply();
++    }
++
++    /** The text to send instead, or null to keep it. */
++    public static String apply(String text) {
++        if (text == null || VoidGramDecoy.isActive()) {
++            return null;
++        }
++        String result = text;
++        String trimmed = text.trim();
++        for (Shortcut shortcut : list()) {
++            if (shortcut.trigger.equals(trimmed)) {
++                result = shortcut.text;
++                break;
++            }
++        }
++        if ((variablesEnabled() || !result.equals(text)) && result.contains("{")) {
++            Date now = new Date();
++            result = result.replace("{date}", DateFormat.getDateInstance(DateFormat.MEDIUM).format(now));
++            result = result.replace("{time}", DateFormat.getTimeInstance(DateFormat.SHORT).format(now));
++            result = result.replace("{weekday}", new SimpleDateFormat("EEEE", Locale.getDefault()).format(now));
++            if (result.contains("{clipboard}")) {
++                String clip = "";
++                try {
++                    ClipboardManager clipboard = (ClipboardManager) ApplicationLoader.applicationContext.getSystemService(Context.CLIPBOARD_SERVICE);
++                    ClipData data = clipboard != null ? clipboard.getPrimaryClip() : null;
++                    if (data != null && data.getItemCount() > 0 && data.getItemAt(0).getText() != null) {
++                        clip = data.getItemAt(0).getText().toString();
++                    }
++                } catch (Throwable ignore) {
++                }
++                result = result.replace("{clipboard}", clip);
++            }
++        }
++        return result.equals(text) ? null : result;
++    }
++
++    /** SendMessagesHelper: plain text messages only; formatting is dropped when the text changes. */
++    public static void applyToOutgoing(SendMessagesHelper.SendMessageParams params) {
++        if (params == null || params.message == null || params.document != null || params.photo != null) {
++            return;
++        }
++        String replacement = apply(params.message);
++        if (replacement != null && !replacement.isEmpty()) {
++            params.message = replacement;
++            if (params.entities != null) {
++                params.entities.clear();
++            }
++        }
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramStandIn.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramStandIn.java
 new file mode 100644
 index 0000000..aa3135e
@@ -10352,6 +10496,132 @@ index 0000000..e833169
 +        return false;
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramShortcutsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramShortcutsActivity.java
+new file mode 100644
+index 0000000..713b75f
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramShortcutsActivity.java
+@@ -0,0 +1,120 @@
++package org.telegram.ui.voidgram;
++
++import android.content.Context;
++import android.text.InputType;
++import android.view.View;
++import android.widget.EditText;
++import android.widget.LinearLayout;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.R;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramShortcuts;
++import org.telegram.ui.ActionBar.AlertDialog;
++import org.telegram.ui.ActionBar.Theme;
++import org.telegram.ui.Components.UItem;
++import org.telegram.ui.Components.UniversalAdapter;
++import org.telegram.ui.Components.UniversalFragment;
++
++import java.util.ArrayList;
++
++/** VoidGram → Tools → Shortcuts and templates. */
++public class VoidGramShortcutsActivity extends UniversalFragment {
++    private static final int ID_VARIABLES = 1;
++    private static final int ID_ADD = 2;
++    private static final int ID_ITEM_BASE = 100;
++
++    private ArrayList<VoidGramShortcuts.Shortcut> items = new ArrayList<>();
++
++    @Override
++    protected CharSequence getTitle() {
++        return VoidGram.t("Шаблоны и сокращения", "Shortcuts and templates");
++    }
++
++    @Override
++    protected void fillItems(ArrayList<UItem> list, UniversalAdapter adapter) {
++        items = VoidGramShortcuts.list();
++        list.add(UItem.asCheck(ID_VARIABLES, VoidGram.t("Подставлять переменные", "Fill in variables")).setChecked(VoidGramShortcuts.variablesEnabled()));
++        list.add(UItem.asShadow(VoidGram.t("{date}, {time}, {weekday} и {clipboard} в любых сообщениях.", "{date}, {time}, {weekday} and {clipboard} in any message.")));
++        list.add(UItem.asHeader(VoidGram.t("Сокращения", "Shortcuts")));
++        for (int i = 0; i < items.size(); i++) {
++            VoidGramShortcuts.Shortcut shortcut = items.get(i);
++            String preview = shortcut.text.length() > 40 ? shortcut.text.substring(0, 40) + "…" : shortcut.text;
++            list.add(UItem.asButton(ID_ITEM_BASE + i, shortcut.trigger, preview.replace('\n', ' ')));
++        }
++        list.add(UItem.asButton(ID_ADD, R.drawable.msg_add, VoidGram.t("Добавить сокращение", "Add a shortcut")));
++        list.add(UItem.asShadow(VoidGram.t("Сообщение, равное сокращению (например, ;адр), заменяется текстом. Нажмите на сокращение, чтобы изменить или удалить его.", "A message equal to a shortcut (for example ;adr) is replaced with its text. Tap a shortcut to change or delete it.")));
++    }
++
++    private void update() {
++        if (listView != null && listView.adapter != null) {
++            listView.adapter.update(true);
++        }
++    }
++
++    private EditText field(Context context, String hint, String value, boolean multiline) {
++        EditText field = new EditText(context);
++        field.setHint(hint);
++        field.setText(value);
++        field.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
++        field.setHintTextColor(Theme.getColor(Theme.key_dialogTextGray3));
++        field.setInputType(multiline ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
++        if (!multiline) {
++            field.setSingleLine(true);
++        } else {
++            field.setMaxLines(6);
++        }
++        return field;
++    }
++
++    private void edit(VoidGramShortcuts.Shortcut existing) {
++        Context context = getContext();
++        LinearLayout layout = new LinearLayout(context);
++        layout.setOrientation(LinearLayout.VERTICAL);
++        layout.setPadding(AndroidUtilities.dp(20), AndroidUtilities.dp(4), AndroidUtilities.dp(20), 0);
++        EditText trigger = field(context, VoidGram.t(";адр", ";adr"), existing != null ? existing.trigger : "", false);
++        EditText text = field(context, VoidGram.t("Текст", "Text"), existing != null ? existing.text : "", true);
++        layout.addView(trigger);
++        layout.addView(text);
++        AlertDialog.Builder builder = new AlertDialog.Builder(context);
++        builder.setTitle(existing != null ? VoidGram.t("Сокращение", "Shortcut") : VoidGram.t("Новое сокращение", "New shortcut"));
++        builder.setView(layout);
++        builder.setPositiveButton(VoidGram.t("Сохранить", "Save"), (d, w) -> {
++            String t = trigger.getText().toString().trim();
++            String body = text.getText().toString();
++            if (t.isEmpty() || body.isEmpty()) {
++                return;
++            }
++            if (existing != null && !existing.trigger.equals(t)) {
++                VoidGramShortcuts.remove(existing.trigger);
++            }
++            VoidGramShortcuts.put(t, body);
++            update();
++        });
++        if (existing != null) {
++            builder.setNeutralButton(VoidGram.t("Удалить", "Delete"), (d, w) -> {
++                VoidGramShortcuts.remove(existing.trigger);
++                update();
++            });
++        }
++        builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++        showDialog(builder.create());
++    }
++
++    @Override
++    protected void onClick(UItem item, View view, int position, float x, float y) {
++        if (item.id == ID_VARIABLES) {
++            VoidGramShortcuts.setVariablesEnabled(!VoidGramShortcuts.variablesEnabled());
++            update();
++        } else if (item.id == ID_ADD) {
++            edit(null);
++        } else if (item.id >= ID_ITEM_BASE && item.id - ID_ITEM_BASE < items.size()) {
++            edit(items.get(item.id - ID_ITEM_BASE));
++        }
++    }
++
++    @Override
++    protected boolean onLongClick(UItem item, View view, int position, float x, float y) {
++        return false;
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSleepTimerSheet.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSleepTimerSheet.java
 new file mode 100644
 index 0000000..5ad1a7f
@@ -10400,12 +10670,90 @@ index 0000000..5ad1a7f
 +        builder.show();
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSmartFolders.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSmartFolders.java
+new file mode 100644
+index 0000000..e1c2c2e
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSmartFolders.java
+@@ -0,0 +1,72 @@
++package org.telegram.ui.voidgram;
++
++import org.telegram.messenger.MessagesController;
++import org.telegram.messenger.R;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.ui.ActionBar.AlertDialog;
++import org.telegram.ui.ActionBar.BaseFragment;
++import org.telegram.ui.Components.BulletinFactory;
++import org.telegram.ui.FilterCreateActivity;
++
++import java.util.ArrayList;
++
++/**
++ * Ready-made "smart" chat folders, as on iOS: built from Telegram's own folder rules, so they
++ * sync to every device and update themselves.
++ */
++public final class VoidGramSmartFolders {
++    private VoidGramSmartFolders() {
++    }
++
++    private static final String[][] TITLES = {
++            {"✅ Непрочитанные", "✅ Unread"},
++            {"⭐ Важное", "⭐ Important"},
++            {"👤 Люди", "👤 People"},
++            {"👥 Группы", "👥 Groups"},
++            {"📢 Каналы", "📢 Channels"},
++            {"🤖 Боты", "🤖 Bots"},
++    };
++
++    private static int flags(int index) {
++        int all = MessagesController.DIALOG_FILTER_FLAG_ALL_CHATS;
++        int archived = MessagesController.DIALOG_FILTER_FLAG_EXCLUDE_ARCHIVED;
++        switch (index) {
++            case 0: return all | MessagesController.DIALOG_FILTER_FLAG_EXCLUDE_READ | archived;
++            case 1: return all | MessagesController.DIALOG_FILTER_FLAG_EXCLUDE_READ | MessagesController.DIALOG_FILTER_FLAG_EXCLUDE_MUTED | archived;
++            case 2: return MessagesController.DIALOG_FILTER_FLAG_CONTACTS | MessagesController.DIALOG_FILTER_FLAG_NON_CONTACTS | archived;
++            case 3: return MessagesController.DIALOG_FILTER_FLAG_GROUPS | archived;
++            case 4: return MessagesController.DIALOG_FILTER_FLAG_CHANNELS | archived;
++            default: return MessagesController.DIALOG_FILTER_FLAG_BOTS | archived;
++        }
++    }
++
++    public static void show(BaseFragment fragment) {
++        if (fragment == null || fragment.getParentActivity() == null) {
++            return;
++        }
++        CharSequence[] titles = new CharSequence[TITLES.length];
++        for (int i = 0; i < TITLES.length; i++) {
++            titles[i] = VoidGram.t(TITLES[i][0], TITLES[i][1]);
++        }
++        AlertDialog.Builder builder = new AlertDialog.Builder(fragment.getParentActivity());
++        builder.setTitle(VoidGram.t("Умные папки", "Smart folders"));
++        builder.setMessage(VoidGram.t("Папка создаётся в Telegram и обновляется сама: например, «Важное» — непрочитанные чаты без звука не попадают.", "The folder is created in Telegram and updates itself: for example, Important shows unread chats that are not muted."));
++        builder.setItems(titles, (d, which) -> create(fragment, which));
++        builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++        fragment.showDialog(builder.create());
++    }
++
++    private static void create(BaseFragment fragment, int index) {
++        MessagesController controller = fragment.getMessagesController();
++        MessagesController.DialogFilter filter = new MessagesController.DialogFilter();
++        filter.id = 2;
++        while (controller.dialogFiltersById.get(filter.id) != null) {
++            filter.id++;
++        }
++        String name = VoidGram.t(TITLES[index][0], TITLES[index][1]);
++        filter.name = name;
++        FilterCreateActivity.saveFilterToServer(filter, flags(index), name, new ArrayList<>(), false, -1, new ArrayList<>(), new ArrayList<>(), new org.telegram.messenger.support.LongSparseIntArray(), true, false, true, true, true, fragment, () -> {
++            BulletinFactory.of(fragment).createSimpleBulletin(R.raw.contact_check, VoidGram.t("Папка создана — она вверху списка чатов.", "The folder was created; it is at the top of the chat list.")).show();
++        });
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java
 new file mode 100644
-index 0000000..72ab4b0
+index 0000000..ddf1800
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java
-@@ -0,0 +1,218 @@
+@@ -0,0 +1,231 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.content.Context;
@@ -10442,6 +10790,8 @@ index 0000000..72ab4b0
 +    private static final int ID_AI_KEY = 10;
 +    private static final int ID_AI_ENDPOINT = 11;
 +    private static final int ID_AI_MODEL = 12;
++    private static final int ID_SHORTCUTS = 13;
++    private static final int ID_SMART_FOLDERS = 14;
 +
 +    @Override
 +    protected CharSequence getTitle() {
@@ -10450,6 +10800,11 @@ index 0000000..72ab4b0
 +
 +    @Override
 +    protected void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
++        items.add(UItem.asHeader(VoidGram.t("Сообщения и чаты", "Messages and chats")));
++        items.add(UItem.asButton(ID_SHORTCUTS, R.drawable.msg_edit, VoidGram.t("Шаблоны и сокращения", "Shortcuts and templates"), String.valueOf(org.telegram.messenger.voidgram.VoidGramShortcuts.list().size())));
++        items.add(UItem.asButton(ID_SMART_FOLDERS, R.drawable.msg_folders, VoidGram.t("Умные папки", "Smart folders")));
++        items.add(UItem.asShadow(null));
++
 +        items.add(UItem.asHeader(VoidGram.t("Музыка", "Music")));
 +        items.add(UItem.asButton(ID_LASTFM, R.drawable.msg_media, VoidGramLastFm.isConnected() ? VoidGramLastFm.username() : VoidGram.t("Подключить Last.fm", "Connect Last.fm"), VoidGramLastFm.isConnected() ? VoidGram.t("вкл.", "on") : ""));
 +        items.add(UItem.asShadow(VoidGram.t("Скробблинг треков из плеера через ваш API-аккаунт Last.fm (last.fm/api/account/create). Пароль нужен один раз и не сохраняется.", "Scrobbles player tracks through your own Last.fm API account (last.fm/api/account/create). The password is used once and not stored.")));
@@ -10511,6 +10866,12 @@ index 0000000..72ab4b0
 +                VoidGramPremium.setLocal(!VoidGramPremium.isLocal());
 +                getNotificationCenter().postNotificationName(org.telegram.messenger.NotificationCenter.currentUserPremiumStatusChanged);
 +                update();
++                break;
++            case ID_SHORTCUTS:
++                presentFragment(new VoidGramShortcutsActivity());
++                break;
++            case ID_SMART_FOLDERS:
++                VoidGramSmartFolders.show(this);
 +                break;
 +            case ID_VT_KEY:
 +                askText(VoidGram.t("Ключ VirusTotal", "VirusTotal key"), VoidGramOnlineTools.virusTotalKey(), "x-apikey", true, value -> { VoidGramOnlineTools.setVirusTotalKey(value); update(); });
