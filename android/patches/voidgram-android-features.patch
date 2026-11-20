@@ -471,7 +471,7 @@ index 373e423..abfc127 100644
              return false;
          }
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java b/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java
-index ec76835..39d6cf9 100644
+index ec76835..9d998ee 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java
 @@ -6832,6 +6832,8 @@ public class MessagesController extends BaseController implements NotificationCe
@@ -539,7 +539,7 @@ index ec76835..39d6cf9 100644
                  statusSettingState = 2;
                  if (statusRequest != 0) {
                      getConnectionsManager().cancelRequest(statusRequest, true);
-@@ -11415,6 +11434,10 @@ public class MessagesController extends BaseController implements NotificationCe
+@@ -11415,6 +11434,14 @@ public class MessagesController extends BaseController implements NotificationCe
          if (action < 0 || action >= sendingTypings.length || dialogId == 0) {
              return false;
          }
@@ -547,10 +547,14 @@ index ec76835..39d6cf9 100644
 +        if (!DialogObject.isEncryptedDialog(dialogId) && org.telegram.messenger.voidgram.VoidGramGhost.hideTyping(currentAccount, dialogId)) {
 +            return false;
 +        }
++        // VoidGram Privacy+: statuses hidden one by one.
++        if (action != 2 && org.telegram.messenger.voidgram.VoidGramPrivacy.statusHidden(action)) {
++            return false;
++        }
          final long selfId = UserConfig.getInstance(UserConfig.selectedAccount).getClientUserId();
          if (dialogId == selfId) {
              return false;
-@@ -14593,6 +14616,10 @@ public class MessagesController extends BaseController implements NotificationCe
+@@ -14593,6 +14620,10 @@ public class MessagesController extends BaseController implements NotificationCe
      }
  
      private void completeReadTask(ReadTask task) {
@@ -561,7 +565,7 @@ index ec76835..39d6cf9 100644
          if (task.replyId != 0 && task.monoForumPeerId == 0) {
              TLRPC.TL_messages_readDiscussion req = new TLRPC.TL_messages_readDiscussion();
              req.msg_id = (int) task.replyId;
-@@ -19933,6 +19960,8 @@ public class MessagesController extends BaseController implements NotificationCe
+@@ -19933,6 +19964,8 @@ public class MessagesController extends BaseController implements NotificationCe
                  for (int a = 0, size2 = messageObjects.size(); a < size2; a++) {
                      messagesRes.messages.add(messageObjects.get(a).messageOwner);
                  }
@@ -570,7 +574,7 @@ index ec76835..39d6cf9 100644
                  getMessagesStorage().putMessages(messagesRes, editingMessages.keyAt(b), -2, 0, false, 0, 0);
              }
              LongSparseArray<ArrayList<MessageObject>> editingMessagesFinal = editingMessages;
-@@ -21117,6 +21146,8 @@ public class MessagesController extends BaseController implements NotificationCe
+@@ -21117,6 +21150,8 @@ public class MessagesController extends BaseController implements NotificationCe
          LongSparseIntArray markAsReadMessagesOutboxFinal = markAsReadMessagesOutbox;
          LongSparseArray<ArrayList<Integer>> markContentAsReadMessagesFinal = markContentAsReadMessages;
          SparseIntArray markAsReadEncryptedFinal = markAsReadEncrypted;
@@ -579,7 +583,7 @@ index ec76835..39d6cf9 100644
          LongSparseArray<ArrayList<Integer>> deletedMessagesFinal = deletedMessages;
          LongSparseArray<ArrayList<Integer>> deletedQuickRepliesMessagesFinal = deletedQuickReplyMessages;
          LongSparseArray<ArrayList<Integer>> scheduledDeletedMessagesFinal = scheduledDeletedMessages;
-@@ -21727,6 +21758,10 @@ public class MessagesController extends BaseController implements NotificationCe
+@@ -21727,6 +21762,10 @@ public class MessagesController extends BaseController implements NotificationCe
      }
  
      public SponsoredMessagesInfo getSponsoredMessages(long dialogId) {
@@ -7595,10 +7599,10 @@ index 0000000..54e6e87
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPrivacy.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPrivacy.java
 new file mode 100644
-index 0000000..21e1188
+index 0000000..ba14293
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPrivacy.java
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,163 @@
 +package org.telegram.messenger.voidgram;
 +
 +import org.telegram.messenger.AndroidUtilities;
@@ -7666,6 +7670,43 @@ index 0000000..21e1188
 +
 +    public static void setDelaySeconds(int value) {
 +        VoidGram.prefs().edit().putInt("privacy_delay", value).apply();
++    }
++
++    /** Activity statuses others see; each can be hidden on its own, also without Ghost Mode. */
++    public static final int[] STATUS_ACTIONS = {0, 1, 7, 4, 5, 3, 9, 8, 10, 6, 11};
++
++    public static String statusTitle(int action) {
++        switch (action) {
++            case 0: return VoidGram.t("Печатает", "Typing");
++            case 1: return VoidGram.t("Записывает голосовое", "Recording a voice message");
++            case 7: return VoidGram.t("Записывает кружок", "Recording a video message");
++            case 4: return VoidGram.t("Отправляет фото", "Sending a photo");
++            case 5: return VoidGram.t("Отправляет видео", "Sending a video");
++            case 3: return VoidGram.t("Отправляет файл", "Sending a file");
++            case 9: return VoidGram.t("Отправляет аудио", "Sending audio");
++            case 8: return VoidGram.t("Отправляет кружок", "Sending a video message");
++            case 10: return VoidGram.t("Выбирает стикер", "Choosing a sticker");
++            case 6: return VoidGram.t("Играет", "Playing a game");
++            default: return VoidGram.t("Смотрит анимацию эмодзи", "Watching an emoji animation");
++        }
++    }
++
++    public static boolean statusHidden(int action) {
++        return VoidGram.prefs().getBoolean("privacy_status_" + action, false);
++    }
++
++    public static void setStatusHidden(int action, boolean hidden) {
++        VoidGram.prefs().edit().putBoolean("privacy_status_" + action, hidden).apply();
++    }
++
++    public static int hiddenStatusCount() {
++        int count = 0;
++        for (int action : STATUS_ACTIONS) {
++            if (statusHidden(action)) {
++                count++;
++            }
++        }
++        return count;
 +    }
 +
 +    /** Stories are viewed unseen while Ghost Mode hides read receipts. */
@@ -11502,10 +11543,10 @@ index 0000000..44df62b
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramGhostActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramGhostActivity.java
 new file mode 100644
-index 0000000..5f5fd0c
+index 0000000..b833af0
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramGhostActivity.java
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,165 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.view.View;
@@ -11534,6 +11575,7 @@ index 0000000..5f5fd0c
 +    private static final int ID_DELAY = 42;
 +    private static final int ID_STORY_VIEWS = 43;
 +    private static final int ID_CONFIRM_CALLS = 44;
++    private static final int ID_STATUSES = 45;
 +
 +    @Override
 +    protected CharSequence getTitle() {
@@ -11564,6 +11606,7 @@ index 0000000..5f5fd0c
 +        items.add(UItem.asShadow(VoidGram.t("Для этого аккаунта. В чате: ⋮ → «Призрак в этом чате» исключает чат. Секретные чаты, прослушивание голосовых и просмотр историй работают как обычно. Это не полная невидимость: отправленные запросы не отменить, а новое прочтение после выключения может отметить и старые сообщения. Режим противоречит правилам Telegram API — на ваш риск.", "For this account. In a chat: ⋮ → \"Ghost in this chat\" excludes it. Secret chats, voice listening and story views behave as usual. Not absolute invisibility: requests that went out cannot be taken back, and a new read after turning it off can acknowledge older messages too. The mode conflicts with Telegram's API terms — at your own risk.")));
 +
 +        items.add(UItem.asHeader(VoidGram.t("Приватность+", "Privacy+")));
++        items.add(UItem.asButton(ID_STATUSES, VoidGram.t("Скрытые статусы", "Hidden statuses"), org.telegram.messenger.voidgram.VoidGramPrivacy.hiddenStatusCount() + VoidGram.t(" из ", " of ") + org.telegram.messenger.voidgram.VoidGramPrivacy.STATUS_ACTIONS.length));
 +        items.add(UItem.asCheck(ID_READ_ON_REPLY, VoidGram.t("Прочитать при ответе", "Read on reply")).setChecked(org.telegram.messenger.voidgram.VoidGramPrivacy.readOnReply()));
 +        items.add(UItem.asCheck(ID_ALWAYS_ONLINE, VoidGram.t("Всегда онлайн", "Always online")).setChecked(org.telegram.messenger.voidgram.VoidGramPrivacy.alwaysOnline()));
 +        int delay = org.telegram.messenger.voidgram.VoidGramPrivacy.delaySeconds();
@@ -11593,6 +11636,23 @@ index 0000000..5f5fd0c
 +            builder.setTitle(VoidGram.t("Отложенная отправка", "Delayed sending"));
 +            builder.setItems(titles, (d, which) -> {
 +                org.telegram.messenger.voidgram.VoidGramPrivacy.setDelaySeconds(delays[which]);
++                if (listView != null && listView.adapter != null) {
++                    listView.adapter.update(true);
++                }
++            });
++            showDialog(builder.create());
++            return;
++        } else if (id == ID_STATUSES) {
++            int[] actions = org.telegram.messenger.voidgram.VoidGramPrivacy.STATUS_ACTIONS;
++            CharSequence[] titles = new CharSequence[actions.length];
++            for (int i = 0; i < actions.length; i++) {
++                titles[i] = (org.telegram.messenger.voidgram.VoidGramPrivacy.statusHidden(actions[i]) ? "✓ " : "") + org.telegram.messenger.voidgram.VoidGramPrivacy.statusTitle(actions[i]);
++            }
++            org.telegram.ui.ActionBar.AlertDialog.Builder builder = new org.telegram.ui.ActionBar.AlertDialog.Builder(getContext());
++            builder.setTitle(VoidGram.t("Скрытые статусы", "Hidden statuses"));
++            builder.setMessage(VoidGram.t("Отмеченные статусы собеседники не увидят. Работает и без режима призрака.", "Marked statuses are not shown to others. Works without Ghost Mode too."));
++            builder.setItems(titles, (d, which) -> {
++                org.telegram.messenger.voidgram.VoidGramPrivacy.setStatusHidden(actions[which], !org.telegram.messenger.voidgram.VoidGramPrivacy.statusHidden(actions[which]));
 +                if (listView != null && listView.adapter != null) {
 +                    listView.adapter.update(true);
 +                }
