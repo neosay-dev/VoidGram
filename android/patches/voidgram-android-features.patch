@@ -596,10 +596,10 @@ index 9881370..262aa9c 100644
                  if (BuildVars.LOGS_ENABLED) {
                      FileLog.d("NotificationsController: process new messages, value is " + value + " ("+dialogId+", "+isChannel+", "+messageObject.isReactionPush+", "+messageObject.isStoryReactionPush+")");
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java b/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
-index 55452d3..afe2d09 100644
+index 55452d3..fb89e80 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
-@@ -4439,6 +4439,26 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
+@@ -4439,6 +4439,30 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
      }
  
      public void sendMessage(SendMessageParams sendMessageParams) {
@@ -613,6 +613,10 @@ index 55452d3..afe2d09 100644
 +        org.telegram.messenger.voidgram.VoidGramShortcuts.applyToOutgoing(sendMessageParams);
 +        // VoidGram: group mentions (@team → @alice @bob).
 +        org.telegram.messenger.voidgram.VoidGramGroupMentions.applyToOutgoing(sendMessageParams);
++        // VoidGram: .2048, .flappy and .dino open an arcade game instead of being sent.
++        if (org.telegram.messenger.voidgram.VoidGramArcade.intercept(sendMessageParams)) {
++            return;
++        }
 +        // VoidGram plugins: outgoing-text hooks and dot commands (a plugin may cancel the send).
 +        if (!org.telegram.messenger.voidgram.VoidGramPlugins.applyOutgoing(currentAccount, sendMessageParams)) {
 +            return;
@@ -877,6 +881,67 @@ index 0000000..6f850fc
 +    private static final String TEXT_RU = "Пользовательское соглашение VoidGram\n\nПожалуйста, внимательно прочитайте это соглашение до конца. Кнопка «Принимаю» станет доступна только после того, как вы долистаете текст до самого низа. Нажимая «Принимаю», вы подтверждаете, что прочитали, поняли и полностью согласны со всеми условиями ниже. Если вы не согласны — не пользуйтесь VoidGram и удалите приложение.\n\n1. Неофициальный клиент\nVoidGram — неофициальный клиент Telegram. Он не связан с Telegram FZ-LLC, Telegram Messenger Inc. и их партнёрами, не одобрен и не поддерживается ими. Названия и товарные знаки Telegram принадлежат их владельцам.\n\n2. «Как есть», без гарантий\nVoidGram предоставляется «как есть» и «как доступно», без каких-либо гарантий — явных или подразумеваемых, включая гарантии работоспособности, безопасности, точности, совместимости, пригодности для определённой цели и отсутствия ошибок. Приложение может работать нестабильно, терять данные или перестать работать в любой момент.\n\n3. Отказ от ответственности\nРазработчики, участники проекта и распространители VoidGram не несут НИКАКОЙ ответственности за любой прямой, косвенный, случайный, особый или последующий ущерб, связанный с использованием или невозможностью использования приложения. В том числе, но не только, за:\n• блокировку, ограничение, заморозку или удаление вашего аккаунта Telegram;\n• потерю, повреждение, утечку или раскрытие переписки, медиа, контактов и любых других данных;\n• действия других пользователей, ботов, плагинов и третьих лиц;\n• финансовые потери, включая звёзды, подарки, NFT и подписки;\n• последствия нарушения правил Telegram, законов вашей страны или прав третьих лиц.\nВся ответственность за использование VoidGram лежит только на вас.\n\n4. Правила Telegram\nНекоторые функции VoidGram (например, режим призрака, сохранение удалённых и изменённых сообщений, сохранение одноразовых медиа) могут противоречить Условиям использования Telegram API и Условиям обслуживания Telegram. Включая такие функции, вы делаете это на свой страх и риск и понимаете, что Telegram может ограничить ваш аккаунт.\n\n5. Конфиденциальность переписки\nVoidGram может сохранять на устройстве удалённые и изменённые сообщения, одноразовые фото, видео и голосовые сообщения, а также позволяет делать снимки экрана там, где обычный Telegram их запрещает. Поэтому переписку с пользователем VoidGram нельзя считать защищённой — ни в обычных, ни в секретных чатах, ни через одноразовые сообщения.\n\n6. Автоматическое предупреждение собеседников\nЧтобы ваши собеседники знали об этом, VoidGram автоматически отправляет от вашего имени предупреждающее сообщение:\n• в каждый личный чат — один раз, и закрепляет его. Вы не можете удалить или открепить это сообщение в VoidGram; удалить его может только ваш собеседник;\n• в каждую группу, где вы пишете, — один раз, без закрепления.\nСообщение отправляется перед вашим первым сообщением в этом чате. Принимая соглашение, вы соглашаетесь на эту отправку.\n\n7. Плагины и сторонний код\nПлагины, темы и скрипты пишут третьи лица. Разработчики VoidGram их не проверяют полностью и не отвечают за их работу, безопасность и последствия использования. Устанавливайте только то, чему доверяете.\n\n8. Данные\nНастройки, история и архивы VoidGram хранятся локально на вашем устройстве. Для значков и некоторых функций приложение обращается к серверу VoidGram. Разработчики не обязаны хранить, восстанавливать или передавать ваши данные.\n\n9. Законы\nВы обязуетесь использовать VoidGram только в рамках законов вашей страны. Запрещено использовать приложение для слежки, преследования, шантажа, распространения чужих личных данных и любых других незаконных действий.\n\n10. Изменения\nУсловия могут меняться. При существенных изменениях VoidGram снова попросит принять соглашение. Продолжая пользоваться приложением, вы принимаете действующую редакцию.\n\n11. Возраст\nПользуясь VoidGram, вы подтверждаете, что достигли возраста, с которого в вашей стране разрешено самостоятельно принимать такие условия, либо получили согласие родителей или законных представителей.\n\nВы дочитали до конца. Если вы согласны со всеми условиями — нажмите «Принимаю».";
 +
 +    private static final String TEXT_EN = "VoidGram User Agreement\n\nPlease read this agreement carefully to the end. The \"Accept\" button becomes available only after you scroll the text all the way down. By tapping \"Accept\" you confirm that you have read, understood and fully agree to every term below. If you do not agree, do not use VoidGram and delete the app.\n\n1. Unofficial client\nVoidGram is an unofficial Telegram client. It is not affiliated with, endorsed or supported by Telegram FZ-LLC, Telegram Messenger Inc. or their partners. Telegram names and trademarks belong to their owners.\n\n2. \"As is\", no warranty\nVoidGram is provided \"as is\" and \"as available\", without any warranty, express or implied, including warranties of operation, security, accuracy, compatibility, fitness for a particular purpose and freedom from errors. The app may be unstable, lose data or stop working at any time.\n\n3. No liability\nThe developers, contributors and distributors of VoidGram accept NO liability for any direct, indirect, incidental, special or consequential damage related to using or being unable to use the app, including but not limited to:\n• a ban, limit, freeze or deletion of your Telegram account;\n• loss, corruption, leak or disclosure of messages, media, contacts or any other data;\n• actions of other users, bots, plugins and third parties;\n• financial losses, including Stars, gifts, NFTs and subscriptions;\n• the consequences of breaking Telegram's rules, the laws of your country or the rights of others.\nYou alone are responsible for how you use VoidGram.\n\n4. Telegram's rules\nSome VoidGram features (for example Ghost Mode, keeping deleted and edited messages, keeping view-once media) may conflict with the Telegram API Terms of Service and Telegram's Terms of Service. You turn them on at your own risk and understand that Telegram may restrict your account.\n\n5. Privacy of conversations\nVoidGram can keep deleted and edited messages and view-once photos, videos and voice messages on the device, and allows screenshots where ordinary Telegram forbids them. A conversation with a VoidGram user therefore cannot be considered protected: not in ordinary chats, not in secret chats and not with view-once messages.\n\n6. Automatic notice to the people you talk to\nSo that the people you talk to know this, VoidGram automatically sends a warning message on your behalf:\n• to every private chat, once, and pins it. You cannot delete or unpin it in VoidGram; only the other person can delete it;\n• to every group you write in, once, without pinning.\nThe message is sent before your first message in that chat. By accepting this agreement you agree to it being sent.\n\n7. Plugins and third-party code\nPlugins, themes and scripts are written by third parties. The VoidGram developers do not fully review them and are not responsible for how they work, their safety or the consequences of using them. Install only what you trust.\n\n8. Data\nVoidGram settings, history and archives are stored locally on your device. For badges and some features the app contacts the VoidGram server. The developers are not obliged to store, restore or hand over your data.\n\n9. Law\nYou agree to use VoidGram only within the laws of your country. Using the app for surveillance, stalking, blackmail, spreading other people's personal data or any other unlawful activity is forbidden.\n\n10. Changes\nThese terms may change. After a substantial change VoidGram will ask you to accept the agreement again. By continuing to use the app you accept the current version.\n\n11. Age\nBy using VoidGram you confirm that you are old enough in your country to accept such terms yourself, or that you have the consent of your parents or legal guardians.\n\nYou have reached the end. If you agree to all of the terms, tap \"Accept\".";
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramArcade.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramArcade.java
+new file mode 100644
+index 0000000..1f14fa3
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramArcade.java
+@@ -0,0 +1,55 @@
++package org.telegram.messenger.voidgram;
++
++import android.net.Uri;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.SendMessagesHelper;
++
++import java.util.Locale;
++
++/**
++ * Arcade games of the exteraGram Arcade Games plugin, as on iOS: ".2048", ".flappy" or ".dino"
++ * sent as a message opens the game instead of sending the text.
++ */
++public final class VoidGramArcade {
++    private VoidGramArcade() {
++    }
++
++    public static boolean isEnabled() {
++        return VoidGram.prefs().getBoolean("arcade_games", true);
++    }
++
++    public static void setEnabled(boolean value) {
++        VoidGram.prefs().edit().putBoolean("arcade_games", value).apply();
++    }
++
++    public static String url(String text) {
++        if (text == null) {
++            return null;
++        }
++        switch (text.trim().toLowerCase(Locale.ROOT)) {
++            case ".2048": return "https://play2048.co/";
++            case ".flappy": return "https://flappybird.io/play/";
++            case ".dino": return "https://chromedino.com/embed/";
++            default: return null;
++        }
++    }
++
++    /** SendMessagesHelper: true when the message was a game command and the game opened. */
++    public static boolean intercept(SendMessagesHelper.SendMessageParams params) {
++        if (params == null || params.message == null || params.document != null || params.photo != null || !isEnabled() || VoidGramDecoy.isActive()) {
++            return false;
++        }
++        String url = url(params.message);
++        if (url == null) {
++            return false;
++        }
++        AndroidUtilities.runOnUIThread(() -> {
++            org.telegram.ui.ActionBar.BaseFragment fragment = org.telegram.ui.LaunchActivity.getLastFragment();
++            if (fragment != null && fragment.getParentActivity() != null) {
++                org.telegram.messenger.browser.Browser.openUrl(fragment.getParentActivity(), Uri.parse(url), true, false);
++            }
++        });
++        return true;
++    }
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramBackup.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramBackup.java
 new file mode 100644
@@ -14540,10 +14605,10 @@ index 0000000..e1c2c2e
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java
 new file mode 100644
-index 0000000..6d372f3
+index 0000000..e3ccb80
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,259 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.content.Context;
@@ -14585,6 +14650,7 @@ index 0000000..6d372f3
 +    private static final int ID_PROXY_FASTEST = 15;
 +    private static final int ID_PROXY_IMPORT = 16;
 +    private static final int ID_CALL_STATS = 17;
++    private static final int ID_ARCADE = 18;
 +
 +    @Override
 +    protected CharSequence getTitle() {
@@ -14596,6 +14662,7 @@ index 0000000..6d372f3
 +        items.add(UItem.asHeader(VoidGram.t("Сообщения и чаты", "Messages and chats")));
 +        items.add(UItem.asButton(ID_SHORTCUTS, R.drawable.msg_edit, VoidGram.t("Шаблоны и сокращения", "Shortcuts and templates"), String.valueOf(org.telegram.messenger.voidgram.VoidGramShortcuts.list().size())));
 +        items.add(UItem.asButton(ID_SMART_FOLDERS, R.drawable.msg_folders, VoidGram.t("Умные папки", "Smart folders")));
++        items.add(UItem.asCheck(ID_ARCADE, VoidGram.t("Игры по командам .2048, .flappy, .dino", "Games on .2048, .flappy, .dino")).setChecked(org.telegram.messenger.voidgram.VoidGramArcade.isEnabled()));
 +        items.add(UItem.asShadow(null));
 +
 +        items.add(UItem.asHeader(VoidGram.t("Прокси", "Proxy")));
@@ -14667,6 +14734,10 @@ index 0000000..6d372f3
 +            case ID_PREMIUM:
 +                VoidGramPremium.setLocal(!VoidGramPremium.isLocal());
 +                getNotificationCenter().postNotificationName(org.telegram.messenger.NotificationCenter.currentUserPremiumStatusChanged);
++                update();
++                break;
++            case ID_ARCADE:
++                org.telegram.messenger.voidgram.VoidGramArcade.setEnabled(!org.telegram.messenger.voidgram.VoidGramArcade.isEnabled());
 +                update();
 +                break;
 +            case ID_CALL_STATS:
