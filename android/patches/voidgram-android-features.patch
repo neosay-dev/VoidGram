@@ -4571,10 +4571,10 @@ index 0000000..2b3857c
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramInterface.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramInterface.java
 new file mode 100644
-index 0000000..6b90d02
+index 0000000..8b10e27
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramInterface.java
-@@ -0,0 +1,194 @@
+@@ -0,0 +1,195 @@
 +package org.telegram.messenger.voidgram;
 +
 +import org.telegram.messenger.SendMessagesHelper;
@@ -4608,6 +4608,7 @@ index 0000000..6b90d02
 +    public static final String HIDE_PHONE = "ui_hide_phone";
 +    public static final String CLEAN_LINKS = "ui_clean_links";
 +    public static final String COMMA_AFTER_MENTION = "ui_comma_after_mention";
++    public static final String BUBBLE_OUTLINE = "ui_bubble_outline";
 +
 +    public static boolean is(String key) {
 +        return get(key);
@@ -7874,6 +7875,35 @@ index ab54ee3..76fffa0 100644
      public static native void native_updateDcSettings(int currentAccount);
      public static native void native_moveDatacenter(int currentAccount, int datacenterId);
      public static native void native_setNetworkAvailable(int currentAccount, boolean value, int networkType, boolean slow);
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/ActionBar/MessageDrawable.java b/TMessagesProj/src/main/java/org/telegram/ui/ActionBar/MessageDrawable.java
+index a5c1589..d1b2a66 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/ActionBar/MessageDrawable.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/ActionBar/MessageDrawable.java
+@@ -55,6 +55,7 @@ public class MessageDrawable extends Drawable {
+ 
+     private Theme.ResourcesProvider resourcesProvider;
+     private final boolean isOut;
++    private Paint voidgramOutline;
+ 
+     private int topY;
+     private boolean isTopNear;
+@@ -647,6 +648,16 @@ public class MessageDrawable extends Drawable {
+         }
+ 
+         canvas.drawPath(path, p);
++        // VoidGram: a thin outline around every bubble.
++        if (paintToUse == null && org.telegram.messenger.voidgram.VoidGramInterface.is(org.telegram.messenger.voidgram.VoidGramInterface.BUBBLE_OUTLINE)) {
++            if (voidgramOutline == null) {
++                voidgramOutline = new Paint(Paint.ANTI_ALIAS_FLAG);
++                voidgramOutline.setStyle(Paint.Style.STROKE);
++                voidgramOutline.setStrokeWidth(org.telegram.messenger.AndroidUtilities.dp(1));
++            }
++            voidgramOutline.setColor(ColorUtils.setAlphaComponent(Theme.isCurrentThemeDark() ? 0xFFFFFFFF : 0xFF000000, (int) (0.22f * alpha)));
++            canvas.drawPath(path, voidgramOutline);
++        }
+         if (gradientShader != null && isSelected && paintToUse == null) {
+             int color = getColor(Theme.key_chat_outBubbleGradientSelectedOverlay);
+             selectedPaint.setColor(ColorUtils.setAlphaComponent(color, (int) (Color.alpha(color) * alpha / 255f)));
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/ActionBar/Theme.java b/TMessagesProj/src/main/java/org/telegram/ui/ActionBar/Theme.java
 index 7fc7292..1503527 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/ActionBar/Theme.java
@@ -10293,10 +10323,10 @@ index 0000000..e6d2e84
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramInterfaceActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramInterfaceActivity.java
 new file mode 100644
-index 0000000..9242940
+index 0000000..1a9d88a
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramInterfaceActivity.java
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,142 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.view.View;
@@ -10320,6 +10350,7 @@ index 0000000..9242940
 +            VoidGramInterface.HIDE_PHONE,
 +            VoidGramInterface.NO_LINK_WARNING,
 +            VoidGramInterface.CLEAN_LINKS,
++            VoidGramInterface.BUBBLE_OUTLINE,
 +    };
 +
 +    private static final int ID_STREAMER = 100;
@@ -10347,6 +10378,7 @@ index 0000000..9242940
 +        check(items, 2, VoidGram.t("Без перехода к следующему каналу", "No jump to the next channel"));
 +        check(items, 3, VoidGram.t("Прятать клавиатуру при прокрутке", "Hide the keyboard on scroll"));
 +        check(items, 4, VoidGram.t("Запятая после упоминания", "Comma after a mention"));
++        check(items, 8, VoidGram.t("Обводка сообщений", "Message outline"));
 +        items.add(UItem.asCheck(ID_BLACK_HOLE, VoidGram.t("«Чёрная дыра» при очистке чата", "\"Black hole\" when clearing a chat")).setChecked(VoidGramBlackHole.isEnabled()));
 +        items.add(UItem.asShadow(VoidGram.t("Упоминание в начале сообщения вставляется как «@ник, ».", "A mention at the start of a message is inserted as \"@name, \".")));
 +        items.add(UItem.asHeader(VoidGram.t("Эффекты", "Effects")));
