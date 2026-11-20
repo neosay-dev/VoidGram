@@ -1053,6 +1053,142 @@ index 0000000..cb30503
 +        }
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramFilters.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramFilters.java
+new file mode 100644
+index 0000000..5d6ffef
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramFilters.java
+@@ -0,0 +1,130 @@
++package org.telegram.messenger.voidgram;
++
++import android.text.TextUtils;
++
++import org.telegram.messenger.MessageObject;
++
++import java.util.ArrayList;
++import java.util.regex.Pattern;
++
++/**
++ * VoidGram local regex filtering, as on iOS: incoming messages whose text matches one of the
++ * patterns are not shown. Nothing is deleted or reported; turning the filter off shows them again.
++ */
++public final class VoidGramFilters {
++    private static ArrayList<Pattern> compiled;
++
++    private VoidGramFilters() {
++    }
++
++    public static boolean isEnabled() {
++        return VoidGram.prefs().getBoolean("filters_enabled", false);
++    }
++
++    public static void setEnabled(boolean value) {
++        VoidGram.prefs().edit().putBoolean("filters_enabled", value).apply();
++    }
++
++    public static boolean ownMessages() {
++        return VoidGram.prefs().getBoolean("filters_own", false);
++    }
++
++    public static void setOwnMessages(boolean value) {
++        VoidGram.prefs().edit().putBoolean("filters_own", value).apply();
++    }
++
++    public static String source() {
++        return VoidGram.prefs().getString("filters_patterns", "");
++    }
++
++    /** One pattern per line. Returns the first invalid line, or null when all compile. */
++    public static String setSource(String source) {
++        for (String line : source.split("\n")) {
++            String pattern = line.trim();
++            if (pattern.isEmpty()) {
++                continue;
++            }
++            try {
++                Pattern.compile(pattern, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
++            } catch (Throwable e) {
++                return pattern;
++            }
++        }
++        VoidGram.prefs().edit().putString("filters_patterns", source).apply();
++        compiled = null;
++        return null;
++    }
++
++    private static synchronized ArrayList<Pattern> patterns() {
++        if (compiled == null) {
++            ArrayList<Pattern> list = new ArrayList<>();
++            for (String line : source().split("\n")) {
++                String pattern = line.trim();
++                if (pattern.isEmpty()) {
++                    continue;
++                }
++                try {
++                    list.add(Pattern.compile(pattern, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE));
++                } catch (Throwable ignore) {
++                }
++            }
++            compiled = list;
++        }
++        return compiled;
++    }
++
++    public static int count() {
++        return patterns().size();
++    }
++
++    public static boolean isFiltered(MessageObject messageObject) {
++        if (!isEnabled() || messageObject == null || messageObject.messageOwner == null) {
++            return false;
++        }
++        if (messageObject.isOut() && !ownMessages()) {
++            return false;
++        }
++        String text = messageObject.messageOwner.message;
++        if (TextUtils.isEmpty(text)) {
++            return false;
++        }
++        for (Pattern pattern : patterns()) {
++            // Long texts are matched in part: a runaway pattern must not freeze the chat.
++            if (pattern.matcher(text.length() > 8192 ? text.substring(0, 8192) : text).find()) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    /** The messages to show. The list never becomes empty, so loading further pages keeps working. */
++    public static ArrayList<MessageObject> filter(ArrayList<MessageObject> messages) {
++        if (messages == null || messages.isEmpty() || !isEnabled() || patterns().isEmpty()) {
++            return messages;
++        }
++        ArrayList<MessageObject> result = new ArrayList<>(messages.size());
++        for (MessageObject message : messages) {
++            if (!isFiltered(message)) {
++                result.add(message);
++            }
++        }
++        if (result.isEmpty()) {
++            result.add(messages.get(messages.size() - 1));
++        }
++        return result.size() == messages.size() ? messages : result;
++    }
++
++    /** New messages to show (may be empty: nothing new appears). */
++    public static ArrayList<MessageObject> filterNew(ArrayList<MessageObject> messages) {
++        if (messages == null || messages.isEmpty() || !isEnabled() || patterns().isEmpty()) {
++            return messages;
++        }
++        ArrayList<MessageObject> result = new ArrayList<>(messages.size());
++        for (MessageObject message : messages) {
++            if (!isFiltered(message)) {
++                result.add(message);
++            }
++        }
++        return result.size() == messages.size() ? messages : result;
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramGhost.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramGhost.java
 new file mode 100644
 index 0000000..94c035f
@@ -2322,7 +2458,7 @@ index 5dc090f..42ae0c5 100644
  
      void measureTime(MessageObject messageObject) {
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
-index a54b134..d5c99e7 100644
+index a54b134..916b85d 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 @@ -1246,6 +1246,10 @@ public class ChatActivity extends BaseFragment implements
@@ -2397,7 +2533,28 @@ index a54b134..d5c99e7 100644
              if (ChatObject.isBoostSupported(currentChat) && (getUserConfig().isPremium() || ChatObject.isBoosted(chatInfo) || ChatObject.hasAdminRights(currentChat))) {
                  RLottieDrawable drawable = new RLottieDrawable(R.raw.boosts, dp(24), dp(24));
                  headerItem.lazilyAddSubItem(boost_group, drawable, LocaleController.getString(ChatObject.isChannelAndNotMegaGroup(currentChat) ? R.string.BoostingBoostChannelMenu : R.string.BoostingBoostGroupMenu));
-@@ -31957,6 +31985,17 @@ public class ChatActivity extends BaseFragment implements
+@@ -21371,7 +21399,8 @@ public class ChatActivity extends BaseFragment implements
+         if (postponedScroll) {
+             postponedScrollToLastMessageQueryIndex = 0;
+         }
+-        ArrayList<MessageObject> messArr = (ArrayList<MessageObject>) args[2];
++        // VoidGram: messages matching the local regex filters are not shown.
++        ArrayList<MessageObject> messArr = org.telegram.messenger.voidgram.VoidGramFilters.filter((ArrayList<MessageObject>) args[2]);
+         layOutWidgetsForSideMenu(messArr);
+ 
+         boolean universalNotify = false;
+@@ -22807,8 +22836,9 @@ public class ChatActivity extends BaseFragment implements
+         } else if (id == NotificationCenter.didReceiveNewMessages) {
+             FileLog.d("ChatActivity didReceiveNewMessages start");
+             long did = (Long) args[0];
+-            ArrayList<MessageObject> arr = (ArrayList<MessageObject>) args[1];
++            ArrayList<MessageObject> arr = org.telegram.messenger.voidgram.VoidGramFilters.filterNew((ArrayList<MessageObject>) args[1]);
+             if (isInsideContainer) return;
++            if (arr == null || arr.isEmpty()) return;
+             if (did == dialog_id) {
+                 boolean scheduled = (Boolean) args[2];
+                 int mode = (Integer) args[3];
+@@ -31957,6 +31987,17 @@ public class ChatActivity extends BaseFragment implements
                  icons.add(R.drawable.msg_calendar2);
              }
  
@@ -2415,7 +2572,7 @@ index a54b134..d5c99e7 100644
              if (options.isEmpty() && optionsView == null) {
                  return false;
              }
-@@ -34293,6 +34332,17 @@ public class ChatActivity extends BaseFragment implements
+@@ -34293,6 +34334,17 @@ public class ChatActivity extends BaseFragment implements
          }
          boolean preserveDim = false;
          switch (option) {
@@ -2644,10 +2801,10 @@ index e2b917b..050a7c7 100644
                  break;
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java
 new file mode 100644
-index 0000000..465ffe7
+index 0000000..bdbce0d
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,91 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.view.View;
@@ -2666,6 +2823,9 @@ index 0000000..465ffe7
 +    private static final int ID_ADS = 2;
 +    private static final int ID_SCREENSHOTS = 3;
 +    private static final int ID_IDS = 4;
++    private static final int ID_FILTERS = 5;
++    private static final int ID_FILTERS_OWN = 6;
++    private static final int ID_FILTERS_EDIT = 7;
 +
 +    @Override
 +    protected CharSequence getTitle() {
@@ -2678,6 +2838,11 @@ index 0000000..465ffe7
 +        items.add(UItem.asCheck(ID_SECONDS, VoidGram.t("Секунды во времени сообщений", "Seconds in message times")).setChecked(VoidGramChats.timeSeconds()));
 +        items.add(UItem.asCheck(ID_IDS, VoidGram.t("ID в меню сообщения", "IDs in the message menu")).setChecked(VoidGramChats.showIds()));
 +        items.add(UItem.asShadow(VoidGram.t("«ID» копирует номер сообщения, чата и автора.", "\"ID\" copies the message, chat and author numbers.")));
++        items.add(UItem.asHeader(VoidGram.t("Фильтры", "Filters")));
++        items.add(UItem.asCheck(ID_FILTERS, VoidGram.t("Скрывать сообщения по шаблонам", "Hide messages by patterns")).setChecked(org.telegram.messenger.voidgram.VoidGramFilters.isEnabled()));
++        items.add(UItem.asButton(ID_FILTERS_EDIT, VoidGram.t("Шаблоны", "Patterns"), String.valueOf(org.telegram.messenger.voidgram.VoidGramFilters.count())));
++        items.add(UItem.asCheck(ID_FILTERS_OWN, VoidGram.t("И мои сообщения", "My messages too")).setChecked(org.telegram.messenger.voidgram.VoidGramFilters.ownMessages()));
++        items.add(UItem.asShadow(VoidGram.t("Регулярные выражения, по одному на строку, без учёта регистра. Сообщения не удаляются — просто не показываются.", "Regular expressions, one per line, case-insensitive. Messages are not deleted, just not shown.")));
 +        items.add(UItem.asHeader(VoidGram.t("Каналы", "Channels")));
 +        items.add(UItem.asCheck(ID_ADS, VoidGram.t("Скрывать рекламу", "Hide sponsored messages")).setChecked(VoidGramChats.hideAds()));
 +        items.add(UItem.asShadow(null));
@@ -2693,11 +2858,37 @@ index 0000000..465ffe7
 +            case ID_ADS: VoidGramChats.setHideAds(!VoidGramChats.hideAds()); break;
 +            case ID_SCREENSHOTS: VoidGramChats.setAllowScreenshots(!VoidGramChats.allowScreenshots()); break;
 +            case ID_IDS: VoidGramChats.setShowIds(!VoidGramChats.showIds()); break;
++            case ID_FILTERS: org.telegram.messenger.voidgram.VoidGramFilters.setEnabled(!org.telegram.messenger.voidgram.VoidGramFilters.isEnabled()); break;
++            case ID_FILTERS_OWN: org.telegram.messenger.voidgram.VoidGramFilters.setOwnMessages(!org.telegram.messenger.voidgram.VoidGramFilters.ownMessages()); break;
++            case ID_FILTERS_EDIT: editPatterns(); return;
 +            default: return;
 +        }
 +        if (listView != null && listView.adapter != null) {
 +            listView.adapter.update(true);
 +        }
++    }
++
++    private void editPatterns() {
++        android.widget.EditText field = new android.widget.EditText(getContext());
++        field.setText(org.telegram.messenger.voidgram.VoidGramFilters.source());
++        field.setHint("(?i)casino|crypto airdrop");
++        field.setMinLines(4);
++        field.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
++        field.setTextColor(org.telegram.ui.ActionBar.Theme.getColor(org.telegram.ui.ActionBar.Theme.key_dialogTextBlack));
++        org.telegram.ui.ActionBar.AlertDialog.Builder builder = new org.telegram.ui.ActionBar.AlertDialog.Builder(getContext());
++        builder.setTitle(VoidGram.t("Шаблоны", "Patterns"));
++        builder.setView(field);
++        builder.setPositiveButton(VoidGram.t("Сохранить", "Save"), (dialog, which) -> {
++            String bad = org.telegram.messenger.voidgram.VoidGramFilters.setSource(field.getText().toString());
++            if (bad != null) {
++                org.telegram.ui.Components.BulletinFactory.of(this).createErrorBulletin(VoidGram.t("Ошибка в шаблоне: ", "Invalid pattern: ") + bad).show();
++            }
++            if (listView != null && listView.adapter != null) {
++                listView.adapter.update(true);
++            }
++        });
++        builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++        showDialog(builder.create());
 +    }
 +
 +    @Override
