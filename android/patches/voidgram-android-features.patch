@@ -262,7 +262,7 @@ index 3a5413c..b59a1e4 100644
          int lastDec = 0;
          int KCount = 0;
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java b/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java
-index b1e2120..b0b367c 100644
+index b1e2120..b7616e8 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java
 @@ -1214,6 +1214,8 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
@@ -274,7 +274,7 @@ index b1e2120..b0b367c 100644
                      double sum = 0;
                      try {
                          long newSamplesCount = samplesCount + len / 2;
-@@ -1735,6 +1737,10 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+@@ -1735,6 +1737,14 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                                              editor.putFloat(saveFor, value).commit();
                                          });
                                      }
@@ -282,10 +282,14 @@ index b1e2120..b0b367c 100644
 +                                    if (currentPlayingMessageObject.isMusic() && org.telegram.messenger.voidgram.VoidGramLastFm.isConnected()) {
 +                                        org.telegram.messenger.voidgram.VoidGramLastFm.progress(lastProgress / 1000.0, !isPaused);
 +                                    }
++                                    // VoidGram: music haptics follow the player's clock.
++                                    if (currentPlayingMessageObject.isMusic()) {
++                                        org.telegram.messenger.voidgram.VoidGramMusicHaptics.progress(lastProgress / 1000.0, !isPaused);
++                                    }
                                      NotificationCenter.getInstance(currentPlayingMessageObject.currentAccount).postNotificationName(NotificationCenter.messagePlayingProgressDidChanged, currentPlayingMessageObject.getId(), value);
                                  } catch (Exception e) {
                                      FileLog.e(e);
-@@ -4109,6 +4115,13 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+@@ -4109,6 +4119,13 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                  }
                  audioPlayer.setStreamType(useFrontSpeaker ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
                  audioPlayer.play();
@@ -299,7 +303,7 @@ index b1e2120..b0b367c 100644
                  if (!messageObject.isVoice()) {
                      if (audioVolumeAnimator != null) {
                          audioVolumeAnimator.removeAllListeners();
-@@ -4154,6 +4167,10 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+@@ -4154,6 +4171,12 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
          }
          startProgressTimer(playingMessageObject);
          NotificationCenter.getInstance(messageObject.currentAccount).postNotificationName(NotificationCenter.messagePlayingDidStart, messageObject, oldMessageObject);
@@ -307,10 +311,12 @@ index b1e2120..b0b367c 100644
 +        if (messageObject.isMusic()) {
 +            org.telegram.messenger.voidgram.VoidGramLastFm.trackChanged(messageObject.getMusicTitle(), messageObject.getMusicAuthor(), messageObject.getDuration());
 +        }
++        // VoidGram: beats of the track for music haptics.
++        org.telegram.messenger.voidgram.VoidGramMusicHaptics.trackChanged(messageObject);
  
          if (videoPlayer != null) {
              try {
-@@ -5088,6 +5105,47 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+@@ -5088,6 +5111,47 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
          });
      }
  
@@ -358,7 +364,7 @@ index b1e2120..b0b367c 100644
      public boolean isRecordingPaused() {
          if (audioRecorderV2Active) {
              return audioRecorderV2Controller != null && audioRecorderV2Controller.isPreviewing();
-@@ -5372,6 +5430,8 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+@@ -5372,6 +5436,8 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                  recordSendMessageChatArguments = sendMessageChatArguments;
                  fileBuffer.rewind();
  
@@ -367,7 +373,7 @@ index b1e2120..b0b367c 100644
                  audioRecorder.startRecording();
              } catch (Exception e) {
                  FileLog.e(e);
-@@ -5570,7 +5630,9 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+@@ -5570,7 +5636,9 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
          ignoreOnPause = false;
      }
  
@@ -4659,6 +4665,214 @@ index 0000000..4361737
 +        }
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramMusicHaptics.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramMusicHaptics.java
+new file mode 100644
+index 0000000..2347b8d
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramMusicHaptics.java
+@@ -0,0 +1,202 @@
++package org.telegram.messenger.voidgram;
++
++import android.content.Context;
++import android.os.Build;
++import android.os.VibrationEffect;
++import android.os.Vibrator;
++
++import org.telegram.messenger.ApplicationLoader;
++import org.telegram.messenger.FileLoader;
++import org.telegram.messenger.MessageObject;
++import org.telegram.messenger.Utilities;
++
++import java.io.File;
++import java.util.ArrayList;
++
++/**
++ * Music haptics, as on iOS: the cached track is decoded apart from playback (the microphone is
++ * never used), energy attacks become beats, and the phone vibrates on them in time with the
++ * player's clock. Missed beats after pauses, seeks and stalls are dropped.
++ */
++public final class VoidGramMusicHaptics {
++    private VoidGramMusicHaptics() {
++    }
++
++    public static final String[] MODES = {"off", "light", "normal", "strong"};
++
++    private static final int RATE = 8000;
++    private static float[] beatTimes;
++    private static float[] beatIntensity;
++    private static int cursor;
++    private static double lastTime = -1;
++    private static String currentKey;
++    private static int generation;
++
++    public static String mode() {
++        return VoidGram.prefs().getString("music_haptics", "off");
++    }
++
++    public static void setMode(String value) {
++        VoidGram.prefs().edit().putString("music_haptics", value).apply();
++        if ("off".equals(value)) {
++            reset();
++        }
++    }
++
++    public static String title(String mode) {
++        switch (mode) {
++            case "light": return VoidGram.t("Еле-еле", "Barely");
++            case "normal": return VoidGram.t("Нормально", "Normal");
++            case "strong": return VoidGram.t("Со всей дури", "Full blast");
++            default: return VoidGram.t("Выключено", "Off");
++        }
++    }
++
++    private static void reset() {
++        beatTimes = null;
++        beatIntensity = null;
++        currentKey = null;
++        cursor = 0;
++        lastTime = -1;
++        generation++;
++    }
++
++    /** MediaController: a music track started. */
++    public static void trackChanged(MessageObject message) {
++        if ("off".equals(mode()) || message == null || !message.isMusic()) {
++            reset();
++            return;
++        }
++        File file = FileLoader.getInstance(message.currentAccount).getPathToMessage(message.messageOwner);
++        String key = file != null ? file.getAbsolutePath() : null;
++        if (key != null && key.equals(currentKey)) {
++            return;
++        }
++        reset();
++        currentKey = key;
++        if (file == null || !file.exists()) {
++            return;
++        }
++        final int token = generation;
++        Utilities.globalQueue.postRunnable(() -> {
++            byte[] pcm = VoidGramTranscribe.decodePcm(file, RATE, 1200);
++            if (pcm == null) {
++                return;
++            }
++            int window = (int) (RATE * 0.023);
++            int frames = pcm.length / 2;
++            float[] energies = new float[frames / window];
++            for (int w = 0; w < energies.length; w++) {
++                double sum = 0;
++                for (int i = w * window; i < (w + 1) * window; i++) {
++                    short value = (short) ((pcm[i * 2] & 0xff) | (pcm[i * 2 + 1] << 8));
++                    double v = value / 32768.0;
++                    sum += v * v;
++                }
++                energies[w] = (float) Math.sqrt(sum / window);
++            }
++            double step = window / (double) RATE;
++            ArrayList<float[]> beats = new ArrayList<>();
++            double last = -1;
++            for (int i = 1; i < energies.length - 1; i++) {
++                float energy = energies[i];
++                if (energy <= 0.012f || energy <= energies[i - 1] || energy < energies[i + 1]) {
++                    continue;
++                }
++                int start = Math.max(0, i - 16);
++                int end = Math.min(energies.length, i + 17);
++                float mean = 0;
++                for (int j = start; j < end; j++) {
++                    mean += Math.max(0f, energies[j]);
++                }
++                mean /= (end - start);
++                double time = i * step;
++                if (energy <= mean * 1.45f + 0.008f || time - last < 0.16) {
++                    continue;
++                }
++                beats.add(new float[]{(float) time, Math.min(1f, Math.max(0.25f, (energy - mean) / energy))});
++                last = time;
++            }
++            float[] times = new float[beats.size()];
++            float[] intensity = new float[beats.size()];
++            for (int i = 0; i < beats.size(); i++) {
++                times[i] = beats.get(i)[0];
++                intensity[i] = beats.get(i)[1];
++            }
++            org.telegram.messenger.AndroidUtilities.runOnUIThread(() -> {
++                if (token == generation) {
++                    beatTimes = times;
++                    beatIntensity = intensity;
++                    cursor = 0;
++                    lastTime = -1;
++                }
++            });
++        });
++    }
++
++    private static void seek(double time) {
++        int low = 0;
++        int high = beatTimes.length;
++        while (low < high) {
++            int middle = (low + high) / 2;
++            if (beatTimes[middle] <= time) {
++                low = middle + 1;
++            } else {
++                high = middle;
++            }
++        }
++        cursor = low;
++    }
++
++    /** MediaController progress timer (UI thread). */
++    public static void progress(double time, boolean playing) {
++        float[] times = beatTimes;
++        if (times == null || times.length == 0) {
++            return;
++        }
++        if (!playing || lastTime < 0 || time < lastTime || time - lastTime > 0.35) {
++            seek(time);
++            lastTime = playing ? time : -1;
++            return;
++        }
++        lastTime = time;
++        float strength = -1;
++        while (cursor < times.length && times[cursor] <= time) {
++            if (time - times[cursor] <= 0.08) {
++                strength = Math.max(strength, beatIntensity[cursor]);
++            }
++            cursor++;
++        }
++        if (strength > 0) {
++            vibrate(strength);
++        }
++    }
++
++    private static void vibrate(float strength) {
++        try {
++            Vibrator vibrator = (Vibrator) ApplicationLoader.applicationContext.getSystemService(Context.VIBRATOR_SERVICE);
++            if (vibrator == null || !vibrator.hasVibrator()) {
++                return;
++            }
++            String mode = mode();
++            float amplitude;
++            long duration;
++            if ("strong".equals(mode)) {
++                amplitude = Math.min(1f, 0.7f + strength * 0.3f);
++                duration = 40;
++            } else if ("light".equals(mode)) {
++                amplitude = Math.max(0.05f, strength * 0.22f);
++                duration = 15;
++            } else {
++                amplitude = strength * 0.75f;
++                duration = 25;
++            }
++            if (Build.VERSION.SDK_INT >= 26) {
++                vibrator.vibrate(VibrationEffect.createOneShot(duration, Math.max(1, Math.min(255, (int) (amplitude * 255)))));
++            } else {
++                vibrator.vibrate(duration);
++            }
++        } catch (Throwable ignore) {
++        }
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramNightLook.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramNightLook.java
 new file mode 100644
 index 0000000..1e6ea0f
@@ -8546,10 +8760,10 @@ index 0000000..ce0f21c
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramMusicActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramMusicActivity.java
 new file mode 100644
-index 0000000..7e9da55
+index 0000000..7a152f3
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramMusicActivity.java
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,123 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.view.View;
@@ -8575,6 +8789,7 @@ index 0000000..7e9da55
 +    private static final int ID_NIGHT = 22;
 +    private static final int ID_EQ = 30;
 +    private static final int ID_PRESET_BASE = 40;
++    private static final int ID_HAPTICS = 60;
 +
 +    @Override
 +    protected CharSequence getTitle() {
@@ -8598,7 +8813,8 @@ index 0000000..7e9da55
 +        items.add(UItem.asShadow(VoidGram.t("Отправляются только название, исполнитель и длительность трека.", "Only the title, artist and length are sent.")));
 +        items.add(UItem.asCheck(ID_MINI, VoidGram.t("Строка песни в мини-плеере", "Lyrics line in the mini player")).setChecked(VoidGramLyrics.isMiniEnabled()));
 +        items.add(UItem.asButton(ID_NIGHT, VoidGram.t("Ночной режим плеера", "Player night look"), VoidGramNightLook.modeTitle(VoidGramNightLook.mode())));
-+        items.add(UItem.asShadow(null));
++        items.add(UItem.asButton(ID_HAPTICS, VoidGram.t("Вибрация в такт", "Vibrate to the beat"), org.telegram.messenger.voidgram.VoidGramMusicHaptics.title(org.telegram.messenger.voidgram.VoidGramMusicHaptics.mode())));
++        items.add(UItem.asShadow(VoidGram.t("Телефон вибрирует на ударных загруженного трека. Микрофон не используется.", "The phone vibrates on the beats of the downloaded track. The microphone is not used.")));
 +        items.add(UItem.asHeader(VoidGram.t("Эквалайзер", "Equalizer")));
 +        boolean eq = VoidGramEqualizer.isEnabled();
 +        items.add(UItem.asCheck(ID_EQ, VoidGram.t("Эквалайзер", "Equalizer")).setChecked(eq));
@@ -8641,6 +8857,20 @@ index 0000000..7e9da55
 +            VoidGramLyrics.setMiniEnabled(!VoidGramLyrics.isMiniEnabled());
 +        } else if (id == ID_NIGHT) {
 +            presentFragment(new VoidGramNightLookActivity());
++            return;
++        } else if (id == ID_HAPTICS) {
++            String[] modes = org.telegram.messenger.voidgram.VoidGramMusicHaptics.MODES;
++            CharSequence[] titles = new CharSequence[modes.length];
++            for (int i = 0; i < modes.length; i++) {
++                titles[i] = org.telegram.messenger.voidgram.VoidGramMusicHaptics.title(modes[i]);
++            }
++            AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
++            builder.setTitle(VoidGram.t("Вибрация в такт", "Vibrate to the beat"));
++            builder.setItems(titles, (dialog, which) -> {
++                org.telegram.messenger.voidgram.VoidGramMusicHaptics.setMode(modes[which]);
++                refresh();
++            });
++            showDialog(builder.create());
 +            return;
 +        } else if (id == ID_EQ) {
 +            VoidGramEqualizer.setEnabled(!VoidGramEqualizer.isEnabled());
