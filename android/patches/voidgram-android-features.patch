@@ -4677,10 +4677,10 @@ index 0000000..a8d9e68
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLyrics.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLyrics.java
 new file mode 100644
-index 0000000..a20b069
+index 0000000..6638bed
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLyrics.java
-@@ -0,0 +1,478 @@
+@@ -0,0 +1,555 @@
 +package org.telegram.messenger.voidgram;
 +
 +import android.content.Context;
@@ -4716,11 +4716,79 @@ index 0000000..a20b069
 +    public static final class Line {
 +        public final double time;
 +        public final String text;
++        /** Enhanced LRC: where each timed word starts in `text`, and when; null without word times. */
++        public int[] wordStarts;
++        public double[] wordTimes;
 +
 +        Line(double time, String text) {
 +            this.time = time;
 +            this.text = text;
 +        }
++    }
++
++    private static final Pattern WORD_TIME = Pattern.compile("<(\\d{1,3}):(\\d{1,2})(?:[.:](\\d{1,3}))?>");
++
++    /** A line's text without word tags, with the word times kept. */
++    private static Line wordLine(double time, String raw) {
++        Matcher matcher = WORD_TIME.matcher(raw);
++        StringBuilder text = new StringBuilder();
++        ArrayList<Integer> starts = new ArrayList<>();
++        ArrayList<Double> times = new ArrayList<>();
++        int cursor = 0;
++        while (matcher.find()) {
++            text.append(raw, cursor, matcher.start());
++            double value = Integer.parseInt(matcher.group(1)) * 60 + Integer.parseInt(matcher.group(2));
++            if (matcher.group(3) != null) {
++                value += Integer.parseInt(matcher.group(3)) / Math.pow(10, matcher.group(3).length());
++            }
++            starts.add(text.length());
++            times.add(value);
++            cursor = matcher.end();
++        }
++        text.append(raw.substring(cursor));
++        Line line = new Line(time, text.toString().trim());
++        if (!starts.isEmpty()) {
++            int shift = text.length() - text.toString().replaceAll("^\\s+", "").length();
++            line.wordStarts = new int[starts.size()];
++            line.wordTimes = new double[times.size()];
++            for (int i = 0; i < starts.size(); i++) {
++                line.wordStarts[i] = Math.max(0, Math.min(line.text.length(), starts.get(i) - shift));
++                line.wordTimes[i] = times.get(i);
++            }
++        }
++        return line;
++    }
++
++    /**
++     * How many characters of `line` are sung at `position`: from the word times when the lyrics
++     * have them, otherwise spread over the line by word length until the next line starts.
++     */
++    public static int sungLength(Lyrics lyrics, int index, double position) {
++        if (lyrics == null || !lyrics.isSynced() || index < 0 || index >= lyrics.lines.size()) {
++            return 0;
++        }
++        Line line = lyrics.lines.get(index);
++        if (line.text.isEmpty() || position < line.time) {
++            return 0;
++        }
++        if (line.wordTimes != null) {
++            int sung = 0;
++            for (int i = 0; i < line.wordTimes.length; i++) {
++                if (line.wordTimes[i] <= position) {
++                    sung = i + 1 < line.wordStarts.length ? line.wordStarts[i + 1] : line.text.length();
++                }
++            }
++            return Math.min(line.text.length(), sung);
++        }
++        double end = index + 1 < lyrics.lines.size() ? lyrics.lines.get(index + 1).time : line.time + Math.max(2.0, line.text.length() * 0.12);
++        double duration = Math.max(0.5, Math.min(end - line.time, line.text.length() * 0.35 + 1.0));
++        double progress = Math.max(0, Math.min(1, (position - line.time) / duration));
++        int sung = (int) Math.round(progress * line.text.length());
++        // Whole words only.
++        while (sung > 0 && sung < line.text.length() && !Character.isWhitespace(line.text.charAt(sung))) {
++            sung++;
++        }
++        return Math.min(line.text.length(), sung);
 +    }
 +
 +    public static final class Lyrics {
@@ -4839,9 +4907,9 @@ index 0000000..a20b069
 +                end = matcher.end();
 +            }
 +            if (!times.isEmpty()) {
-+                String text = raw.substring(end).trim();
++                String text = raw.substring(end);
 +                for (double time : times) {
-+                    lines.add(new Line(time, text));
++                    lines.add(wordLine(time, text));
 +                }
 +            }
 +        }
@@ -5116,6 +5184,15 @@ index 0000000..a20b069
 +    // MARK: mini player
 +
 +    private static final String MINI_KEY = "mini_lyrics";
++
++    /** Word-by-word highlighting on the lyrics screen. */
++    public static boolean wordSync() {
++        return VoidGram.prefs().getBoolean("lyrics_word_sync", true);
++    }
++
++    public static void setWordSync(boolean value) {
++        VoidGram.prefs().edit().putBoolean("lyrics_word_sync", value).apply();
++    }
 +
 +    public static boolean isMiniEnabled() {
 +        return VoidGram.prefs().getBoolean(MINI_KEY, true);
@@ -9783,10 +9860,10 @@ index 0000000..2f37a48
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramLyricsScreen.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramLyricsScreen.java
 new file mode 100644
-index 0000000..a7b718c
+index 0000000..aaad90e
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramLyricsScreen.java
-@@ -0,0 +1,293 @@
+@@ -0,0 +1,308 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.app.Activity;
@@ -9976,10 +10053,25 @@ index 0000000..a7b718c
 +            MessageObject playing = MediaController.getInstance().getPlayingMessageObject();
 +            VoidGramLyrics.Lyrics lyrics = shown[0];
 +            if (playing != null && lyrics != null && lyrics.isSynced() && VoidGramLyrics.key(playing).equals(VoidGramLyrics.key(track))) {
-+                int index = VoidGramLyrics.lineIndex(lyrics, VoidGramLyrics.position(playing));
++                double position = VoidGramLyrics.position(playing);
++                int index = VoidGramLyrics.lineIndex(lyrics, position);
++                // Word by word: the sung part of the current line is bright, the rest dim.
++                if (index >= 0 && index < lineViews.size() && index < lyrics.lines.size() && VoidGramLyrics.wordSync()) {
++                    VoidGramLyrics.Line line = lyrics.lines.get(index);
++                    if (!line.text.isEmpty()) {
++                        int sung = VoidGramLyrics.sungLength(lyrics, index, position);
++                        android.text.SpannableString spannable = new android.text.SpannableString(line.text);
++                        spannable.setSpan(new android.text.style.ForegroundColorSpan(0xFFFFFFFF), 0, sung, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
++                        spannable.setSpan(new android.text.style.ForegroundColorSpan(0x80FFFFFF), sung, line.text.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
++                        lineViews.get(index).setText(spannable);
++                    }
++                }
 +                if (index != current[0] && index < lineViews.size()) {
 +                    if (current[0] >= 0 && current[0] < lineViews.size()) {
-+                        lineViews.get(current[0]).setTextColor(0x52FFFFFF);
++                        TextView previous = lineViews.get(current[0]);
++                        previous.setTextColor(0x52FFFFFF);
++                        VoidGramLyrics.Line previousLine = lyrics.lines.get(current[0]);
++                        previous.setText(previousLine.text.isEmpty() ? "♪" : previousLine.text);
 +                    }
 +                    current[0] = index;
 +                    if (index >= 0) {
@@ -9991,7 +10083,7 @@ index 0000000..a7b718c
 +                    }
 +                }
 +            }
-+            AndroidUtilities.runOnUIThread(tick[0], 200);
++            AndroidUtilities.runOnUIThread(tick[0], VoidGramLyrics.wordSync() ? 60 : 200);
 +        };
 +        final Runnable listener = rebuild;
 +        VoidGramLyrics.addListener(listener);
@@ -10253,10 +10345,10 @@ index 0000000..ce0f21c
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramMusicActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramMusicActivity.java
 new file mode 100644
-index 0000000..7a152f3
+index 0000000..79677de
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramMusicActivity.java
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,127 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.view.View;
@@ -10283,6 +10375,7 @@ index 0000000..7a152f3
 +    private static final int ID_EQ = 30;
 +    private static final int ID_PRESET_BASE = 40;
 +    private static final int ID_HAPTICS = 60;
++    private static final int ID_WORD_SYNC = 61;
 +
 +    @Override
 +    protected CharSequence getTitle() {
@@ -10304,6 +10397,7 @@ index 0000000..7a152f3
 +        }
 +        items.add(UItem.asButton(ID_SERVER, VoidGram.t("Свой сервер LRCLIB", "Own LRCLIB server"), VoidGramLyrics.lrclibBase().replace("https://", "")));
 +        items.add(UItem.asShadow(VoidGram.t("Отправляются только название, исполнитель и длительность трека.", "Only the title, artist and length are sent.")));
++        items.add(UItem.asCheck(ID_WORD_SYNC, VoidGram.t("Подсветка по словам", "Word-by-word highlight")).setChecked(VoidGramLyrics.wordSync()));
 +        items.add(UItem.asCheck(ID_MINI, VoidGram.t("Строка песни в мини-плеере", "Lyrics line in the mini player")).setChecked(VoidGramLyrics.isMiniEnabled()));
 +        items.add(UItem.asButton(ID_NIGHT, VoidGram.t("Ночной режим плеера", "Player night look"), VoidGramNightLook.modeTitle(VoidGramNightLook.mode())));
 +        items.add(UItem.asButton(ID_HAPTICS, VoidGram.t("Вибрация в такт", "Vibrate to the beat"), org.telegram.messenger.voidgram.VoidGramMusicHaptics.title(org.telegram.messenger.voidgram.VoidGramMusicHaptics.mode())));
@@ -10346,6 +10440,8 @@ index 0000000..7a152f3
 +            builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
 +            showDialog(builder.create());
 +            return;
++        } else if (id == ID_WORD_SYNC) {
++            VoidGramLyrics.setWordSync(!VoidGramLyrics.wordSync());
 +        } else if (id == ID_MINI) {
 +            VoidGramLyrics.setMiniEnabled(!VoidGramLyrics.isMiniEnabled());
 +        } else if (id == ID_NIGHT) {
