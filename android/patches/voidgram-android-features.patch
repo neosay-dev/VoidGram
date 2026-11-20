@@ -4365,10 +4365,20 @@ index 3fa7042..81f56a7 100644
              castItem = o.add();
              castItem.setTextAndIcon(getString(R.string.VideoPlayerChromecast), R.drawable.menu_video_chromecast);
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Components/ChatActivityEnterView.java b/TMessagesProj/src/main/java/org/telegram/ui/Components/ChatActivityEnterView.java
-index 266e570..9182a92 100644
+index 266e570..ad77fa3 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/Components/ChatActivityEnterView.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/Components/ChatActivityEnterView.java
-@@ -5124,6 +5124,23 @@ public class ChatActivityEnterView extends FrameLayout implements
+@@ -2749,6 +2749,9 @@ public class ChatActivityEnterView extends FrameLayout implements
+         emojiButton.setPadding(padding, padding, padding, padding);
+         ThemeBind.colorFilter(emojiButton, Theme.key_glass_defaultIcon, resourcesProvider, PorterDuff.Mode.SRC_IN);
+         emojiButton.setBackground(Theme.createInsetRoundRectDrawable(getThemedColor(Theme.key_listSelector), dp(19), dp(1), dp(3)));
++        // VoidGram Quick Sticker: hold the sticker button to send a favourite or recent sticker.
++        emojiButton.setOnLongClickListener(v -> org.telegram.ui.voidgram.VoidGramQuickSticker.show(emojiButton, currentAccount,
++                sticker -> onStickerSelected(sticker, null, "voidgram_quick", null, false, true, 0, 0)));
+         emojiButton.setOnClickListener(v -> {
+             if (adjustPanLayoutHelper != null && adjustPanLayoutHelper.animationInProgress()) {
+                 return;
+@@ -5124,6 +5127,23 @@ public class ChatActivityEnterView extends FrameLayout implements
          final boolean self = parentFragment != null && UserObject.isUserSelf(parentFragment.getCurrentUser());
          boolean scheduleButtonValue = parentFragment != null && parentFragment.canScheduleMessage();
          boolean sendWithoutSoundButtonValue = !(self || slowModeTimer > 0 && !isInScheduleMode());
@@ -4392,7 +4402,7 @@ index 266e570..9182a92 100644
          if (scheduleButtonValue) {
              options.add(R.drawable.msg_calendar2, getString(self ? R.string.SetReminder : R.string.ScheduleMessage), () -> {
                  AlertsCreator.createScheduleDatePickerDialog(parentActivity, parentFragment.getDialogId(), new AlertsCreator.ScheduleDatePickerDelegate() {
-@@ -12420,6 +12437,11 @@ public class ChatActivityEnterView extends FrameLayout implements
+@@ -12420,6 +12440,11 @@ public class ChatActivityEnterView extends FrameLayout implements
              }
  
              public void onGifSelected(View view, Object gif, String query, Object parent, boolean notify, int scheduleDate, int scheduleRepeatPeriod, MediaController.PhotoEntry entry, boolean invertMedia) {
@@ -4404,7 +4414,7 @@ index 266e570..9182a92 100644
                  if (replyingQuote != null && parentFragment != null && replyingQuote.outdated) {
                      parentFragment.showQuoteMessageUpdate();
                      return;
-@@ -12768,6 +12790,11 @@ public class ChatActivityEnterView extends FrameLayout implements
+@@ -12768,6 +12793,11 @@ public class ChatActivityEnterView extends FrameLayout implements
      @Override
      public void onStickerSelected(TLRPC.Document sticker, String query, Object parent, MessageObject.SendAnimationData sendAnimationData, boolean clearsInputField, boolean notify, int scheduleDate, int scheduleRepeatPeriod) {
          if (isLiveComment) return;
@@ -4564,10 +4574,10 @@ index e2b917b..fa850e0 100644
                  break;
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java
 new file mode 100644
-index 0000000..ee4a447
+index 0000000..02b7ee1
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,105 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.view.View;
@@ -4592,6 +4602,7 @@ index 0000000..ee4a447
 +    private static final int ID_CONFIRM_STICKERS = 8;
 +    private static final int ID_CONFIRM_GIFS = 9;
 +    private static final int ID_PREVIEW_VOICE = 10;
++    private static final int ID_QUICK_STICKER = 11;
 +
 +    @Override
 +    protected CharSequence getTitle() {
@@ -4607,6 +4618,7 @@ index 0000000..ee4a447
 +        items.add(UItem.asHeader(VoidGram.t("Отправка", "Sending")));
 +        items.add(UItem.asCheck(ID_CONFIRM_STICKERS, VoidGram.t("Спрашивать перед отправкой стикера", "Confirm sticker sends")).setChecked(org.telegram.messenger.voidgram.VoidGramSending.confirmStickers()));
 +        items.add(UItem.asCheck(ID_CONFIRM_GIFS, VoidGram.t("Спрашивать перед отправкой GIF", "Confirm GIF sends")).setChecked(org.telegram.messenger.voidgram.VoidGramSending.confirmGifs()));
++        items.add(UItem.asCheck(ID_QUICK_STICKER, VoidGram.t("Быстрые стикеры (удерживать кнопку стикеров)", "Quick stickers (hold the sticker button)")).setChecked(VoidGramQuickSticker.isEnabled()));
 +        items.add(UItem.asCheck(ID_PREVIEW_VOICE, VoidGram.t("Прослушать голосовое перед отправкой", "Preview voice messages before sending")).setChecked(org.telegram.messenger.voidgram.VoidGramSending.previewVoice()));
 +        items.add(UItem.asShadow(null));
 +        items.add(UItem.asHeader(VoidGram.t("Фильтры", "Filters")));
@@ -4634,6 +4646,7 @@ index 0000000..ee4a447
 +            case ID_FILTERS_EDIT: editPatterns(); return;
 +            case ID_CONFIRM_STICKERS: org.telegram.messenger.voidgram.VoidGramSending.setConfirmStickers(!org.telegram.messenger.voidgram.VoidGramSending.confirmStickers()); break;
 +            case ID_CONFIRM_GIFS: org.telegram.messenger.voidgram.VoidGramSending.setConfirmGifs(!org.telegram.messenger.voidgram.VoidGramSending.confirmGifs()); break;
++            case ID_QUICK_STICKER: VoidGramQuickSticker.setEnabled(!VoidGramQuickSticker.isEnabled()); break;
 +            case ID_PREVIEW_VOICE: org.telegram.messenger.voidgram.VoidGramSending.setPreviewVoice(!org.telegram.messenger.voidgram.VoidGramSending.previewVoice()); break;
 +            default: return;
 +        }
@@ -6037,6 +6050,108 @@ index 0000000..61aac10
 +    @Override
 +    protected boolean onLongClick(UItem item, View view, int position, float x, float y) {
 +        return false;
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramQuickSticker.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramQuickSticker.java
+new file mode 100644
+index 0000000..70cdf0b
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramQuickSticker.java
+@@ -0,0 +1,96 @@
++package org.telegram.ui.voidgram;
++
++import android.graphics.drawable.GradientDrawable;
++import android.view.Gravity;
++import android.view.View;
++import android.view.ViewGroup;
++import android.widget.HorizontalScrollView;
++import android.widget.LinearLayout;
++import android.widget.PopupWindow;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.ImageLocation;
++import org.telegram.messenger.MediaDataController;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramDecoy;
++import org.telegram.tgnet.TLRPC;
++import org.telegram.ui.ActionBar.Theme;
++import org.telegram.ui.Components.BackupImageView;
++import org.telegram.ui.Components.LayoutHelper;
++
++import java.util.ArrayList;
++
++/**
++ * VoidGram Quick Sticker, as on iOS: hold the sticker button and the favourite and recent stickers
++ * fan out above it; a tap sends one without opening the panel.
++ */
++public final class VoidGramQuickSticker {
++    public interface Sender {
++        void send(TLRPC.Document sticker);
++    }
++
++    private VoidGramQuickSticker() {
++    }
++
++    public static boolean isEnabled() {
++        return !VoidGramDecoy.isActive() && VoidGram.prefs().getBoolean("quick_sticker", true);
++    }
++
++    public static void setEnabled(boolean value) {
++        VoidGram.prefs().edit().putBoolean("quick_sticker", value).apply();
++    }
++
++    /** Shows the row above `anchor`; returns false when there is nothing to offer. */
++    public static boolean show(View anchor, int account, Sender sender) {
++        if (!isEnabled() || anchor == null) {
++            return false;
++        }
++        MediaDataController data = MediaDataController.getInstance(account);
++        ArrayList<TLRPC.Document> stickers = new ArrayList<>();
++        for (TLRPC.Document document : data.getRecentStickers(MediaDataController.TYPE_FAVE)) {
++            if (stickers.size() < 12 && !stickers.contains(document)) {
++                stickers.add(document);
++            }
++        }
++        for (TLRPC.Document document : data.getRecentStickers(MediaDataController.TYPE_IMAGE)) {
++            if (stickers.size() < 12 && !stickers.contains(document)) {
++                stickers.add(document);
++            }
++        }
++        if (stickers.isEmpty()) {
++            return false;
++        }
++        LinearLayout row = new LinearLayout(anchor.getContext());
++        row.setPadding(AndroidUtilities.dp(6), AndroidUtilities.dp(6), AndroidUtilities.dp(6), AndroidUtilities.dp(6));
++        HorizontalScrollView scroll = new HorizontalScrollView(anchor.getContext());
++        scroll.setHorizontalScrollBarEnabled(false);
++        GradientDrawable background = new GradientDrawable();
++        background.setCornerRadius(AndroidUtilities.dp(18));
++        background.setColor(Theme.getColor(Theme.key_actionBarDefaultSubmenuBackground));
++        scroll.setBackground(background);
++        scroll.addView(row);
++        final PopupWindow popup = new PopupWindow(scroll, ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, true);
++        popup.setOutsideTouchable(true);
++        popup.setElevation(AndroidUtilities.dp(6));
++        for (final TLRPC.Document sticker : stickers) {
++            BackupImageView image = new BackupImageView(anchor.getContext());
++            image.setImage(ImageLocation.getForDocument(sticker), "66_66", null, null, 0, sticker);
++            image.setOnClickListener(v -> {
++                popup.dismiss();
++                sender.send(sticker);
++            });
++            image.setScaleX(0.4f);
++            image.setScaleY(0.4f);
++            image.setAlpha(0f);
++            image.animate().scaleX(1f).scaleY(1f).alpha(1f).setStartDelay(row.getChildCount() * 18L).setDuration(220).start();
++            row.addView(image, LayoutHelper.createLinear(56, 56, 2, 0, 2, 0));
++        }
++        try {
++            anchor.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
++            popup.showAsDropDown(anchor, 0, -AndroidUtilities.dp(56 + 12 + 12) - anchor.getHeight(), Gravity.START);
++        } catch (Throwable ignore) {
++            return false;
++        }
++        return true;
 +    }
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
