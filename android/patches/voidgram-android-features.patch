@@ -617,7 +617,7 @@ index 0000000..6f850fc
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChatNotice.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChatNotice.java
 new file mode 100644
-index 0000000..ab39d04
+index 0000000..5c73fef
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChatNotice.java
 @@ -0,0 +1,208 @@
@@ -703,7 +703,7 @@ index 0000000..ab39d04
 +
 +    /** Called before the user's own message is queued; queues the notice first when the chat has none yet. */
 +    public static void beforeSend(int account, SendMessagesHelper.SendMessageParams params) {
-+        if (sending || params == null || params.scheduleDate != 0 || params.quick_reply_shortcut != null || params.quick_reply_shortcut_id != 0) {
++        if (sending || VoidGramDecoy.isActive() || params == null || params.scheduleDate != 0 || params.quick_reply_shortcut != null || params.quick_reply_shortcut_id != 0) {
 +            return;
 +        }
 +        if (params.retryMessageObject != null || isNoticeText(params.message)) {
@@ -831,7 +831,7 @@ index 0000000..ab39d04
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChats.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChats.java
 new file mode 100644
-index 0000000..51e89e5
+index 0000000..e4f4709
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChats.java
 @@ -0,0 +1,67 @@
@@ -852,7 +852,7 @@ index 0000000..51e89e5
 +    }
 +
 +    public static boolean timeSeconds() {
-+        return VoidGram.prefs().getBoolean("chats_time_seconds", false);
++        return !VoidGramDecoy.isActive() && VoidGram.prefs().getBoolean("chats_time_seconds", false);
 +    }
 +
 +    public static void setTimeSeconds(boolean value) {
@@ -861,7 +861,7 @@ index 0000000..51e89e5
 +    }
 +
 +    public static boolean hideAds() {
-+        return VoidGram.prefs().getBoolean("chats_hide_ads", true);
++        return !VoidGramDecoy.isActive() && VoidGram.prefs().getBoolean("chats_hide_ads", true);
 +    }
 +
 +    public static void setHideAds(boolean value) {
@@ -869,7 +869,7 @@ index 0000000..51e89e5
 +    }
 +
 +    public static boolean allowScreenshots() {
-+        return VoidGram.prefs().getBoolean("chats_allow_screenshots", false);
++        return !VoidGramDecoy.isActive() && VoidGram.prefs().getBoolean("chats_allow_screenshots", false);
 +    }
 +
 +    public static void setAllowScreenshots(boolean value) {
@@ -877,7 +877,7 @@ index 0000000..51e89e5
 +    }
 +
 +    public static boolean showIds() {
-+        return VoidGram.prefs().getBoolean("chats_show_ids", true);
++        return !VoidGramDecoy.isActive() && VoidGram.prefs().getBoolean("chats_show_ids", true);
 +    }
 +
 +    public static void setShowIds(boolean value) {
@@ -900,6 +900,351 @@ index 0000000..51e89e5
 +        synchronized (format) {
 +            return format.format(new Date(millis));
 +        }
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramDecoy.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramDecoy.java
+new file mode 100644
+index 0000000..4387450
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramDecoy.java
+@@ -0,0 +1,339 @@
++package org.telegram.messenger.voidgram;
++
++import android.app.Activity;
++import android.app.ActivityManager;
++import android.app.Dialog;
++import android.content.Context;
++import android.content.SharedPreferences;
++import android.graphics.Color;
++import android.graphics.drawable.ColorDrawable;
++import android.graphics.drawable.GradientDrawable;
++import android.text.InputType;
++import android.util.TypedValue;
++import android.view.Gravity;
++import android.view.HapticFeedbackConstants;
++import android.view.View;
++import android.view.ViewGroup;
++import android.view.Window;
++import android.view.WindowManager;
++import android.widget.EditText;
++import android.widget.FrameLayout;
++import android.widget.ImageView;
++import android.widget.LinearLayout;
++import android.widget.TextView;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.ApplicationLoader;
++import org.telegram.messenger.R;
++import org.telegram.messenger.UserConfig;
++import org.telegram.messenger.Utilities;
++import org.telegram.ui.LaunchActivity;
++
++import java.security.MessageDigest;
++import java.util.UUID;
++
++/**
++ * VoidGram decoy mode (second space), as on iOS. A double tap on the launch splash opens the
++ * decoy: a second, real account when one is chosen, otherwise a built-in stand-in Telegram. While
++ * the decoy is active every VoidGram feature is off and VoidGram is absent from the settings. The
++ * next cold start asks for a code: the real code returns to the real account; the fake code shows
++ * "VoidGram no longer works" and wipes the app's data.
++ */
++public final class VoidGramDecoy {
++    private static boolean splashShownThisProcess;
++    private static Dialog standIn;
++
++    private VoidGramDecoy() {
++    }
++
++    // The decoy state lives apart from the other VoidGram preferences, so a wipe can tell it apart.
++    private static SharedPreferences prefs() {
++        return ApplicationLoader.applicationContext.getSharedPreferences("voidgram_decoy", Context.MODE_PRIVATE);
++    }
++
++    public static boolean isEnabled() {
++        return prefs().getBoolean("enabled", false);
++    }
++
++    public static void setEnabled(boolean value) {
++        prefs().edit().putBoolean("enabled", value).apply();
++    }
++
++    public static boolean hasCodes() {
++        return !prefs().getString("real", "").isEmpty() && !prefs().getString("fake", "").isEmpty();
++    }
++
++    public static boolean isConfigured() {
++        return isEnabled() && hasCodes();
++    }
++
++    /** The decoy is showing now: VoidGram features are off. */
++    public static boolean isActive() {
++        return prefs().getBoolean("active", false);
++    }
++
++    private static boolean codeRequired() {
++        return prefs().getBoolean("code_required", false);
++    }
++
++    /** The account shown as the decoy, or -1 for the built-in stand-in. */
++    public static int decoyAccount() {
++        return prefs().getInt("account", -1);
++    }
++
++    public static void setDecoyAccount(int account) {
++        prefs().edit().putInt("account", account).apply();
++    }
++
++    private static String hash(String code) {
++        String salt = prefs().getString("salt", "");
++        if (salt.isEmpty()) {
++            salt = UUID.randomUUID().toString();
++            prefs().edit().putString("salt", salt).apply();
++        }
++        try {
++            MessageDigest digest = MessageDigest.getInstance("SHA-256");
++            return Utilities.bytesToHex(digest.digest((salt + ":" + code).getBytes("UTF-8")));
++        } catch (Exception e) {
++            return "";
++        }
++    }
++
++    /** Both codes at once; they must differ and be at least 4 characters. */
++    public static boolean setCodes(String real, String fake) {
++        if (real == null || fake == null || real.length() < 4 || fake.length() < 4 || real.equals(fake)) {
++            return false;
++        }
++        prefs().edit().putString("real", hash(real)).putString("fake", hash(fake)).apply();
++        return true;
++    }
++
++    // MARK: launch
++
++    /** Called when the main activity is ready: splash (double tap = decoy) or the code lock. */
++    public static void onLaunch(LaunchActivity activity) {
++        if (activity == null) {
++            return;
++        }
++        if (prefs().getBoolean("broken", false)) {
++            showBroken(activity);
++            return;
++        }
++        if (codeRequired() && isConfigured()) {
++            showLock(activity);
++            return;
++        }
++        if (isActive() && decoyAccount() < 0) {
++            showStandIn(activity);
++            return;
++        }
++        if (isConfigured() && !isActive() && !splashShownThisProcess) {
++            splashShownThisProcess = true;
++            showSplash(activity);
++        }
++    }
++
++    private static Dialog fullscreen(Activity activity, View content, int color, boolean cancelable) {
++        Dialog dialog = new Dialog(activity, android.R.style.Theme_DeviceDefault_NoActionBar);
++        dialog.setCancelable(cancelable);
++        dialog.setContentView(content);
++        Window window = dialog.getWindow();
++        if (window != null) {
++            window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
++            window.setBackgroundDrawable(new ColorDrawable(color));
++            window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
++            window.setStatusBarColor(color);
++            window.setNavigationBarColor(color);
++        }
++        return dialog;
++    }
++
++    private static void showSplash(LaunchActivity activity) {
++        FrameLayout root = new FrameLayout(activity);
++        LinearLayout column = new LinearLayout(activity);
++        column.setOrientation(LinearLayout.VERTICAL);
++        column.setGravity(Gravity.CENTER_HORIZONTAL);
++        ImageView icon = new ImageView(activity);
++        icon.setImageResource(R.mipmap.ic_launcher);
++        column.addView(icon, new LinearLayout.LayoutParams(AndroidUtilities.dp(116), AndroidUtilities.dp(116)));
++        TextView title = new TextView(activity);
++        title.setText("VoidGram");
++        title.setTextColor(Color.WHITE);
++        title.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 22);
++        title.setTypeface(AndroidUtilities.bold());
++        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
++        titleParams.topMargin = AndroidUtilities.dp(16);
++        column.addView(title, titleParams);
++        root.addView(column, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
++        final Dialog dialog = fullscreen(activity, root, 0xFF111114, false);
++        final long[] lastTap = {0};
++        root.setOnClickListener(v -> {
++            long now = System.currentTimeMillis();
++            if (now - lastTap[0] < 350) {
++                try {
++                    dialog.dismiss();
++                } catch (Throwable ignore) {
++                }
++                enter(activity);
++            }
++            lastTap[0] = now;
++        });
++        icon.setAlpha(0f);
++        icon.setScaleX(0.55f);
++        icon.setScaleY(0.55f);
++        icon.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(450).start();
++        try {
++            dialog.show();
++        } catch (Throwable ignore) {
++            return;
++        }
++        AndroidUtilities.runOnUIThread(() -> {
++            try {
++                if (dialog.isShowing()) {
++                    dialog.dismiss();
++                }
++            } catch (Throwable ignore) {
++            }
++        }, 1250);
++    }
++
++    public static void enter(LaunchActivity activity) {
++        if (!isConfigured()) {
++            return;
++        }
++        prefs().edit().putBoolean("active", true).putBoolean("code_required", true).putInt("main", UserConfig.selectedAccount).apply();
++        int account = decoyAccount();
++        if (account >= 0 && account != UserConfig.selectedAccount && UserConfig.getInstance(account).isClientActivated()) {
++            activity.switchToAccount(account, true);
++        } else {
++            showStandIn(activity);
++        }
++    }
++
++    private static void leave(LaunchActivity activity) {
++        boolean standInShown = standIn != null;
++        prefs().edit().putBoolean("active", false).putBoolean("code_required", false).apply();
++        if (standInShown) {
++            try {
++                standIn.dismiss();
++            } catch (Throwable ignore) {
++            }
++            standIn = null;
++        }
++        int main = prefs().getInt("main", -1);
++        if (main >= 0 && main != UserConfig.selectedAccount && UserConfig.getInstance(main).isClientActivated()) {
++            activity.switchToAccount(main, true);
++        }
++    }
++
++    private static void showStandIn(LaunchActivity activity) {
++        if (standIn != null && standIn.isShowing()) {
++            return;
++        }
++        standIn = VoidGramStandIn.create(activity);
++        try {
++            standIn.show();
++        } catch (Throwable ignore) {
++        }
++    }
++
++    // MARK: code lock
++
++    private static void showLock(LaunchActivity activity) {
++        LinearLayout root = new LinearLayout(activity);
++        root.setOrientation(LinearLayout.VERTICAL);
++        root.setGravity(Gravity.CENTER_HORIZONTAL);
++        root.setPadding(AndroidUtilities.dp(32), AndroidUtilities.dp(120), AndroidUtilities.dp(32), 0);
++        TextView title = new TextView(activity);
++        title.setText(VoidGram.t("Введите код-пароль", "Enter passcode"));
++        title.setTextColor(Color.WHITE);
++        title.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20);
++        title.setGravity(Gravity.CENTER);
++        root.addView(title);
++        final EditText field = new EditText(activity);
++        field.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
++        field.setTextColor(Color.WHITE);
++        field.setGravity(Gravity.CENTER);
++        field.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 24);
++        LinearLayout.LayoutParams fieldParams = new LinearLayout.LayoutParams(AndroidUtilities.dp(200), ViewGroup.LayoutParams.WRAP_CONTENT);
++        fieldParams.topMargin = AndroidUtilities.dp(24);
++        root.addView(field, fieldParams);
++        TextView done = new TextView(activity);
++        done.setText(VoidGram.t("Готово", "Done"));
++        done.setTextColor(Color.WHITE);
++        done.setTypeface(AndroidUtilities.bold());
++        done.setGravity(Gravity.CENTER);
++        GradientDrawable background = new GradientDrawable();
++        background.setColor(0x33FFFFFF);
++        background.setCornerRadius(AndroidUtilities.dp(12));
++        done.setBackground(background);
++        LinearLayout.LayoutParams doneParams = new LinearLayout.LayoutParams(AndroidUtilities.dp(200), AndroidUtilities.dp(46));
++        doneParams.topMargin = AndroidUtilities.dp(24);
++        root.addView(done, doneParams);
++        final Dialog dialog = fullscreen(activity, root, 0xFF000000, false);
++        done.setOnClickListener(v -> {
++            String code = field.getText().toString();
++            if (code.isEmpty()) {
++                return;
++            }
++            String value = hash(code);
++            if (value.equals(prefs().getString("real", null))) {
++                dialog.dismiss();
++                leave(activity);
++            } else if (value.equals(prefs().getString("fake", null))) {
++                dialog.dismiss();
++                prefs().edit().putBoolean("broken", true).apply();
++                showBroken(activity);
++                wipe(activity);
++            } else {
++                field.setText("");
++                field.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
++                field.animate().translationX(AndroidUtilities.dp(12)).setDuration(60).withEndAction(() -> field.animate().translationX(0).setDuration(120).start()).start();
++            }
++        });
++        try {
++            dialog.show();
++        } catch (Throwable ignore) {
++        }
++    }
++
++    private static void showBroken(Activity activity) {
++        LinearLayout root = new LinearLayout(activity);
++        root.setOrientation(LinearLayout.VERTICAL);
++        root.setGravity(Gravity.CENTER);
++        root.setPadding(AndroidUtilities.dp(32), 0, AndroidUtilities.dp(32), 0);
++        TextView title = new TextView(activity);
++        title.setText("Извините, VoidGram больше не работает");
++        title.setTextColor(Color.WHITE);
++        title.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 21);
++        title.setTypeface(AndroidUtilities.bold());
++        title.setGravity(Gravity.CENTER);
++        root.addView(title);
++        TextView text = new TextView(activity);
++        text.setText("Данные приложения повреждены. Чтобы исправить, полностью удалите VoidGram и установите его заново.");
++        text.setTextColor(0x99FFFFFF);
++        text.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
++        text.setGravity(Gravity.CENTER);
++        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
++        params.topMargin = AndroidUtilities.dp(14);
++        root.addView(text, params);
++        Dialog dialog = fullscreen(activity, root, 0xFF000000, false);
++        try {
++            dialog.show();
++        } catch (Throwable ignore) {
++        }
++    }
++
++    /** Deletes every account's local data (the system clears the app's storage and closes it). */
++    private static void wipe(Activity activity) {
++        AndroidUtilities.runOnUIThread(() -> {
++            try {
++                ActivityManager manager = (ActivityManager) activity.getSystemService(Context.ACTIVITY_SERVICE);
++                if (manager != null) {
++                    manager.clearApplicationUserData();
++                }
++            } catch (Throwable ignore) {
++            }
++        }, 1500);
 +    }
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramDpi.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramDpi.java
@@ -1070,7 +1415,7 @@ index 0000000..cb30503
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramFilters.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramFilters.java
 new file mode 100644
-index 0000000..5d6ffef
+index 0000000..a26d1f2
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramFilters.java
 @@ -0,0 +1,130 @@
@@ -1094,7 +1439,7 @@ index 0000000..5d6ffef
 +    }
 +
 +    public static boolean isEnabled() {
-+        return VoidGram.prefs().getBoolean("filters_enabled", false);
++        return !VoidGramDecoy.isActive() && VoidGram.prefs().getBoolean("filters_enabled", false);
 +    }
 +
 +    public static void setEnabled(boolean value) {
@@ -1206,7 +1551,7 @@ index 0000000..5d6ffef
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramGhost.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramGhost.java
 new file mode 100644
-index 0000000..94c035f
+index 0000000..7774582
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramGhost.java
 @@ -0,0 +1,91 @@
@@ -1237,7 +1582,7 @@ index 0000000..94c035f
 +    }
 +
 +    public static boolean isEnabled(int account) {
-+        return prefs().getBoolean(key(account, "enabled"), false);
++        return !VoidGramDecoy.isActive() && prefs().getBoolean(key(account, "enabled"), false);
 +    }
 +
 +    public static void setEnabled(int account, boolean value) {
@@ -1303,7 +1648,7 @@ index 0000000..94c035f
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramHistory.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramHistory.java
 new file mode 100644
-index 0000000..2b4c3c4
+index 0000000..02e2e04
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramHistory.java
 @@ -0,0 +1,345 @@
@@ -1372,7 +1717,7 @@ index 0000000..2b4c3c4
 +    // MARK: settings
 +
 +    public static boolean saveDeleted() {
-+        return VoidGram.prefs().getBoolean("history_deleted", true);
++        return !VoidGramDecoy.isActive() && VoidGram.prefs().getBoolean("history_deleted", true);
 +    }
 +
 +    public static void setSaveDeleted(boolean value) {
@@ -1380,7 +1725,7 @@ index 0000000..2b4c3c4
 +    }
 +
 +    public static boolean saveEdits() {
-+        return VoidGram.prefs().getBoolean("history_edits", true);
++        return !VoidGramDecoy.isActive() && VoidGram.prefs().getBoolean("history_edits", true);
 +    }
 +
 +    public static void setSaveEdits(boolean value) {
@@ -1437,7 +1782,7 @@ index 0000000..2b4c3c4
 +    }
 +
 +    public static boolean isDeleted(MessageObject messageObject) {
-+        if (messageObject == null || messageObject.getId() <= 0) {
++        if (messageObject == null || messageObject.getId() <= 0 || VoidGramDecoy.isActive()) {
 +            return false;
 +        }
 +        HashSet<Long> keys = loadKeys(messageObject.currentAccount, true);
@@ -2611,6 +2956,274 @@ index 0000000..db8c2e1
 +        builder.show();
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramStandIn.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramStandIn.java
+new file mode 100644
+index 0000000..aa3135e
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramStandIn.java
+@@ -0,0 +1,262 @@
++package org.telegram.messenger.voidgram;
++
++import android.app.Activity;
++import android.app.Dialog;
++import android.graphics.Color;
++import android.graphics.drawable.ColorDrawable;
++import android.graphics.drawable.GradientDrawable;
++import android.util.TypedValue;
++import android.view.Gravity;
++import android.view.KeyEvent;
++import android.view.View;
++import android.view.ViewGroup;
++import android.view.Window;
++import android.view.WindowManager;
++import android.view.inputmethod.EditorInfo;
++import android.widget.EditText;
++import android.widget.FrameLayout;
++import android.widget.LinearLayout;
++import android.widget.ScrollView;
++import android.widget.TextView;
++
++import org.telegram.messenger.AndroidUtilities;
++
++import java.text.SimpleDateFormat;
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.Locale;
++
++/**
++ * The stand-in Telegram shown in decoy mode when no second account is chosen (same chats as on
++ * iOS): ordinary chats, nothing of VoidGram. Messages typed here stay on the screen only.
++ */
++final class VoidGramStandIn {
++    private static final class Message {
++        final String text;
++        final boolean out;
++        final String time;
++
++        Message(String text, boolean out, String time) {
++            this.text = text;
++            this.out = out;
++            this.time = time;
++        }
++    }
++
++    private static final class Chat {
++        final String title;
++        final int colorTop;
++        final int colorBottom;
++        final ArrayList<Message> messages = new ArrayList<>();
++        final int unread;
++        final boolean muted;
++        final boolean channel;
++
++        Chat(String title, int colorTop, int colorBottom, int unread, boolean muted, boolean channel) {
++            this.title = title;
++            this.colorTop = colorTop;
++            this.colorBottom = colorBottom;
++            this.unread = unread;
++            this.muted = muted;
++            this.channel = channel;
++        }
++
++        Chat add(String text, boolean out, String time) {
++            messages.add(new Message(text, out, time));
++            return this;
++        }
++    }
++
++    private static ArrayList<Chat> chats;
++
++    private VoidGramStandIn() {
++    }
++
++    private static ArrayList<Chat> chats() {
++        if (chats == null) {
++            chats = new ArrayList<>();
++            chats.add(new Chat("Мама", 0xFFFF885E, 0xFFFF516A, 1, false, false).add("Ты покушал?", false, "12:41").add("Да, всё хорошо", true, "12:44").add("Не забудь вечером позвонить бабушке ❤️", false, "18:02"));
++            chats.add(new Chat("Избранное", 0xFF3FA5F5, 0xFF2A7AE0, 0, false, false).add("Список покупок: молоко, хлеб, яйца, сыр", true, "09:15"));
++            chats.add(new Chat("Работа", 0xFF72D5FD, 0xFF2A9EF1, 0, true, false).add("Созвон перенесли на 15:00", false, "10:20").add("Ок, буду", true, "10:22").add("Отчёт скинул в общую папку", false, "16:48"));
++            chats.add(new Chat("Саша", 0xFFA0DE7E, 0xFF54CB68, 0, false, false).add("Го в субботу в кино?", false, "Вчера").add("Давай, на что?", true, "Вчера").add("Посмотрим что идёт 🍿", false, "Вчера"));
++            chats.add(new Chat("Новости", 0xFFE0A2F3, 0xFFD669ED, 3, true, true).add("Погода на выходные: солнечно, до +18. Самое время выбраться за город.", false, "Вчера"));
++            chats.add(new Chat("Семья 🏡", 0xFFFFCD6A, 0xFFFCA20A, 0, false, false).add("Кто заберёт посылку?", false, "Пн").add("Я заберу после учёбы", true, "Пн"));
++            chats.add(new Chat("Telegram", 0xFF3FA5F5, 0xFF2A7AE0, 0, false, false).add("Код для входа в Telegram: •••••. Никому не давайте этот код.", false, "Вс"));
++        }
++        return chats;
++    }
++
++    static Dialog create(Activity activity) {
++        final Dialog dialog = new Dialog(activity, android.R.style.Theme_DeviceDefault_Light_NoActionBar);
++        dialog.setCancelable(false);
++        final FrameLayout root = new FrameLayout(activity);
++        root.setBackgroundColor(Color.WHITE);
++        showList(activity, root);
++        dialog.setContentView(root);
++        dialog.setOnKeyListener((d, keyCode, event) -> {
++            if (keyCode == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_UP && root.getTag() != null) {
++                showList(activity, root);
++                return true;
++            }
++            return keyCode == KeyEvent.KEYCODE_BACK;
++        });
++        Window window = dialog.getWindow();
++        if (window != null) {
++            window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
++            window.setBackgroundDrawable(new ColorDrawable(Color.WHITE));
++            window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
++            window.setStatusBarColor(0xFF517DA2);
++            window.setNavigationBarColor(Color.WHITE);
++            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
++        }
++        return dialog;
++    }
++
++    private static TextView header(Activity activity, String text) {
++        TextView view = new TextView(activity);
++        view.setText(text);
++        view.setTextColor(Color.WHITE);
++        view.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20);
++        view.setTypeface(AndroidUtilities.bold());
++        view.setGravity(Gravity.CENTER_VERTICAL);
++        view.setPadding(AndroidUtilities.dp(18), AndroidUtilities.statusBarHeight, AndroidUtilities.dp(18), 0);
++        view.setBackgroundColor(0xFF517DA2);
++        return view;
++    }
++
++    private static View avatar(Activity activity, Chat chat, int size) {
++        TextView view = new TextView(activity);
++        view.setText(chat.title.substring(0, 1).toUpperCase());
++        view.setTextColor(Color.WHITE);
++        view.setTextSize(TypedValue.COMPLEX_UNIT_PX, size * 0.42f);
++        view.setTypeface(AndroidUtilities.bold());
++        view.setGravity(Gravity.CENTER);
++        GradientDrawable background = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[]{chat.colorTop, chat.colorBottom});
++        background.setShape(GradientDrawable.OVAL);
++        view.setBackground(background);
++        return view;
++    }
++
++    private static void showList(Activity activity, FrameLayout root) {
++        root.removeAllViews();
++        root.setTag(null);
++        LinearLayout column = new LinearLayout(activity);
++        column.setOrientation(LinearLayout.VERTICAL);
++        column.addView(header(activity, "Telegram"), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, AndroidUtilities.dp(56) + AndroidUtilities.statusBarHeight));
++        ScrollView scroll = new ScrollView(activity);
++        LinearLayout list = new LinearLayout(activity);
++        list.setOrientation(LinearLayout.VERTICAL);
++        scroll.addView(list);
++        for (final Chat chat : chats()) {
++            LinearLayout row = new LinearLayout(activity);
++            row.setOrientation(LinearLayout.HORIZONTAL);
++            row.setGravity(Gravity.CENTER_VERTICAL);
++            row.setPadding(AndroidUtilities.dp(10), AndroidUtilities.dp(8), AndroidUtilities.dp(12), AndroidUtilities.dp(8));
++            int size = AndroidUtilities.dp(54);
++            row.addView(avatar(activity, chat, size), new LinearLayout.LayoutParams(size, size));
++            LinearLayout texts = new LinearLayout(activity);
++            texts.setOrientation(LinearLayout.VERTICAL);
++            texts.setPadding(AndroidUtilities.dp(12), 0, 0, 0);
++            LinearLayout top = new LinearLayout(activity);
++            TextView title = new TextView(activity);
++            title.setText(chat.title);
++            title.setTextColor(0xFF222222);
++            title.setTypeface(AndroidUtilities.bold());
++            title.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
++            title.setSingleLine(true);
++            top.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
++            Message last = chat.messages.get(chat.messages.size() - 1);
++            TextView time = new TextView(activity);
++            time.setText(last.time);
++            time.setTextColor(0xFF8E8E93);
++            time.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
++            top.addView(time);
++            texts.addView(top);
++            LinearLayout bottom = new LinearLayout(activity);
++            TextView preview = new TextView(activity);
++            preview.setText((last.out ? "Вы: " : "") + last.text);
++            preview.setTextColor(0xFF8E8E93);
++            preview.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
++            preview.setSingleLine(true);
++            bottom.addView(preview, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
++            if (chat.unread > 0) {
++                TextView badge = new TextView(activity);
++                badge.setText(String.valueOf(chat.unread));
++                badge.setTextColor(Color.WHITE);
++                badge.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
++                badge.setGravity(Gravity.CENTER);
++                GradientDrawable badgeBackground = new GradientDrawable();
++                badgeBackground.setCornerRadius(AndroidUtilities.dp(11));
++                badgeBackground.setColor(chat.muted ? 0xFFC4C9CC : 0xFF4FAE4E);
++                badge.setBackground(badgeBackground);
++                badge.setMinWidth(AndroidUtilities.dp(22));
++                bottom.addView(badge, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, AndroidUtilities.dp(22)));
++            }
++            texts.addView(bottom);
++            row.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
++            row.setOnClickListener(v -> showChat(activity, root, chat));
++            list.addView(row);
++        }
++        column.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
++        root.addView(column);
++    }
++
++    private static void showChat(Activity activity, FrameLayout root, Chat chat) {
++        root.removeAllViews();
++        root.setTag(chat);
++        LinearLayout column = new LinearLayout(activity);
++        column.setOrientation(LinearLayout.VERTICAL);
++        column.setBackgroundColor(0xFFD2DEBF);
++        TextView title = header(activity, "←  " + chat.title);
++        title.setOnClickListener(v -> showList(activity, root));
++        column.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, AndroidUtilities.dp(56) + AndroidUtilities.statusBarHeight));
++        final ScrollView scroll = new ScrollView(activity);
++        final LinearLayout list = new LinearLayout(activity);
++        list.setOrientation(LinearLayout.VERTICAL);
++        list.setPadding(0, AndroidUtilities.dp(6), 0, AndroidUtilities.dp(6));
++        scroll.addView(list);
++        for (Message message : chat.messages) {
++            list.addView(bubble(activity, message));
++        }
++        column.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
++        final EditText input = new EditText(activity);
++        input.setHint(chat.channel ? "Без звука" : "Сообщение");
++        input.setEnabled(!chat.channel);
++        input.setBackgroundColor(Color.WHITE);
++        input.setPadding(AndroidUtilities.dp(14), AndroidUtilities.dp(12), AndroidUtilities.dp(14), AndroidUtilities.dp(12));
++        input.setImeOptions(EditorInfo.IME_ACTION_SEND);
++        input.setSingleLine(true);
++        input.setOnEditorActionListener((v, actionId, event) -> {
++            String text = input.getText().toString().trim();
++            if (text.isEmpty()) {
++                return true;
++            }
++            Message message = new Message(text, true, new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date()));
++            chat.messages.add(message);
++            list.addView(bubble(activity, message));
++            input.setText("");
++            scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
++            return true;
++        });
++        column.addView(input, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
++        root.addView(column);
++        scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
++    }
++
++    private static View bubble(Activity activity, Message message) {
++        FrameLayout wrap = new FrameLayout(activity);
++        wrap.setPadding(AndroidUtilities.dp(10), AndroidUtilities.dp(3), AndroidUtilities.dp(10), AndroidUtilities.dp(3));
++        TextView view = new TextView(activity);
++        view.setText(message.text + "   " + message.time + (message.out ? " ✓✓" : ""));
++        view.setTextColor(0xFF000000);
++        view.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
++        view.setPadding(AndroidUtilities.dp(12), AndroidUtilities.dp(8), AndroidUtilities.dp(12), AndroidUtilities.dp(8));
++        view.setMaxWidth((int) (AndroidUtilities.displaySize.x * 0.75f));
++        GradientDrawable background = new GradientDrawable();
++        background.setCornerRadius(AndroidUtilities.dp(16));
++        background.setColor(message.out ? 0xFFEFFEDD : Color.WHITE);
++        view.setBackground(background);
++        wrap.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, message.out ? Gravity.END : Gravity.START));
++        return wrap;
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java b/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java
 index ab54ee3..995933f 100644
 --- a/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java
@@ -2971,15 +3584,17 @@ index e8deeca..b09cc24 100644
          }
      }
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
-index 1dd2ffe..71d988a 100644
+index 1dd2ffe..da32bd8 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
-@@ -458,6 +458,8 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
+@@ -458,6 +458,10 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
          if (Build.VERSION.SDK_INT >= 24) {
              AndroidUtilities.isInMultiwindow = isInMultiWindowMode();
          }
 +        // VoidGram: the user agreement comes before signing in (and once after updating).
 +        AndroidUtilities.runOnUIThread(() -> org.telegram.messenger.voidgram.VoidGramAgreement.showIfNeeded(this), 400);
++        // VoidGram decoy mode: launch splash (double tap opens the second space) or the code lock.
++        AndroidUtilities.runOnUIThread(() -> org.telegram.messenger.voidgram.VoidGramDecoy.onLaunch(this), 50);
          Theme.createCommonChatResources();
          Theme.createDialogsResources(this);
          if (SharedConfig.passcodeHash.length() != 0 && SharedConfig.appLocked) {
@@ -3032,20 +3647,23 @@ index 49921be..9e87b97 100644
          }
          params.flags |= WindowManager.LayoutParams.FLAG_FULLSCREEN;
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
-index e2b917b..050a7c7 100644
+index e2b917b..fa850e0 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
-@@ -795,6 +795,9 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
+@@ -795,6 +795,12 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
              items.add(UItem.asShadow(null));
          }
  
 +        // VoidGram: its own section on top.
-+        items.add(SettingCell.Factory.of(90, IconBackgroundColors.PURPLE.top, IconBackgroundColors.PURPLE.bottom, R.drawable.settings_privacy, "VoidGram", org.telegram.messenger.voidgram.VoidGram.t("Обход блокировок, энергосбережение, плеер", "Bypass blocking, power saving, player")));
-+        items.add(UItem.asShadow(null));
++        // In the decoy (second space) VoidGram is absent from the settings.
++        if (!org.telegram.messenger.voidgram.VoidGramDecoy.isActive()) {
++            items.add(SettingCell.Factory.of(90, IconBackgroundColors.PURPLE.top, IconBackgroundColors.PURPLE.bottom, R.drawable.settings_privacy, "VoidGram", org.telegram.messenger.voidgram.VoidGram.t("Призрак, обход блокировок, плеер", "Ghost, bypass blocking, player")));
++            items.add(UItem.asShadow(null));
++        }
          items.add(SettingCell.Factory.of(1, IconBackgroundColors.BLUE.top, IconBackgroundColors.BLUE.bottom, R.drawable.settings_account, getString(R.string.SettingsAccount), getString(R.string.SettingsAccountInfo)));
          items.add(SettingCell.Factory.of(2, IconBackgroundColors.ORANGE.top, IconBackgroundColors.ORANGE.bottom, R.drawable.settings_chat, getString(R.string.SettingsChat), getString(R.string.SettingsChatInfo)));
          items.add(SettingCell.Factory.of(3, IconBackgroundColors.GREEN.top, IconBackgroundColors.GREEN.bottom, R.drawable.settings_privacy, getString(R.string.SettingsPrivacySecurity), getString(R.string.SettingsPrivacySecurityInfo)));
-@@ -917,6 +920,9 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
+@@ -917,6 +923,9 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
              return;
          }
          switch (item.id) {
@@ -3156,6 +3774,124 @@ index 0000000..ee4a447
 +        });
 +        builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
 +        showDialog(builder.create());
++    }
++
++    @Override
++    protected boolean onLongClick(UItem item, View view, int position, float x, float y) {
++        return false;
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramDecoyActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramDecoyActivity.java
+new file mode 100644
+index 0000000..fcccb0a
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramDecoyActivity.java
+@@ -0,0 +1,112 @@
++package org.telegram.ui.voidgram;
++
++import android.text.InputType;
++import android.view.View;
++import android.widget.EditText;
++import android.widget.LinearLayout;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.UserConfig;
++import org.telegram.messenger.UserObject;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramDecoy;
++import org.telegram.tgnet.TLRPC;
++import org.telegram.ui.ActionBar.AlertDialog;
++import org.telegram.ui.ActionBar.Theme;
++import org.telegram.ui.Components.BulletinFactory;
++import org.telegram.ui.Components.UItem;
++import org.telegram.ui.Components.UniversalAdapter;
++import org.telegram.ui.Components.UniversalFragment;
++
++import java.util.ArrayList;
++
++/** VoidGram → Decoy mode (second space). */
++public class VoidGramDecoyActivity extends UniversalFragment {
++    private static final int ID_ENABLED = 1;
++    private static final int ID_CODES = 2;
++    private static final int ID_STAND_IN = 3;
++    private static final int ID_ACCOUNT_BASE = 100;
++
++    @Override
++    protected CharSequence getTitle() {
++        return VoidGram.t("Фейк-режим", "Decoy mode");
++    }
++
++    private void refresh() {
++        if (listView != null && listView.adapter != null) {
++            listView.adapter.update(true);
++        }
++    }
++
++    @Override
++    protected void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
++        items.add(UItem.asHeader(VoidGram.t("Фейк-режим", "Decoy mode")));
++        items.add(UItem.asCheck(ID_ENABLED, VoidGram.t("Фейк-режим (двойной тап по заставке)", "Decoy mode (double tap the splash)")).setChecked(VoidGramDecoy.isEnabled()));
++        items.add(UItem.asButton(ID_CODES, VoidGram.t("Настоящий и фейковый код", "Real and fake code"), VoidGramDecoy.hasCodes() ? VoidGram.t("заданы", "set") : VoidGram.t("не заданы", "not set")));
++        items.add(UItem.asShadow(VoidGram.t("Работает, когда включено и заданы оба кода.", "Works when it is on and both codes are set.")));
++        items.add(UItem.asHeader(VoidGram.t("Что показывать", "What to show")));
++        int decoy = VoidGramDecoy.decoyAccount();
++        items.add(UItem.asRadio(ID_STAND_IN, VoidGram.t("Встроенный (липовый)", "Built-in stand-in")).setChecked(decoy < 0));
++        for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
++            if (a == currentAccount || !UserConfig.getInstance(a).isClientActivated()) {
++                continue;
++            }
++            TLRPC.User user = UserConfig.getInstance(a).getCurrentUser();
++            items.add(UItem.asRadio(ID_ACCOUNT_BASE + a, user != null ? UserObject.getUserName(user) : VoidGram.t("Аккаунт ", "Account ") + (a + 1)).setChecked(decoy == a));
++        }
++        items.add(UItem.asShadow(VoidGram.t("Второй аккаунт: основной полностью скрыт. Встроенный: обычный на вид Telegram с готовыми чатами.", "A second account hides the main one. The built-in one is an ordinary-looking Telegram with ready-made chats.")));
++        items.add(UItem.asHeader(VoidGram.t("Как это работает", "How it works")));
++        items.add(UItem.asShadow(VoidGram.t("При запуске появляется иконка VoidGram. Два быстрых нажатия по ней — и открывается фейк: второй аккаунт или встроенный липовый Telegram. В фейке нет раздела VoidGram, все функции VoidGram выключены.\n\nПосле полного закрытия приложения VoidGram спросит код. Настоящий код вернёт ваш аккаунт. Фейковый код покажет «VoidGram больше не работает» и сотрёт все данные приложения.", "At launch the VoidGram icon appears. Two quick taps on it open the decoy: a second account or a built-in stand-in Telegram. The decoy has no VoidGram section and every VoidGram feature is off.\n\nAfter the app is fully closed, VoidGram asks for a code. The real code brings your account back. The fake code shows \"VoidGram no longer works\" and wipes all the app's data.")));
++    }
++
++    private void editCodes() {
++        LinearLayout layout = new LinearLayout(getContext());
++        layout.setOrientation(LinearLayout.VERTICAL);
++        layout.setPadding(AndroidUtilities.dp(20), 0, AndroidUtilities.dp(20), 0);
++        EditText real = new EditText(getContext());
++        real.setHint(VoidGram.t("Настоящий код", "Real code"));
++        real.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
++        real.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
++        EditText fake = new EditText(getContext());
++        fake.setHint(VoidGram.t("Фейковый код", "Fake code"));
++        fake.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
++        fake.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
++        layout.addView(real);
++        layout.addView(fake);
++        AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
++        builder.setTitle(VoidGram.t("Коды", "Codes"));
++        builder.setMessage(VoidGram.t("Настоящий код возвращает в ваш аккаунт. Фейковый показывает «VoidGram больше не работает» и стирает все данные. Минимум 4 символа, коды должны различаться.", "The real code returns to your account. The fake code shows \"VoidGram no longer works\" and wipes all data. At least 4 characters; the codes must differ."));
++        builder.setView(layout);
++        builder.setPositiveButton(VoidGram.t("Сохранить", "Save"), (dialog, which) -> {
++            if (!VoidGramDecoy.setCodes(real.getText().toString(), fake.getText().toString())) {
++                BulletinFactory.of(this).createErrorBulletin(VoidGram.t("Коды не сохранены: минимум 4 символа, и они должны различаться.", "Codes not saved: at least 4 characters, and they must differ.")).show();
++            }
++            refresh();
++        });
++        builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++        showDialog(builder.create());
++    }
++
++    @Override
++    protected void onClick(UItem item, View view, int position, float x, float y) {
++        int id = item.id;
++        if (id == ID_ENABLED) {
++            VoidGramDecoy.setEnabled(!VoidGramDecoy.isEnabled());
++        } else if (id == ID_CODES) {
++            editCodes();
++            return;
++        } else if (id == ID_STAND_IN) {
++            VoidGramDecoy.setDecoyAccount(-1);
++        } else if (id >= ID_ACCOUNT_BASE && id < ID_ACCOUNT_BASE + UserConfig.MAX_ACCOUNT_COUNT) {
++            VoidGramDecoy.setDecoyAccount(id - ID_ACCOUNT_BASE);
++        } else {
++            return;
++        }
++        refresh();
 +    }
 +
 +    @Override
@@ -4132,10 +4868,10 @@ index 0000000..61aac10
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
 new file mode 100644
-index 0000000..69a4eb9
+index 0000000..97b1079
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
-@@ -0,0 +1,211 @@
+@@ -0,0 +1,216 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.content.Context;
@@ -4174,6 +4910,7 @@ index 0000000..69a4eb9
 +    private static final int ID_GHOST = 6;
 +    private static final int ID_CHATS = 7;
 +    private static final int ID_PEERS = 8;
++    private static final int ID_DECOY = 9;
 +
 +    private FrameLayout musicRow;
 +    private TextView musicButton;
@@ -4190,6 +4927,7 @@ index 0000000..69a4eb9
 +        items.add(UItem.asButton(ID_GHOST, R.drawable.msg2_secret, VoidGram.t("Призрак и история", "Ghost and history"), org.telegram.messenger.voidgram.VoidGramGhost.isEnabled(currentAccount) ? VoidGram.t("Призрак вкл.", "Ghost on") : VoidGram.t("Выкл.", "Off")));
 +        items.add(UItem.asButton(ID_CHATS, R.drawable.msg2_discussion, VoidGram.t("Чаты", "Chats")));
 +        items.add(UItem.asButton(ID_PEERS, R.drawable.msg_search, VoidGram.t("Поиск каналов и людей", "Find channels and people")));
++        items.add(UItem.asButton(ID_DECOY, R.drawable.msg2_policy, VoidGram.t("Фейк-режим", "Decoy mode"), org.telegram.messenger.voidgram.VoidGramDecoy.isConfigured() ? VoidGram.t("Вкл.", "On") : VoidGram.t("Выкл.", "Off")));
 +        items.add(UItem.asShadow(VoidGram.t("Режим призрака, удалённые сообщения, история изменений, реклама, скриншоты, секунды и ID.", "Ghost Mode, deleted messages, edit history, ads, screenshots, seconds and IDs.")));
 +
 +        items.add(UItem.asHeader(VoidGram.t("Сеть", "Network")));
@@ -4306,6 +5044,9 @@ index 0000000..69a4eb9
 +    @Override
 +    protected void onClick(UItem item, View view, int position, float x, float y) {
 +        switch (item.id) {
++            case ID_DECOY:
++                presentFragment(new VoidGramDecoyActivity());
++                break;
 +            case ID_PEERS:
 +                presentFragment(new VoidGramPeerSearchActivity());
 +                break;
