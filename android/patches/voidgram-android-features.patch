@@ -7210,7 +7210,7 @@ index 5dc090f..3f4b262 100644
  
      void measureTime(MessageObject messageObject) {
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
-index a54b134..1ad6964 100644
+index a54b134..eda05f8 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 @@ -1246,6 +1246,11 @@ public class ChatActivity extends BaseFragment implements
@@ -7416,7 +7416,18 @@ index a54b134..1ad6964 100644
              actionModeViews.add(actionMode.addItemWithWidth(delete, R.drawable.msg_delete, dp(48), LocaleController.getString(R.string.Delete)));
          } else {
              actionModeViews.add(actionMode.addItemWithWidth(edit, R.drawable.msg_edit, dp(48), LocaleController.getString(R.string.Edit)));
-@@ -21371,7 +21461,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -13272,6 +13362,10 @@ public class ChatActivity extends BaseFragment implements
+     }
+ 
+     public void performHistoryClear(long threadId, boolean revoke, boolean canDeleteHistory) {
++        // VoidGram: the visible messages fall into a black hole.
++        if (currentEncryptedChat == null && !isPeerNoForwards()) {
++            org.telegram.ui.voidgram.VoidGramBlackHole.play(chatListView, contentView);
++        }
+         if (topicsTabs != null && UserObject.isBotForum(currentUser)) {
+             topicsTabs.setAllTopicsHidden(true);
+         }
+@@ -21371,7 +21465,8 @@ public class ChatActivity extends BaseFragment implements
          if (postponedScroll) {
              postponedScrollToLastMessageQueryIndex = 0;
          }
@@ -7426,7 +7437,7 @@ index a54b134..1ad6964 100644
          layOutWidgetsForSideMenu(messArr);
  
          boolean universalNotify = false;
-@@ -22807,8 +22898,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -22807,8 +22902,9 @@ public class ChatActivity extends BaseFragment implements
          } else if (id == NotificationCenter.didReceiveNewMessages) {
              FileLog.d("ChatActivity didReceiveNewMessages start");
              long did = (Long) args[0];
@@ -7437,7 +7448,7 @@ index a54b134..1ad6964 100644
              if (did == dialog_id) {
                  boolean scheduled = (Boolean) args[2];
                  int mode = (Integer) args[3];
-@@ -28135,6 +28227,13 @@ public class ChatActivity extends BaseFragment implements
+@@ -28135,6 +28231,13 @@ public class ChatActivity extends BaseFragment implements
      @Override
      public void onTransitionAnimationEnd(boolean isOpen, boolean backward) {
          super.onTransitionAnimationEnd(isOpen, backward);
@@ -7451,7 +7462,7 @@ index a54b134..1ad6964 100644
          if (isOpen) {
              if (backward) {
                  if (showPinBulletin && pinBulletin != null) {
-@@ -31957,6 +32056,23 @@ public class ChatActivity extends BaseFragment implements
+@@ -31957,6 +32060,23 @@ public class ChatActivity extends BaseFragment implements
                  icons.add(R.drawable.msg_calendar2);
              }
  
@@ -7475,7 +7486,7 @@ index a54b134..1ad6964 100644
              if (options.isEmpty() && optionsView == null) {
                  return false;
              }
-@@ -34293,6 +34409,21 @@ public class ChatActivity extends BaseFragment implements
+@@ -34293,6 +34413,21 @@ public class ChatActivity extends BaseFragment implements
          }
          boolean preserveDim = false;
          switch (option) {
@@ -8005,6 +8016,155 @@ index 0000000..b2d9d40
 +                BulletinFactory.of(chat).createSimpleBulletin(R.raw.voip_invite, VoidGram.t("Отправлено как голосовое", "Sent as a voice message")).show();
 +            });
 +        });
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramBlackHole.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramBlackHole.java
+new file mode 100644
+index 0000000..20a79be
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramBlackHole.java
+@@ -0,0 +1,143 @@
++package org.telegram.ui.voidgram;
++
++import android.animation.ValueAnimator;
++import android.content.Context;
++import android.graphics.Bitmap;
++import android.graphics.Canvas;
++import android.graphics.Paint;
++import android.graphics.RadialGradient;
++import android.graphics.Rect;
++import android.graphics.RectF;
++import android.graphics.Shader;
++import android.view.View;
++import android.view.ViewGroup;
++import android.view.animation.AccelerateInterpolator;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.ui.Components.LayoutHelper;
++
++import java.util.Random;
++
++/**
++ * "Black hole" for clearing a chat, as on iOS: the visible messages are cut into pieces that
++ * spiral into a dark hole in the middle of the screen while the history is cleared.
++ */
++public final class VoidGramBlackHole {
++    private VoidGramBlackHole() {
++    }
++
++    public static boolean isEnabled() {
++        return VoidGram.prefs().getBoolean("black_hole", true);
++    }
++
++    public static void setEnabled(boolean value) {
++        VoidGram.prefs().edit().putBoolean("black_hole", value).apply();
++    }
++
++    /** Snapshots `source` and plays the animation over it inside `container`. */
++    public static void play(View source, ViewGroup container) {
++        if (!isEnabled() || source == null || container == null || source.getWidth() <= 0 || source.getHeight() <= 0) {
++            return;
++        }
++        if (android.provider.Settings.Global.getFloat(source.getContext().getContentResolver(), android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f) {
++            return;
++        }
++        final Bitmap snapshot;
++        try {
++            snapshot = Bitmap.createBitmap(source.getWidth(), source.getHeight(), Bitmap.Config.ARGB_8888);
++            source.draw(new Canvas(snapshot));
++        } catch (Throwable e) {
++            return;
++        }
++        int[] sourceLocation = new int[2];
++        int[] containerLocation = new int[2];
++        source.getLocationInWindow(sourceLocation);
++        container.getLocationInWindow(containerLocation);
++        HoleView view = new HoleView(container.getContext(), snapshot, sourceLocation[0] - containerLocation[0], sourceLocation[1] - containerLocation[1]);
++        container.addView(view, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
++        ValueAnimator animator = ValueAnimator.ofFloat(0f, 1f);
++        animator.setDuration(1100);
++        animator.setInterpolator(new AccelerateInterpolator(1.4f));
++        animator.addUpdateListener(a -> {
++            view.progress = (float) a.getAnimatedValue();
++            view.invalidate();
++        });
++        animator.addListener(new android.animation.AnimatorListenerAdapter() {
++            @Override
++            public void onAnimationEnd(android.animation.Animator animation) {
++                AndroidUtilities.removeFromParent(view);
++                snapshot.recycle();
++            }
++        });
++        animator.start();
++    }
++
++    private static final class HoleView extends View {
++        private static final int COLUMNS = 8;
++        private static final int ROWS = 14;
++
++        private final Bitmap snapshot;
++        private final int offsetX;
++        private final int offsetY;
++        private final float[] delays = new float[COLUMNS * ROWS];
++        private final float[] spins = new float[COLUMNS * ROWS];
++        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
++        private final Paint holePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
++        private final Rect src = new Rect();
++        private final RectF dst = new RectF();
++        float progress;
++
++        HoleView(Context context, Bitmap snapshot, int offsetX, int offsetY) {
++            super(context);
++            this.snapshot = snapshot;
++            this.offsetX = offsetX;
++            this.offsetY = offsetY;
++            Random random = new Random(42);
++            for (int i = 0; i < delays.length; i++) {
++                delays[i] = random.nextFloat() * 0.35f;
++                spins[i] = (random.nextFloat() - 0.5f) * 720f;
++            }
++        }
++
++        @Override
++        protected void onDraw(Canvas canvas) {
++            int width = snapshot.getWidth();
++            int height = snapshot.getHeight();
++            float centerX = offsetX + width / 2f;
++            float centerY = offsetY + height / 2f;
++            float hole = AndroidUtilities.dp(24) + AndroidUtilities.dp(70) * (float) Math.sin(Math.PI * Math.min(1f, progress * 1.1f));
++            holePaint.setShader(new RadialGradient(centerX, centerY, Math.max(1f, hole * 2.2f), new int[]{0xFF000000, 0xCC000000, 0x00000000}, new float[]{0f, 0.45f, 1f}, Shader.TileMode.CLAMP));
++            canvas.drawCircle(centerX, centerY, hole * 2.2f, holePaint);
++            float tileW = width / (float) COLUMNS;
++            float tileH = height / (float) ROWS;
++            for (int row = 0; row < ROWS; row++) {
++                for (int column = 0; column < COLUMNS; column++) {
++                    int index = row * COLUMNS + column;
++                    float t = Math.max(0f, Math.min(1f, (progress - delays[index]) / (1f - delays[index])));
++                    if (t >= 1f) {
++                        continue;
++                    }
++                    float x = offsetX + column * tileW;
++                    float y = offsetY + row * tileH;
++                    float tileCenterX = x + tileW / 2f;
++                    float tileCenterY = y + tileH / 2f;
++                    double dx = tileCenterX - centerX;
++                    double dy = tileCenterY - centerY;
++                    double radius = Math.hypot(dx, dy) * (1f - t);
++                    double angle = Math.atan2(dy, dx) + t * t * Math.PI * 1.6;
++                    float px = (float) (centerX + Math.cos(angle) * radius);
++                    float py = (float) (centerY + Math.sin(angle) * radius);
++                    float scale = 1f - t * 0.92f;
++                    src.set((int) (column * tileW), (int) (row * tileH), (int) ((column + 1) * tileW), (int) ((row + 1) * tileH));
++                    dst.set(px - tileW * scale / 2f, py - tileH * scale / 2f, px + tileW * scale / 2f, py + tileH * scale / 2f);
++                    paint.setAlpha((int) (255 * (1f - t * t)));
++                    canvas.save();
++                    canvas.rotate(spins[index] * t, px, py);
++                    canvas.drawBitmap(snapshot, src, dst, paint);
++                    canvas.restore();
++                }
++            }
++        }
 +    }
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatExportSheet.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatExportSheet.java
@@ -8988,10 +9148,10 @@ index 0000000..e6d2e84
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramInterfaceActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramInterfaceActivity.java
 new file mode 100644
-index 0000000..ba34018
+index 0000000..2f37a48
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramInterfaceActivity.java
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,92 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.view.View;
@@ -9019,6 +9179,7 @@ index 0000000..ba34018
 +
 +    private static final int ID_STREAMER = 100;
 +    private static final int ID_NAME_GUARD = 101;
++    private static final int ID_BLACK_HOLE = 102;
 +
 +    @Override
 +    protected CharSequence getTitle() {
@@ -9037,6 +9198,7 @@ index 0000000..ba34018
 +        check(items, 2, VoidGram.t("Без перехода к следующему каналу", "No jump to the next channel"));
 +        check(items, 3, VoidGram.t("Прятать клавиатуру при прокрутке", "Hide the keyboard on scroll"));
 +        check(items, 4, VoidGram.t("Запятая после упоминания", "Comma after a mention"));
++        items.add(UItem.asCheck(ID_BLACK_HOLE, VoidGram.t("«Чёрная дыра» при очистке чата", "\"Black hole\" when clearing a chat")).setChecked(VoidGramBlackHole.isEnabled()));
 +        items.add(UItem.asShadow(VoidGram.t("Упоминание в начале сообщения вставляется как «@ник, ».", "A mention at the start of a message is inserted as \"@name, \".")));
 +        items.add(UItem.asHeader(VoidGram.t("Приватность", "Privacy")));
 +        check(items, 5, VoidGram.t("Скрыть мой номер в Настройках", "Hide my number in Settings"));
@@ -9055,6 +9217,11 @@ index 0000000..ba34018
 +            if (getParentActivity() != null) {
 +                org.telegram.messenger.voidgram.VoidGramExtras.applyStreamerMode(getParentActivity().getWindow());
 +            }
++            listView.adapter.update(true);
++            return;
++        }
++        if (item.id == ID_BLACK_HOLE) {
++            VoidGramBlackHole.setEnabled(!VoidGramBlackHole.isEnabled());
 +            listView.adapter.update(true);
 +            return;
 +        }
