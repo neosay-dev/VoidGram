@@ -2275,10 +2275,10 @@ index 0000000..e4f4709
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramCustomization.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramCustomization.java
 new file mode 100644
-index 0000000..ea59784
+index 0000000..a3b2ee2
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramCustomization.java
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,310 @@
 +package org.telegram.messenger.voidgram;
 +
 +import android.graphics.drawable.ColorDrawable;
@@ -2496,6 +2496,81 @@ index 0000000..ea59784
 +            return c[8];
 +        }
 +        return null;
++    }
++
++    // ---- Badges: a short text after your name in Settings and after chats' names in the list. ----
++
++    public static String myBadge() {
++        return VoidGram.prefs().getString("custom_my_badge", "");
++    }
++
++    public static void setMyBadge(String value) {
++        String text = value == null ? "" : value.trim();
++        if (text.length() > 16) {
++            text = text.substring(0, 16);
++        }
++        VoidGram.prefs().edit().putString("custom_my_badge", text).apply();
++    }
++
++    public static String badge(long dialogId) {
++        String value = VoidGram.prefs().getString("custom_badge_" + dialogId, "");
++        return value.isEmpty() ? null : value;
++    }
++
++    public static void setBadge(long dialogId, String value) {
++        String text = value == null ? "" : value.trim();
++        if (text.length() > 16) {
++            text = text.substring(0, 16);
++        }
++        java.util.Set<String> ids = new java.util.HashSet<>(VoidGram.prefs().getStringSet("custom_badge_ids", new java.util.HashSet<>()));
++        if (text.isEmpty()) {
++            ids.remove(String.valueOf(dialogId));
++            VoidGram.prefs().edit().remove("custom_badge_" + dialogId).putStringSet("custom_badge_ids", ids).apply();
++        } else {
++            ids.add(String.valueOf(dialogId));
++            VoidGram.prefs().edit().putString("custom_badge_" + dialogId, text).putStringSet("custom_badge_ids", ids).apply();
++        }
++        badgeCache.clear();
++    }
++
++    public static java.util.ArrayList<Long> badgedDialogs() {
++        java.util.ArrayList<Long> result = new java.util.ArrayList<>();
++        for (String id : VoidGram.prefs().getStringSet("custom_badge_ids", new java.util.HashSet<>())) {
++            try {
++                result.add(Long.parseLong(id));
++            } catch (NumberFormatException ignore) {
++            }
++        }
++        return result;
++    }
++
++    private static final HashMap<Long, String> badgeCache = new HashMap<>();
++
++    /** The name with its badge as a small accent label, or the same name without a badge. */
++    public static CharSequence decorate(CharSequence name, String badge) {
++        if (name == null || badge == null || badge.isEmpty() || VoidGramDecoy.isActive()) {
++            return name;
++        }
++        android.text.SpannableStringBuilder builder = new android.text.SpannableStringBuilder(name);
++        builder.append("  ");
++        int start = builder.length();
++        builder.append(badge);
++        builder.setSpan(new android.text.style.ForegroundColorSpan(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText4)), start, builder.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
++        builder.setSpan(new android.text.style.RelativeSizeSpan(0.78f), start, builder.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
++        builder.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD), start, builder.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
++        return builder;
++    }
++
++    public static CharSequence decorateDialog(long dialogId, CharSequence name) {
++        if (dialogId == 0) {
++            return name;
++        }
++        String badge = badgeCache.get(dialogId);
++        if (badge == null) {
++            badge = badge(dialogId);
++            badgeCache.put(dialogId, badge == null ? "" : badge);
++        }
++        return decorate(name, badge);
 +    }
 +
 +    /** Theme wallpaper: a solid colour or a gradient when the chat background is customized. */
@@ -7894,8 +7969,21 @@ index 5dc090f..3f4b262 100644
      }
  
      void measureTime(MessageObject messageObject) {
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Cells/DialogCell.java b/TMessagesProj/src/main/java/org/telegram/ui/Cells/DialogCell.java
+index 698bf4d..19fbc52 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/Cells/DialogCell.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/Cells/DialogCell.java
+@@ -2436,6 +2436,8 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
+             if (nameString instanceof String) {
+                 nameString = ((String) nameString).replace('\n', ' ');
+             }
++            // VoidGram: the chat's own badge after its name.
++            nameString = org.telegram.messenger.voidgram.VoidGramCustomization.decorateDialog(currentDialogId, nameString);
+             CharSequence nameStringFinal = nameString;
+             if (nameLayoutEllipsizeByGradient) {
+                 nameLayoutFits = nameStringFinal.length() == TextUtils.ellipsize(nameStringFinal, Theme.dialogs_namePaint[paintIndex], ellipsizeWidth, TextUtils.TruncateAt.END).length();
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
-index a54b134..b73a5c3 100644
+index a54b134..369e597 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 @@ -1246,6 +1246,11 @@ public class ChatActivity extends BaseFragment implements
@@ -7919,7 +8007,7 @@ index a54b134..b73a5c3 100644
      private final static int forward = 11;
      private final static int delete = 12;
      private final static int chat_enc_timer = 13;
-@@ -1707,6 +1714,15 @@ public class ChatActivity extends BaseFragment implements
+@@ -1707,6 +1714,16 @@ public class ChatActivity extends BaseFragment implements
      private final static int view_as_topics = 59;
  
      private final static int search = 40;
@@ -7932,10 +8020,11 @@ index a54b134..b73a5c3 100644
 +    private final static int voidgram_hide_chat = 9206;
 +    private final static int voidgram_lock_chat = 9207;
 +    private final static int voidgram_download_all = 9208;
++    private final static int voidgram_chat_badge = 9209;
  
      private final static int topic_close = 60;
      private final static int open_forum = 61;
-@@ -2195,6 +2211,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -2195,6 +2212,10 @@ public class ChatActivity extends BaseFragment implements
          @Override
          public void onTextChanged(final CharSequence text, boolean bigChange, boolean fromDraft) {
              MediaController.getInstance().setInputFieldHasText(!TextUtils.isEmpty(text) || chatActivityEnterView.isEditingMessage());
@@ -7946,7 +8035,7 @@ index a54b134..b73a5c3 100644
              if (mentionContainer != null && mentionContainer.getAdapter() != null) {
                  mentionContainer.getAdapter().searchUsernameOrHashtag(text, chatActivityEnterView.getCursorPosition(), messages, false, false);
              }
-@@ -2835,6 +2855,15 @@ public class ChatActivity extends BaseFragment implements
+@@ -2835,6 +2856,15 @@ public class ChatActivity extends BaseFragment implements
          }
  
          dialog_id_Long = dialog_id;
@@ -7962,7 +8051,7 @@ index a54b134..b73a5c3 100644
  
          transitionAnimationGlobalIndex = NotificationCenter.getGlobalInstance().setAnimationInProgress(transitionAnimationGlobalIndex, new int[0]);
  
-@@ -3336,8 +3365,16 @@ public class ChatActivity extends BaseFragment implements
+@@ -3336,8 +3366,16 @@ public class ChatActivity extends BaseFragment implements
          }
      }
  
@@ -7979,7 +8068,7 @@ index a54b134..b73a5c3 100644
          super.onFragmentDestroy();
          if (messageMetricsView != null) {
              messageMetricsView.finish();
-@@ -3746,6 +3783,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -3746,6 +3784,8 @@ public class ChatActivity extends BaseFragment implements
                          getMessagesController().getTopicsController().toggleViewForumAsMessages(-dialog_id, false);
                          TopicsFragment.prepareToSwitchAnimation(ChatActivity.this);
                      }
@@ -7988,10 +8077,27 @@ index a54b134..b73a5c3 100644
                  } else if (id == copy) {
                      SpannableStringBuilder str = new SpannableStringBuilder();
                      long previousUid = 0;
-@@ -3988,6 +4027,32 @@ public class ChatActivity extends BaseFragment implements
+@@ -3988,6 +4028,49 @@ public class ChatActivity extends BaseFragment implements
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/help", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
                  } else if (id == bot_settings) {
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/settings", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
++                } else if (id == voidgram_chat_badge) {
++                    android.widget.EditText badgeField = new android.widget.EditText(getParentActivity());
++                    String badgeValue = org.telegram.messenger.voidgram.VoidGramCustomization.badge(dialog_id);
++                    badgeField.setText(badgeValue != null ? badgeValue : "");
++                    badgeField.setSingleLine(true);
++                    badgeField.setHint(org.telegram.messenger.voidgram.VoidGram.t("до 16 символов", "up to 16 characters"));
++                    badgeField.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
++                    AlertDialog.Builder badgeBuilder = new AlertDialog.Builder(getParentActivity());
++                    badgeBuilder.setTitle(org.telegram.messenger.voidgram.VoidGram.t("Бейдж чата", "Chat badge"));
++                    badgeBuilder.setMessage(org.telegram.messenger.voidgram.VoidGram.t("Короткая подпись после названия чата в списке. Видно только вам.", "A short label after the chat's name in the list. Only you see it."));
++                    badgeBuilder.setView(badgeField);
++                    badgeBuilder.setPositiveButton(org.telegram.messenger.voidgram.VoidGram.t("Сохранить", "Save"), (d, w) -> {
++                        org.telegram.messenger.voidgram.VoidGramCustomization.setBadge(dialog_id, badgeField.getText().toString());
++                        getNotificationCenter().postNotificationName(NotificationCenter.updateInterfaces, MessagesController.UPDATE_MASK_NAME);
++                    });
++                    badgeBuilder.setNegativeButton(org.telegram.messenger.voidgram.VoidGram.t("Отмена", "Cancel"), null);
++                    showDialog(badgeBuilder.create());
 +                } else if (id == voidgram_download_all) {
 +                    org.telegram.ui.voidgram.VoidGramBulkDownload.start(ChatActivity.this);
 +                } else if (id == voidgram_lock_chat) {
@@ -8021,7 +8127,7 @@ index a54b134..b73a5c3 100644
                  } else if (id == search) {
                      openSearchWithText(isSupportedTags() ? "" : null);
                  } else if (id == translate) {
-@@ -4398,6 +4463,23 @@ public class ChatActivity extends BaseFragment implements
+@@ -4398,6 +4481,24 @@ public class ChatActivity extends BaseFragment implements
              if (searchItem != null) {
                  headerItem.lazilyAddSubItem(search, R.drawable.msg_search, LocaleController.getString(R.string.Search));
              }
@@ -8033,6 +8139,7 @@ index a54b134..b73a5c3 100644
 +                headerItem.lazilyAddSubItem(voidgram_download_all, R.drawable.msg_download, org.telegram.messenger.voidgram.VoidGram.t("Скачать все медиа", "Download all media"));
 +            }
 +            if (chatMode == 0 && !isTopic && !org.telegram.messenger.voidgram.VoidGramDecoy.isActive()) {
++                headerItem.lazilyAddSubItem(voidgram_chat_badge, R.drawable.msg_customize, org.telegram.messenger.voidgram.VoidGram.t("Бейдж чата", "Chat badge"));
 +                headerItem.lazilyAddSubItem(voidgram_lock_chat, R.drawable.msg_permissions, org.telegram.ui.voidgram.VoidGramChatLock.isLocked(currentAccount, dialog_id) ? org.telegram.messenger.voidgram.VoidGram.t("Снять замок", "Remove the lock") : org.telegram.messenger.voidgram.VoidGram.t("Заблокировать чат", "Lock chat"));
 +                headerItem.lazilyAddSubItem(voidgram_hide_chat, R.drawable.msg_archive, org.telegram.messenger.voidgram.VoidGramHiddenChats.isHidden(currentAccount, dialog_id) ? org.telegram.messenger.voidgram.VoidGram.t("Показать в списке чатов", "Show in the chat list") : org.telegram.messenger.voidgram.VoidGram.t("Скрыть чат", "Hide chat"));
 +            }
@@ -8045,7 +8152,7 @@ index a54b134..b73a5c3 100644
              if (ChatObject.isBoostSupported(currentChat) && (getUserConfig().isPremium() || ChatObject.isBoosted(chatInfo) || ChatObject.hasAdminRights(currentChat))) {
                  RLottieDrawable drawable = new RLottieDrawable(R.raw.boosts, dp(24), dp(24));
                  headerItem.lazilyAddSubItem(boost_group, drawable, LocaleController.getString(ChatObject.isChannelAndNotMegaGroup(currentChat) ? R.string.BoostingBoostChannelMenu : R.string.BoostingBoostGroupMenu));
-@@ -6727,7 +6809,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -6727,7 +6828,8 @@ public class ChatActivity extends BaseFragment implements
                      scrolled = super.scrollVerticallyBy(dy, recycler, state);
                  }
                  final boolean allowPullingDownScroll = !isInPollAddOptionMode() && !hasSelectedMessages();
@@ -8055,7 +8162,7 @@ index a54b134..b73a5c3 100644
                      if (pullingDownOffset == 0 && pullingDownDrawable != null) {
                          if (nextChannels != null && !nextChannels.isEmpty()) {
                              pullingDownDrawable.updateDialog(nextChannels.get(0));
-@@ -6861,6 +6944,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -6861,6 +6963,10 @@ public class ChatActivity extends BaseFragment implements
                      } else if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
                          pollHintCell = null;
                          wasManualScroll = true;
@@ -8066,7 +8173,7 @@ index a54b134..b73a5c3 100644
                          scrollingFloatingDate = true;
                          scrollingFloatingTopic = true;
                          checkTextureViewPosition = true;
-@@ -7392,7 +7479,7 @@ public class ChatActivity extends BaseFragment implements
+@@ -7392,7 +7498,7 @@ public class ChatActivity extends BaseFragment implements
                  } else {
                      String username = ChatObject.getPublicUsername(chat);
                      if (username != null) {
@@ -8075,7 +8182,7 @@ index a54b134..b73a5c3 100644
                      }
                  }
              } else if (object instanceof TLRPC.User) {
-@@ -7401,7 +7488,7 @@ public class ChatActivity extends BaseFragment implements
+@@ -7401,7 +7507,7 @@ public class ChatActivity extends BaseFragment implements
                      searchUserMessages(user, null);
                  } else {
                      if (UserObject.getPublicUsername(user) != null) {
@@ -8084,7 +8191,7 @@ index a54b134..b73a5c3 100644
                      } else {
                          String name = UserObject.getFirstName(user, false);
                          Spannable spannable = new SpannableString(name + " ");
-@@ -9045,6 +9132,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -9045,6 +9151,10 @@ public class ChatActivity extends BaseFragment implements
              });
          }
  
@@ -8095,7 +8202,7 @@ index a54b134..b73a5c3 100644
          return fragmentView;
      }
  
-@@ -10820,6 +10911,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -10820,6 +10930,9 @@ public class ChatActivity extends BaseFragment implements
                  actionModeViews.add(actionMode.addItemWithWidth(forward, R.drawable.msg_forward, dp(48), LocaleController.getString(R.string.Forward)));
              }
              actionModeViews.add(actionMode.addItemWithWidth(share, R.drawable.msg_shareout, dp(48), LocaleController.getString(R.string.ShareFile)));
@@ -8105,7 +8212,7 @@ index a54b134..b73a5c3 100644
              actionModeViews.add(actionMode.addItemWithWidth(delete, R.drawable.msg_delete, dp(48), LocaleController.getString(R.string.Delete)));
          } else {
              actionModeViews.add(actionMode.addItemWithWidth(edit, R.drawable.msg_edit, dp(48), LocaleController.getString(R.string.Edit)));
-@@ -13272,6 +13366,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -13272,6 +13385,10 @@ public class ChatActivity extends BaseFragment implements
      }
  
      public void performHistoryClear(long threadId, boolean revoke, boolean canDeleteHistory) {
@@ -8116,7 +8223,7 @@ index a54b134..b73a5c3 100644
          if (topicsTabs != null && UserObject.isBotForum(currentUser)) {
              topicsTabs.setAllTopicsHidden(true);
          }
-@@ -21371,7 +21469,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -21371,7 +21488,8 @@ public class ChatActivity extends BaseFragment implements
          if (postponedScroll) {
              postponedScrollToLastMessageQueryIndex = 0;
          }
@@ -8126,7 +8233,7 @@ index a54b134..b73a5c3 100644
          layOutWidgetsForSideMenu(messArr);
  
          boolean universalNotify = false;
-@@ -22807,8 +22906,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -22807,8 +22925,9 @@ public class ChatActivity extends BaseFragment implements
          } else if (id == NotificationCenter.didReceiveNewMessages) {
              FileLog.d("ChatActivity didReceiveNewMessages start");
              long did = (Long) args[0];
@@ -8137,7 +8244,7 @@ index a54b134..b73a5c3 100644
              if (did == dialog_id) {
                  boolean scheduled = (Boolean) args[2];
                  int mode = (Integer) args[3];
-@@ -28135,6 +28235,13 @@ public class ChatActivity extends BaseFragment implements
+@@ -28135,6 +28254,13 @@ public class ChatActivity extends BaseFragment implements
      @Override
      public void onTransitionAnimationEnd(boolean isOpen, boolean backward) {
          super.onTransitionAnimationEnd(isOpen, backward);
@@ -8151,7 +8258,7 @@ index a54b134..b73a5c3 100644
          if (isOpen) {
              if (backward) {
                  if (showPinBulletin && pinBulletin != null) {
-@@ -31957,6 +32064,23 @@ public class ChatActivity extends BaseFragment implements
+@@ -31957,6 +32083,23 @@ public class ChatActivity extends BaseFragment implements
                  icons.add(R.drawable.msg_calendar2);
              }
  
@@ -8175,7 +8282,7 @@ index a54b134..b73a5c3 100644
              if (options.isEmpty() && optionsView == null) {
                  return false;
              }
-@@ -34293,6 +34417,21 @@ public class ChatActivity extends BaseFragment implements
+@@ -34293,6 +34436,21 @@ public class ChatActivity extends BaseFragment implements
          }
          boolean preserveDim = false;
          switch (option) {
@@ -8548,12 +8655,16 @@ index 49921be..9e87b97 100644
          }
          params.flags |= WindowManager.LayoutParams.FLAG_FULLSCREEN;
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
-index e2b917b..a0dfde6 100644
+index e2b917b..a42f000 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
-@@ -529,12 +529,13 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
+@@ -527,14 +527,16 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
+ 
+         avatarDrawable.setInfo(user);
          avatarView.setForUserOrChat(user, avatarDrawable);
-         titleView.setText(UserObject.getUserName(user));
+-        titleView.setText(UserObject.getUserName(user));
++        // VoidGram: your own badge after your name.
++        titleView.setText(org.telegram.messenger.voidgram.VoidGramCustomization.decorate(UserObject.getUserName(user), org.telegram.messenger.voidgram.VoidGramCustomization.myBadge()));
          final StringBuilder sb = new StringBuilder();
 -        if (user != null) {
 +        // VoidGram: the own number can be hidden here.
@@ -8567,7 +8678,7 @@ index e2b917b..a0dfde6 100644
          }
          subtitleView.setText(sb);
  
-@@ -795,6 +796,12 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
+@@ -795,6 +797,12 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
              items.add(UItem.asShadow(null));
          }
  
@@ -8580,7 +8691,7 @@ index e2b917b..a0dfde6 100644
          items.add(SettingCell.Factory.of(1, IconBackgroundColors.BLUE.top, IconBackgroundColors.BLUE.bottom, R.drawable.settings_account, getString(R.string.SettingsAccount), getString(R.string.SettingsAccountInfo)));
          items.add(SettingCell.Factory.of(2, IconBackgroundColors.ORANGE.top, IconBackgroundColors.ORANGE.bottom, R.drawable.settings_chat, getString(R.string.SettingsChat), getString(R.string.SettingsChatInfo)));
          items.add(SettingCell.Factory.of(3, IconBackgroundColors.GREEN.top, IconBackgroundColors.GREEN.bottom, R.drawable.settings_privacy, getString(R.string.SettingsPrivacySecurity), getString(R.string.SettingsPrivacySecurityInfo)));
-@@ -917,6 +924,9 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
+@@ -917,6 +925,9 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
              return;
          }
          switch (item.id) {
@@ -9443,10 +9554,10 @@ index 0000000..f63c19e
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramCustomizationActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramCustomizationActivity.java
 new file mode 100644
-index 0000000..a62cd76
+index 0000000..c01976d
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramCustomizationActivity.java
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,133 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.view.View;
@@ -9468,6 +9579,9 @@ index 0000000..a62cd76
 +    private static final int ID_PRESET_BASE = 100;
 +    private static final int ID_COLOR_BASE = 200;
 +    private static final int ID_RESET = 1;
++    private static final int ID_MY_BADGE = 2;
++    private static final int ID_BADGE_BASE = 300;
++    private ArrayList<Long> badged = new ArrayList<>();
 +
 +    @Override
 +    protected CharSequence getTitle() {
@@ -9490,6 +9604,23 @@ index 0000000..a62cd76
 +            items.add(UItem.asButton(ID_COLOR_BASE + i, VoidGramCustomization.title(color), hex != null ? hex : VoidGram.t("как в теме", "theme")));
 +        }
 +        items.add(UItem.asShadow(VoidGram.t("Цвет в формате #RRGGBB. Пустое поле — как в теме Telegram. Обновлённый фон чата виден, когда чат открыт заново.", "A colour as #RRGGBB. Empty keeps the Telegram theme's colour. A new chat background shows when the chat is opened again.")));
++        items.add(UItem.asHeader(VoidGram.t("Бейджи", "Badges")));
++        String mine = VoidGramCustomization.myBadge();
++        items.add(UItem.asButton(ID_MY_BADGE, VoidGram.t("Мой бейдж", "My badge"), mine.isEmpty() ? VoidGram.t("нет", "none") : mine));
++        badged = VoidGramCustomization.badgedDialogs();
++        for (int i = 0; i < badged.size(); i++) {
++            long id = badged.get(i);
++            String name;
++            if (id > 0) {
++                org.telegram.tgnet.TLRPC.User user = getMessagesController().getUser(id);
++                name = user != null ? org.telegram.messenger.UserObject.getUserName(user) : String.valueOf(id);
++            } else {
++                org.telegram.tgnet.TLRPC.Chat chat = getMessagesController().getChat(-id);
++                name = chat != null ? chat.title : String.valueOf(id);
++            }
++            items.add(UItem.asButton(ID_BADGE_BASE + i, name, VoidGramCustomization.badge(id)));
++        }
++        items.add(UItem.asShadow(VoidGram.t("Мой бейдж — после вашего имени в Настройках. Бейдж чату: меню чата (⋮) → «Бейдж чата». Нажмите, чтобы изменить.", "My badge shows after your name in Settings. A chat badge: chat menu (⋮) → \"Chat badge\". Tap one to change it.")));
 +        items.add(UItem.asButton(ID_RESET, R.drawable.msg_reset, VoidGram.t("Сбросить кастомизацию", "Reset customization")).red());
 +        items.add(UItem.asShadow(null));
 +    }
@@ -9502,6 +9633,29 @@ index 0000000..a62cd76
 +
 +    @Override
 +    protected void onClick(UItem item, View view, int position, float x, float y) {
++        if (item.id == ID_MY_BADGE || item.id >= ID_BADGE_BASE && item.id - ID_BADGE_BASE < badged.size()) {
++            final boolean mineBadge = item.id == ID_MY_BADGE;
++            final long dialogId = mineBadge ? 0 : badged.get(item.id - ID_BADGE_BASE);
++            EditText field = new EditText(getContext());
++            field.setText(mineBadge ? VoidGramCustomization.myBadge() : VoidGramCustomization.badge(dialogId));
++            field.setSingleLine(true);
++            field.setHint(VoidGram.t("до 16 символов", "up to 16 characters"));
++            field.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
++            AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
++            builder.setTitle(mineBadge ? VoidGram.t("Мой бейдж", "My badge") : VoidGram.t("Бейдж чата", "Chat badge"));
++            builder.setView(field);
++            builder.setPositiveButton(VoidGram.t("Сохранить", "Save"), (d, w) -> {
++                if (mineBadge) {
++                    VoidGramCustomization.setMyBadge(field.getText().toString());
++                } else {
++                    VoidGramCustomization.setBadge(dialogId, field.getText().toString());
++                }
++                update();
++            });
++            builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++            showDialog(builder.create());
++            return;
++        }
 +        if (item.id == ID_RESET) {
 +            VoidGramCustomization.reset();
 +            update();
