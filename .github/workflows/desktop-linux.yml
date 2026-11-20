@@ -168,6 +168,20 @@ jobs:
           test -n "$TDESKTOP_API_ID" && test -n "$TDESKTOP_API_HASH" \
             || { echo "::error::Set TELEGRAM_API_ID and TELEGRAM_API_HASH in the repository Actions secrets."; exit 1; }
           cd src
+          # The image's Python has no working expat, which only the AppStream changelog step needs:
+          # without it that step keeps the metadata as it is instead of stopping the build.
+          python3 - <<'PY'
+          import pathlib
+          path = pathlib.Path("Telegram/build/changelog2appstream.py")
+          if path.exists():
+              text = path.read_text()
+              guard = "try:\n    import xml.parsers.expat  # noqa: F401\nexcept ImportError:\n    raise SystemExit(0)\n"
+              if guard not in text:
+                  lines = text.split("\n")
+                  at = 1 if lines and lines[0].startswith("#!") else 0
+                  lines.insert(at, guard)
+                  path.write_text("\n".join(lines))
+          PY
           # The image's flags turn on LTO, whose final link needs more than the runner's 16 GB (lto1 is
           # killed): the client is built and linked without it. The libraries stay as they were built.
           no_lto() { docker run --rm $IMAGE_TAG printenv "$1" 2>/dev/null | sed -e 's/-flto=auto//g' -e 's/-ffat-lto-objects//g'; }
