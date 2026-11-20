@@ -192,13 +192,23 @@ index 15ffee8..afc4c51 100644
      void closeSocket(int32_t reason, int32_t error);
      void openConnectionInternal(bool ipv6);
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/FlagSecureReason.java b/TMessagesProj/src/main/java/org/telegram/messenger/FlagSecureReason.java
-index 9b56bbf..277f5d9 100644
+index 9b56bbf..11245a5 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/FlagSecureReason.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/FlagSecureReason.java
-@@ -74,6 +74,10 @@ public class FlagSecureReason {
+@@ -73,7 +73,20 @@ public class FlagSecureReason {
+         }
      }
  
++    /** VoidGram: re-applies FLAG_SECURE after the streamer mode switch. */
++    public static void refreshWindow(Window window) {
++        updateWindowSecure(window);
++    }
++
      public static boolean isSecuredNow(Window window) {
++        // VoidGram streamer mode: the whole app is kept out of screenshots and screen sharing.
++        if (org.telegram.messenger.voidgram.VoidGramExtras.streamerMode()) {
++            return true;
++        }
 +        // VoidGram: screenshots allowed where Telegram forbids them (protected chats and media).
 +        if (org.telegram.messenger.voidgram.VoidGramChats.allowScreenshots()) {
 +            return false;
@@ -2547,6 +2557,137 @@ index 0000000..ca4a20f
 +        } catch (Throwable e) {
 +            FileLog.e(e);
 +        }
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramExtras.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramExtras.java
+new file mode 100644
+index 0000000..4871a2b
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramExtras.java
+@@ -0,0 +1,125 @@
++package org.telegram.messenger.voidgram;
++
++import android.view.Window;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.MediaController;
++import org.telegram.messenger.MessageObject;
++import org.telegram.tgnet.TLRPC;
++
++import java.util.HashSet;
++import java.util.Locale;
++
++/** Sleep timer, streamer mode and the name guard, as on iOS. */
++public final class VoidGramExtras {
++    private VoidGramExtras() {
++    }
++
++    // ---- Sleep timer: pauses the player after the chosen time, even with the player closed. ----
++
++    private static Runnable sleepRunnable;
++    private static long sleepAt;
++
++    public static final int[] SLEEP_MINUTES = {5, 10, 15, 30, 45, 60, 90, 120};
++
++    public static void startSleepTimer(int minutes) {
++        cancelSleepTimer();
++        sleepAt = System.currentTimeMillis() + minutes * 60_000L;
++        sleepRunnable = () -> {
++            sleepRunnable = null;
++            sleepAt = 0;
++            MessageObject playing = MediaController.getInstance().getPlayingMessageObject();
++            if (playing != null && !MediaController.getInstance().isMessagePaused()) {
++                MediaController.getInstance().pauseMessage(playing);
++            }
++        };
++        AndroidUtilities.runOnUIThread(sleepRunnable, minutes * 60_000L);
++    }
++
++    public static void cancelSleepTimer() {
++        if (sleepRunnable != null) {
++            AndroidUtilities.cancelRunOnUIThread(sleepRunnable);
++            sleepRunnable = null;
++        }
++        sleepAt = 0;
++    }
++
++    /** Minutes left, or 0 without a timer. */
++    public static int sleepMinutesLeft() {
++        if (sleepRunnable == null || sleepAt == 0) {
++            return 0;
++        }
++        long left = sleepAt - System.currentTimeMillis();
++        return left <= 0 ? 0 : (int) Math.max(1, (left + 59_999) / 60_000);
++    }
++
++    // ---- Streamer mode: the app is left out of screenshots, recordings and screen sharing. ----
++
++    public static boolean streamerMode() {
++        return VoidGram.prefs().getBoolean("streamer_mode", false);
++    }
++
++    public static void setStreamerMode(boolean value) {
++        VoidGram.prefs().edit().putBoolean("streamer_mode", value).apply();
++    }
++
++    public static void applyStreamerMode(Window window) {
++        org.telegram.messenger.FlagSecureReason.refreshWindow(window);
++    }
++
++    // ---- Name guard: a non-contact posing as staff, or mixing alphabets, gets one warning. ----
++
++    private static final HashSet<Long> warned = new HashSet<>();
++    private static final String[] IMPERSONATED = {"telegram", "телеграм", "support", "поддержк", "durov", "дуров", "admin", "админ", "модератор", "moderator", "security", "безопасност", "ayugram", "voidgram"};
++
++    public static boolean nameGuardEnabled() {
++        return VoidGram.prefs().getBoolean("name_guard", true);
++    }
++
++    public static void setNameGuardEnabled(boolean value) {
++        VoidGram.prefs().edit().putBoolean("name_guard", value).apply();
++    }
++
++    /** A warning for this chat partner, at most once per chat and launch, or null. */
++    public static String nameWarning(TLRPC.User user) {
++        if (user == null || !nameGuardEnabled() || VoidGramDecoy.isActive() || user.bot || user.contact || user.self || user.id == 777000 || warned.contains(user.id)) {
++            return null;
++        }
++        StringBuilder reasons = new StringBuilder();
++        String name = ((user.first_name != null ? user.first_name : "") + " " + (user.last_name != null ? user.last_name : "")).trim();
++        for (String word : name.split("[ _\\-]")) {
++            boolean latin = false;
++            boolean cyrillic = false;
++            for (int i = 0; i < word.length(); i++) {
++                char c = word.charAt(i);
++                if (c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z') {
++                    latin = true;
++                }
++                if (c >= 0x0400 && c <= 0x04FF) {
++                    cyrillic = true;
++                }
++            }
++            if (latin && cyrillic) {
++                reasons.append(VoidGram.t("в имени смешаны латинские и русские буквы", "the name mixes Latin and Cyrillic letters"));
++                break;
++            }
++        }
++        String lowered = name.toLowerCase(Locale.ROOT);
++        if (!user.verified) {
++            for (String word : IMPERSONATED) {
++                if (lowered.contains(word)) {
++                    if (reasons.length() > 0) {
++                        reasons.append("; ");
++                    }
++                    reasons.append(VoidGram.t("имя похоже на официальную поддержку — настоящая поддержка Telegram не пишет первой", "the name looks like official support, and real Telegram support never writes first"));
++                    break;
++                }
++            }
++        }
++        if (reasons.length() == 0) {
++            return null;
++        }
++        warned.add(user.id);
++        return VoidGram.t("Осторожно: ", "Careful: ") + reasons + ".";
 +    }
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramFilters.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramFilters.java
@@ -6003,7 +6144,7 @@ index 5dc090f..3f4b262 100644
  
      void measureTime(MessageObject messageObject) {
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
-index a54b134..79a4339 100644
+index a54b134..862f6eb 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 @@ -1246,6 +1246,10 @@ public class ChatActivity extends BaseFragment implements
@@ -6183,7 +6324,21 @@ index a54b134..79a4339 100644
              if (did == dialog_id) {
                  boolean scheduled = (Boolean) args[2];
                  int mode = (Integer) args[3];
-@@ -31957,6 +32016,17 @@ public class ChatActivity extends BaseFragment implements
+@@ -28135,6 +28194,13 @@ public class ChatActivity extends BaseFragment implements
+     @Override
+     public void onTransitionAnimationEnd(boolean isOpen, boolean backward) {
+         super.onTransitionAnimationEnd(isOpen, backward);
++        // VoidGram: one warning about a name that mixes alphabets or poses as staff.
++        if (isOpen && !backward && chatMode == 0 && currentUser != null) {
++            String voidgramWarning = org.telegram.messenger.voidgram.VoidGramExtras.nameWarning(currentUser);
++            if (voidgramWarning != null) {
++                BulletinFactory.of(this).createSimpleBulletin(R.raw.error, voidgramWarning).setDuration(8000).show();
++            }
++        }
+         if (isOpen) {
+             if (backward) {
+                 if (showPinBulletin && pinBulletin != null) {
+@@ -31957,6 +32023,17 @@ public class ChatActivity extends BaseFragment implements
                  icons.add(R.drawable.msg_calendar2);
              }
  
@@ -6201,7 +6356,7 @@ index a54b134..79a4339 100644
              if (options.isEmpty() && optionsView == null) {
                  return false;
              }
-@@ -34293,6 +34363,17 @@ public class ChatActivity extends BaseFragment implements
+@@ -34293,6 +34370,17 @@ public class ChatActivity extends BaseFragment implements
          }
          boolean preserveDim = false;
          switch (option) {
@@ -6234,7 +6389,7 @@ index d214b18..a931b83 100644
              return;
          }
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Components/AudioPlayerAlert.java b/TMessagesProj/src/main/java/org/telegram/ui/Components/AudioPlayerAlert.java
-index 3fa7042..81f56a7 100644
+index 3fa7042..c09961a 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/Components/AudioPlayerAlert.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/Components/AudioPlayerAlert.java
 @@ -148,6 +148,8 @@ public class AudioPlayerAlert extends BottomSheet implements NotificationCenter.
@@ -6269,7 +6424,7 @@ index 3fa7042..81f56a7 100644
          if (seekBarView != null) {
              int newTime;
              if (seekBarView.isDragging()) {
-@@ -2858,6 +2869,32 @@ public class AudioPlayerAlert extends BottomSheet implements NotificationCenter.
+@@ -2858,6 +2869,38 @@ public class AudioPlayerAlert extends BottomSheet implements NotificationCenter.
              o.dismiss();
              onSubItemClick(4);
          });
@@ -6298,6 +6453,12 @@ index 3fa7042..81f56a7 100644
 +        o.add(R.drawable.msg_customize, org.telegram.messenger.voidgram.VoidGram.t("Строка песни в мини-плеере", "Lyrics line in the mini player") + (org.telegram.messenger.voidgram.VoidGramLyrics.isMiniEnabled() ? " ✓" : ""), () -> {
 +            o.dismiss();
 +            org.telegram.messenger.voidgram.VoidGramLyrics.setMiniEnabled(!org.telegram.messenger.voidgram.VoidGramLyrics.isMiniEnabled());
++        });
++        // VoidGram: sleep timer.
++        final int voidgramSleepLeft = org.telegram.messenger.voidgram.VoidGramExtras.sleepMinutesLeft();
++        o.add(R.drawable.msg_mute, org.telegram.messenger.voidgram.VoidGram.t("Таймер сна", "Sleep timer") + (voidgramSleepLeft > 0 ? " · " + voidgramSleepLeft + org.telegram.messenger.voidgram.VoidGram.t(" мин", " min") : ""), () -> {
++            o.dismiss();
++            org.telegram.ui.voidgram.VoidGramSleepTimerSheet.show(parentActivity);
 +        });
          if (castAvailable) {
              castItem = o.add();
@@ -6465,7 +6626,7 @@ index 0849d5d..3f98506 100644
          }
          return mc.transcribeAudioTrialCooldownUntil != 0 && cc.getCurrentTime() <= mc.transcribeAudioTrialCooldownUntil && mc.transcribeAudioTrialCurrentNumber <= 0;
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
-index 1dd2ffe..6cacdb9 100644
+index 1dd2ffe..4f3c784 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
 @@ -458,6 +458,11 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
@@ -6480,6 +6641,15 @@ index 1dd2ffe..6cacdb9 100644
          Theme.createCommonChatResources();
          Theme.createDialogsResources(this);
          if (SharedConfig.passcodeHash.length() != 0 && SharedConfig.appLocked) {
+@@ -7209,6 +7214,8 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
+     @Override
+     protected void onResume() {
+         super.onResume();
++        // VoidGram streamer mode.
++        org.telegram.messenger.voidgram.VoidGramExtras.applyStreamerMode(getWindow());
+         WidgetMedia.onAppPaused(false);
+         isResumed = true;
+         PipCoordinator.getInstance().onActivityResume(this);
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/PhotoViewer.java b/TMessagesProj/src/main/java/org/telegram/ui/PhotoViewer.java
 index 1e4ad20..7788ee2 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/PhotoViewer.java
@@ -7179,10 +7349,10 @@ index 0000000..ea91239
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramInterfaceActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramInterfaceActivity.java
 new file mode 100644
-index 0000000..701321b
+index 0000000..ba34018
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramInterfaceActivity.java
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,85 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.view.View;
@@ -7208,6 +7378,9 @@ index 0000000..701321b
 +            VoidGramInterface.CLEAN_LINKS,
 +    };
 +
++    private static final int ID_STREAMER = 100;
++    private static final int ID_NAME_GUARD = 101;
++
 +    @Override
 +    protected CharSequence getTitle() {
 +        return VoidGram.t("Интерфейс", "Interface");
@@ -7230,11 +7403,27 @@ index 0000000..701321b
 +        check(items, 5, VoidGram.t("Скрыть мой номер в Настройках", "Hide my number in Settings"));
 +        check(items, 6, VoidGram.t("Открывать ссылки без вопроса", "Open links without asking"));
 +        check(items, 7, VoidGram.t("Чистить ссылки от слежки", "Remove tracking from links"));
++        items.add(UItem.asCheck(ID_NAME_GUARD, VoidGram.t("Предупреждать о подозрительных именах", "Warn about suspicious names")).setChecked(org.telegram.messenger.voidgram.VoidGramExtras.nameGuardEnabled()));
++        items.add(UItem.asCheck(ID_STREAMER, VoidGram.t("Режим стримера", "Streamer mode")).setChecked(org.telegram.messenger.voidgram.VoidGramExtras.streamerMode()));
++        items.add(UItem.asShadow(VoidGram.t("Режим стримера убирает VoidGram из скриншотов, записи и трансляции экрана — вы видите всё как обычно. Предупреждение показывается один раз, если незнакомец смешивает алфавиты в имени или выдаёт себя за поддержку.", "Streamer mode keeps VoidGram out of screenshots, recordings and screen sharing; you still see everything. The warning shows once when a stranger mixes alphabets in the name or poses as support.")));
 +        items.add(UItem.asShadow(VoidGram.t("Из ссылок в ваших сообщениях убираются utm_, fbclid, si и другие метки слежки.", "utm_, fbclid, si and other tracking tags are removed from links in your messages.")));
 +    }
 +
 +    @Override
 +    protected void onClick(UItem item, View view, int position, float x, float y) {
++        if (item.id == ID_STREAMER) {
++            org.telegram.messenger.voidgram.VoidGramExtras.setStreamerMode(!org.telegram.messenger.voidgram.VoidGramExtras.streamerMode());
++            if (getParentActivity() != null) {
++                org.telegram.messenger.voidgram.VoidGramExtras.applyStreamerMode(getParentActivity().getWindow());
++            }
++            listView.adapter.update(true);
++            return;
++        }
++        if (item.id == ID_NAME_GUARD) {
++            org.telegram.messenger.voidgram.VoidGramExtras.setNameGuardEnabled(!org.telegram.messenger.voidgram.VoidGramExtras.nameGuardEnabled());
++            listView.adapter.update(true);
++            return;
++        }
 +        int index = item.id - 1;
 +        if (index >= 0 && index < KEYS.length) {
 +            VoidGramInterface.toggle(KEYS[index]);
@@ -8693,6 +8882,54 @@ index 0000000..e833169
 +    @Override
 +    protected boolean onLongClick(UItem item, View view, int position, float x, float y) {
 +        return false;
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSleepTimerSheet.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSleepTimerSheet.java
+new file mode 100644
+index 0000000..5ad1a7f
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSleepTimerSheet.java
+@@ -0,0 +1,42 @@
++package org.telegram.ui.voidgram;
++
++import android.app.Activity;
++import android.widget.Toast;
++
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramExtras;
++import org.telegram.ui.ActionBar.AlertDialog;
++
++/** Player menu → Sleep timer. */
++public final class VoidGramSleepTimerSheet {
++    private VoidGramSleepTimerSheet() {
++    }
++
++    public static void show(Activity activity) {
++        if (activity == null) {
++            return;
++        }
++        int left = VoidGramExtras.sleepMinutesLeft();
++        int count = VoidGramExtras.SLEEP_MINUTES.length;
++        CharSequence[] items = new CharSequence[count + (left > 0 ? 1 : 0)];
++        for (int i = 0; i < count; i++) {
++            int minutes = VoidGramExtras.SLEEP_MINUTES[i];
++            items[i] = minutes < 60 ? minutes + VoidGram.t(" мин", " min") : (minutes / 60) + VoidGram.t(" ч", " h") + (minutes % 60 != 0 ? " " + (minutes % 60) + VoidGram.t(" мин", " min") : "");
++        }
++        if (left > 0) {
++            items[count] = VoidGram.t("Выключить таймер", "Turn the timer off");
++        }
++        AlertDialog.Builder builder = new AlertDialog.Builder(activity);
++        builder.setTitle(left > 0 ? VoidGram.t("Таймер сна: осталось ", "Sleep timer: ") + left + VoidGram.t(" мин", " min left") : VoidGram.t("Таймер сна", "Sleep timer"));
++        builder.setItems(items, (dialog, which) -> {
++            if (which < count) {
++                VoidGramExtras.startSleepTimer(VoidGramExtras.SLEEP_MINUTES[which]);
++                Toast.makeText(activity, VoidGram.t("Музыка остановится через ", "Music stops in ") + items[which], Toast.LENGTH_SHORT).show();
++            } else {
++                VoidGramExtras.cancelSleepTimer();
++            }
++        });
++        builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++        builder.show();
 +    }
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java
