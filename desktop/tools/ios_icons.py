@@ -78,18 +78,20 @@ def glyph(source):
 
 
 def render(alpha, original, out):
-    """Fits the glyph into the drawn area of the desktop icon it replaces, so size and position stay."""
-    old = Image.open(original).convert("RGBA")
-    box = old.getchannel("A").getbbox() or (0, 0, old.width, old.height)
+    """Fits the glyph into the drawn area of the desktop icon it replaces, so size and position stay.
+
+    Desktop icons are greyscale masks with no alpha (a white shape on black, saved as RGB): the style
+    code generator converts them to RGB32 and reads the brightness, so a transparent PNG becomes a square.
+    """
+    old = Image.open(original).convert("L")
+    box = old.getbbox() or (0, 0, old.width, old.height)
     bw, bh = box[2] - box[0], box[3] - box[1]
     scale = min(bw / alpha.width, bh / alpha.height)
     size = (max(1, round(alpha.width * scale)), max(1, round(alpha.height * scale)))
     fitted = alpha.resize(size, Image.LANCZOS)
     mask = Image.new("L", old.size, 0)
     mask.paste(fitted, (box[0] + (bw - size[0]) // 2, box[1] + (bh - size[1]) // 2))
-    result = Image.new("RGBA", old.size, (255, 255, 255, 0))
-    result.putalpha(mask)
-    result.save(out)
+    mask.convert("RGB").save(out)
 
 
 def main(ios_root, desk_root, sheet=None):
@@ -109,12 +111,14 @@ def main(ios_root, desk_root, sheet=None):
         done.append(desk)
     print(f"redrawn {len(done)}, skipped {len(skipped)}: {' '.join(skipped)}")
     if sheet:
-        tiles = [Image.open(icons / f"{d}@2x.png") for d in done]
+        tiles = [Image.open(icons / f"{d}@2x.png").convert("L") for d in done]
         cols = 12
         cell = 64
         out = Image.new("RGBA", (cols * cell, ((len(tiles) + cols - 1) // cols) * cell), (24, 24, 26, 255))
         for i, tile in enumerate(tiles):
-            out.alpha_composite(tile, ((i % cols) * cell + (cell - tile.width) // 2, (i // cols) * cell + (cell - tile.height) // 2))
+            white = Image.new("RGBA", tile.size, (255, 255, 255, 255))
+            white.putalpha(tile)
+            out.alpha_composite(white, ((i % cols) * cell + (cell - tile.width) // 2, (i // cols) * cell + (cell - tile.height) // 2))
         out.save(sheet)
 
 
