@@ -1641,6 +1641,164 @@ index 0000000..500c5cd
 +        AndroidUtilities.runOnUIThread(finish, 40_000);
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramBookmarks.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramBookmarks.java
+new file mode 100644
+index 0000000..0dc8159
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramBookmarks.java
+@@ -0,0 +1,152 @@
++package org.telegram.messenger.voidgram;
++
++import org.json.JSONArray;
++import org.json.JSONObject;
++import org.telegram.messenger.MessageObject;
++
++import java.util.ArrayList;
++import java.util.Locale;
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
++
++/**
++ * Bookmarks, as on iOS: messages kept with optional #tags on this device, to search, filter by
++ * tag and open in their chat. Nothing is sent anywhere.
++ */
++public final class VoidGramBookmarks {
++    private VoidGramBookmarks() {
++    }
++
++    public static final class Bookmark {
++        public long dialogId;
++        public int messageId;
++        public String text;
++        public String tags;
++        public int date;
++        public String chatTitle;
++    }
++
++    private static final Pattern TAG = Pattern.compile("#[\\p{L}\\p{N}_]+");
++
++    public static ArrayList<Bookmark> list(int account) {
++        ArrayList<Bookmark> result = new ArrayList<>();
++        try {
++            JSONArray array = new JSONArray(VoidGram.prefs().getString("bookmarks_" + account, "[]"));
++            for (int i = 0; i < array.length(); i++) {
++                JSONObject item = array.getJSONObject(i);
++                Bookmark bookmark = new Bookmark();
++                bookmark.dialogId = item.getLong("dialog");
++                bookmark.messageId = item.getInt("mid");
++                bookmark.text = item.optString("text");
++                bookmark.tags = item.optString("tags");
++                bookmark.date = item.optInt("date");
++                bookmark.chatTitle = item.optString("chat");
++                result.add(bookmark);
++            }
++        } catch (Throwable ignore) {
++        }
++        return result;
++    }
++
++    private static void save(int account, ArrayList<Bookmark> items) {
++        JSONArray array = new JSONArray();
++        try {
++            for (Bookmark bookmark : items) {
++                array.put(new JSONObject().put("dialog", bookmark.dialogId).put("mid", bookmark.messageId).put("text", bookmark.text)
++                        .put("tags", bookmark.tags).put("date", bookmark.date).put("chat", bookmark.chatTitle));
++            }
++        } catch (Throwable ignore) {
++        }
++        VoidGram.prefs().edit().putString("bookmarks_" + account, array.toString()).apply();
++    }
++
++    public static boolean contains(int account, long dialogId, int messageId) {
++        for (Bookmark bookmark : list(account)) {
++            if (bookmark.dialogId == dialogId && bookmark.messageId == messageId) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    public static void add(int account, MessageObject message, String chatTitle, String tags) {
++        ArrayList<Bookmark> items = list(account);
++        for (int i = items.size() - 1; i >= 0; i--) {
++            if (items.get(i).dialogId == message.getDialogId() && items.get(i).messageId == message.getId()) {
++                items.remove(i);
++            }
++        }
++        Bookmark bookmark = new Bookmark();
++        bookmark.dialogId = message.getDialogId();
++        bookmark.messageId = message.getId();
++        String text = message.messageOwner != null && message.messageOwner.message != null ? message.messageOwner.message : "";
++        bookmark.text = text.length() > 500 ? text.substring(0, 500) : text;
++        bookmark.tags = normalizeTags(tags);
++        bookmark.date = message.messageOwner != null ? message.messageOwner.date : 0;
++        bookmark.chatTitle = chatTitle == null ? "" : chatTitle;
++        items.add(0, bookmark);
++        while (items.size() > 1000) {
++            items.remove(items.size() - 1);
++        }
++        save(account, items);
++    }
++
++    public static void remove(int account, long dialogId, int messageId) {
++        ArrayList<Bookmark> items = list(account);
++        for (int i = items.size() - 1; i >= 0; i--) {
++            if (items.get(i).dialogId == dialogId && items.get(i).messageId == messageId) {
++                items.remove(i);
++            }
++        }
++        save(account, items);
++    }
++
++    public static void setTags(int account, long dialogId, int messageId, String tags) {
++        ArrayList<Bookmark> items = list(account);
++        for (Bookmark bookmark : items) {
++            if (bookmark.dialogId == dialogId && bookmark.messageId == messageId) {
++                bookmark.tags = normalizeTags(tags);
++            }
++        }
++        save(account, items);
++    }
++
++    public static String normalizeTags(String input) {
++        if (input == null) {
++            return "";
++        }
++        StringBuilder builder = new StringBuilder();
++        for (String word : input.split("[\\s,]+")) {
++            String tag = word.trim();
++            if (tag.isEmpty()) {
++                continue;
++            }
++            if (!tag.startsWith("#")) {
++                tag = "#" + tag;
++            }
++            Matcher matcher = TAG.matcher(tag);
++            if (matcher.matches() && builder.indexOf(tag.toLowerCase(Locale.getDefault())) < 0) {
++                if (builder.length() > 0) {
++                    builder.append(' ');
++                }
++                builder.append(tag.toLowerCase(Locale.getDefault()));
++            }
++        }
++        return builder.toString();
++    }
++
++    /** Every tag in use, most used first. */
++    public static ArrayList<String> tags(int account) {
++        java.util.LinkedHashMap<String, Integer> counts = new java.util.LinkedHashMap<>();
++        for (Bookmark bookmark : list(account)) {
++            for (String tag : bookmark.tags.split(" ")) {
++                if (!tag.isEmpty()) {
++                    counts.put(tag, (counts.containsKey(tag) ? counts.get(tag) : 0) + 1);
++                }
++            }
++        }
++        ArrayList<String> result = new ArrayList<>(counts.keySet());
++        result.sort((a, b) -> counts.get(b) - counts.get(a));
++        return result;
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChatExport.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChatExport.java
 new file mode 100644
 index 0000000..8392451
@@ -8967,10 +9125,10 @@ index 698bf4d..19fbc52 100644
              if (nameLayoutEllipsizeByGradient) {
                  nameLayoutFits = nameStringFinal.length() == TextUtils.ellipsize(nameStringFinal, Theme.dialogs_namePaint[paintIndex], ellipsizeWidth, TextUtils.TruncateAt.END).length();
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
-index a54b134..c997caf 100644
+index a54b134..cdfc86f 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
-@@ -1246,6 +1246,13 @@ public class ChatActivity extends BaseFragment implements
+@@ -1246,6 +1246,14 @@ public class ChatActivity extends BaseFragment implements
      public final static int OPTION_DELETE = 1;
      public final static int OPTION_FORWARD = 2;
      public final static int OPTION_COPY = 3;
@@ -8981,10 +9139,11 @@ index a54b134..c997caf 100644
 +    public final static int OPTION_VOIDGRAM_TOOLS = 9103;
 +    public final static int OPTION_VOIDGRAM_QUOTE = 9104;
 +    public final static int OPTION_VOIDGRAM_SHOW_QUOTE = 9105;
++    public final static int OPTION_VOIDGRAM_BOOKMARK = 9106;
      public final static int OPTION_SAVE_TO_GALLERY = 4;
      public final static int OPTION_APPLY_LOCALIZATION_OR_THEME = 5;
      public final static int OPTION_SHARE = 6;
-@@ -1674,6 +1681,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -1674,6 +1682,8 @@ public class ChatActivity extends BaseFragment implements
      };
  
      private final static int copy = 10;
@@ -8993,7 +9152,7 @@ index a54b134..c997caf 100644
      private final static int forward = 11;
      private final static int delete = 12;
      private final static int chat_enc_timer = 13;
-@@ -1707,6 +1716,16 @@ public class ChatActivity extends BaseFragment implements
+@@ -1707,6 +1717,16 @@ public class ChatActivity extends BaseFragment implements
      private final static int view_as_topics = 59;
  
      private final static int search = 40;
@@ -9010,7 +9169,7 @@ index a54b134..c997caf 100644
  
      private final static int topic_close = 60;
      private final static int open_forum = 61;
-@@ -2195,6 +2214,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -2195,6 +2215,10 @@ public class ChatActivity extends BaseFragment implements
          @Override
          public void onTextChanged(final CharSequence text, boolean bigChange, boolean fromDraft) {
              MediaController.getInstance().setInputFieldHasText(!TextUtils.isEmpty(text) || chatActivityEnterView.isEditingMessage());
@@ -9021,7 +9180,7 @@ index a54b134..c997caf 100644
              if (mentionContainer != null && mentionContainer.getAdapter() != null) {
                  mentionContainer.getAdapter().searchUsernameOrHashtag(text, chatActivityEnterView.getCursorPosition(), messages, false, false);
              }
-@@ -2835,6 +2858,15 @@ public class ChatActivity extends BaseFragment implements
+@@ -2835,6 +2859,15 @@ public class ChatActivity extends BaseFragment implements
          }
  
          dialog_id_Long = dialog_id;
@@ -9037,7 +9196,7 @@ index a54b134..c997caf 100644
  
          transitionAnimationGlobalIndex = NotificationCenter.getGlobalInstance().setAnimationInProgress(transitionAnimationGlobalIndex, new int[0]);
  
-@@ -3336,8 +3368,16 @@ public class ChatActivity extends BaseFragment implements
+@@ -3336,8 +3369,16 @@ public class ChatActivity extends BaseFragment implements
          }
      }
  
@@ -9054,7 +9213,7 @@ index a54b134..c997caf 100644
          super.onFragmentDestroy();
          if (messageMetricsView != null) {
              messageMetricsView.finish();
-@@ -3746,6 +3786,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -3746,6 +3787,8 @@ public class ChatActivity extends BaseFragment implements
                          getMessagesController().getTopicsController().toggleViewForumAsMessages(-dialog_id, false);
                          TopicsFragment.prepareToSwitchAnimation(ChatActivity.this);
                      }
@@ -9063,7 +9222,7 @@ index a54b134..c997caf 100644
                  } else if (id == copy) {
                      SpannableStringBuilder str = new SpannableStringBuilder();
                      long previousUid = 0;
-@@ -3988,6 +4030,49 @@ public class ChatActivity extends BaseFragment implements
+@@ -3988,6 +4031,49 @@ public class ChatActivity extends BaseFragment implements
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/help", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
                  } else if (id == bot_settings) {
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/settings", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
@@ -9113,7 +9272,7 @@ index a54b134..c997caf 100644
                  } else if (id == search) {
                      openSearchWithText(isSupportedTags() ? "" : null);
                  } else if (id == translate) {
-@@ -4398,6 +4483,24 @@ public class ChatActivity extends BaseFragment implements
+@@ -4398,6 +4484,24 @@ public class ChatActivity extends BaseFragment implements
              if (searchItem != null) {
                  headerItem.lazilyAddSubItem(search, R.drawable.msg_search, LocaleController.getString(R.string.Search));
              }
@@ -9138,7 +9297,7 @@ index a54b134..c997caf 100644
              if (ChatObject.isBoostSupported(currentChat) && (getUserConfig().isPremium() || ChatObject.isBoosted(chatInfo) || ChatObject.hasAdminRights(currentChat))) {
                  RLottieDrawable drawable = new RLottieDrawable(R.raw.boosts, dp(24), dp(24));
                  headerItem.lazilyAddSubItem(boost_group, drawable, LocaleController.getString(ChatObject.isChannelAndNotMegaGroup(currentChat) ? R.string.BoostingBoostChannelMenu : R.string.BoostingBoostGroupMenu));
-@@ -6727,7 +6830,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -6727,7 +6831,8 @@ public class ChatActivity extends BaseFragment implements
                      scrolled = super.scrollVerticallyBy(dy, recycler, state);
                  }
                  final boolean allowPullingDownScroll = !isInPollAddOptionMode() && !hasSelectedMessages();
@@ -9148,7 +9307,7 @@ index a54b134..c997caf 100644
                      if (pullingDownOffset == 0 && pullingDownDrawable != null) {
                          if (nextChannels != null && !nextChannels.isEmpty()) {
                              pullingDownDrawable.updateDialog(nextChannels.get(0));
-@@ -6861,6 +6965,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -6861,6 +6966,10 @@ public class ChatActivity extends BaseFragment implements
                      } else if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
                          pollHintCell = null;
                          wasManualScroll = true;
@@ -9159,7 +9318,7 @@ index a54b134..c997caf 100644
                          scrollingFloatingDate = true;
                          scrollingFloatingTopic = true;
                          checkTextureViewPosition = true;
-@@ -7392,7 +7500,7 @@ public class ChatActivity extends BaseFragment implements
+@@ -7392,7 +7501,7 @@ public class ChatActivity extends BaseFragment implements
                  } else {
                      String username = ChatObject.getPublicUsername(chat);
                      if (username != null) {
@@ -9168,7 +9327,7 @@ index a54b134..c997caf 100644
                      }
                  }
              } else if (object instanceof TLRPC.User) {
-@@ -7401,7 +7509,7 @@ public class ChatActivity extends BaseFragment implements
+@@ -7401,7 +7510,7 @@ public class ChatActivity extends BaseFragment implements
                      searchUserMessages(user, null);
                  } else {
                      if (UserObject.getPublicUsername(user) != null) {
@@ -9177,7 +9336,7 @@ index a54b134..c997caf 100644
                      } else {
                          String name = UserObject.getFirstName(user, false);
                          Spannable spannable = new SpannableString(name + " ");
-@@ -9045,6 +9153,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -9045,6 +9154,10 @@ public class ChatActivity extends BaseFragment implements
              });
          }
  
@@ -9188,7 +9347,7 @@ index a54b134..c997caf 100644
          return fragmentView;
      }
  
-@@ -10820,6 +10932,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -10820,6 +10933,9 @@ public class ChatActivity extends BaseFragment implements
                  actionModeViews.add(actionMode.addItemWithWidth(forward, R.drawable.msg_forward, dp(48), LocaleController.getString(R.string.Forward)));
              }
              actionModeViews.add(actionMode.addItemWithWidth(share, R.drawable.msg_shareout, dp(48), LocaleController.getString(R.string.ShareFile)));
@@ -9198,7 +9357,7 @@ index a54b134..c997caf 100644
              actionModeViews.add(actionMode.addItemWithWidth(delete, R.drawable.msg_delete, dp(48), LocaleController.getString(R.string.Delete)));
          } else {
              actionModeViews.add(actionMode.addItemWithWidth(edit, R.drawable.msg_edit, dp(48), LocaleController.getString(R.string.Edit)));
-@@ -13272,6 +13387,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -13272,6 +13388,10 @@ public class ChatActivity extends BaseFragment implements
      }
  
      public void performHistoryClear(long threadId, boolean revoke, boolean canDeleteHistory) {
@@ -9209,7 +9368,7 @@ index a54b134..c997caf 100644
          if (topicsTabs != null && UserObject.isBotForum(currentUser)) {
              topicsTabs.setAllTopicsHidden(true);
          }
-@@ -21371,7 +21490,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -21371,7 +21491,8 @@ public class ChatActivity extends BaseFragment implements
          if (postponedScroll) {
              postponedScrollToLastMessageQueryIndex = 0;
          }
@@ -9219,7 +9378,7 @@ index a54b134..c997caf 100644
          layOutWidgetsForSideMenu(messArr);
  
          boolean universalNotify = false;
-@@ -22807,8 +22927,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -22807,8 +22928,9 @@ public class ChatActivity extends BaseFragment implements
          } else if (id == NotificationCenter.didReceiveNewMessages) {
              FileLog.d("ChatActivity didReceiveNewMessages start");
              long did = (Long) args[0];
@@ -9230,7 +9389,7 @@ index a54b134..c997caf 100644
              if (did == dialog_id) {
                  boolean scheduled = (Boolean) args[2];
                  int mode = (Integer) args[3];
-@@ -28135,6 +28256,13 @@ public class ChatActivity extends BaseFragment implements
+@@ -28135,6 +28257,13 @@ public class ChatActivity extends BaseFragment implements
      @Override
      public void onTransitionAnimationEnd(boolean isOpen, boolean backward) {
          super.onTransitionAnimationEnd(isOpen, backward);
@@ -9244,7 +9403,7 @@ index a54b134..c997caf 100644
          if (isOpen) {
              if (backward) {
                  if (showPinBulletin && pinBulletin != null) {
-@@ -31957,6 +32085,34 @@ public class ChatActivity extends BaseFragment implements
+@@ -31957,6 +32086,41 @@ public class ChatActivity extends BaseFragment implements
                  icons.add(R.drawable.msg_calendar2);
              }
  
@@ -9270,6 +9429,13 @@ index a54b134..c997caf 100644
 +                options.add(OPTION_VOIDGRAM_SHOW_QUOTE);
 +                icons.add(R.drawable.msg_photos);
 +            }
++            // VoidGram: bookmarks with #tags.
++            if (message != null && message.getId() > 0 && chatMode == 0 && !org.telegram.messenger.voidgram.VoidGramDecoy.isActive()) {
++                boolean saved = org.telegram.messenger.voidgram.VoidGramBookmarks.contains(currentAccount, message.getDialogId(), message.getId());
++                items.add(saved ? org.telegram.messenger.voidgram.VoidGram.t("Убрать из закладок", "Remove bookmark") : org.telegram.messenger.voidgram.VoidGram.t("В закладки", "Bookmark"));
++                options.add(OPTION_VOIDGRAM_BOOKMARK);
++                icons.add(R.drawable.msg_fave);
++            }
 +            // VoidGram: VirusTotal and AI for this message.
 +            if (message != null && message.getId() > 0 && !org.telegram.messenger.voidgram.VoidGramDecoy.isActive() && (message.getDocument() != null || message.isPhoto() || message.messageOwner != null && message.messageOwner.message != null && (message.messageOwner.message.length() > 80 || org.telegram.ui.voidgram.VoidGramOnlineTools.firstUrl(message.messageOwner.message) != null))) {
 +                items.add(org.telegram.messenger.voidgram.VoidGram.t("Инструменты VoidGram", "VoidGram tools"));
@@ -9279,12 +9445,36 @@ index a54b134..c997caf 100644
              if (options.isEmpty() && optionsView == null) {
                  return false;
              }
-@@ -34293,6 +34449,29 @@ public class ChatActivity extends BaseFragment implements
+@@ -34293,6 +34457,53 @@ public class ChatActivity extends BaseFragment implements
          }
          boolean preserveDim = false;
          switch (option) {
 +            case OPTION_VOIDGRAM_EDIT_HISTORY: {
 +                org.telegram.messenger.voidgram.VoidGramHistory.showEdits(this, selectedObject);
++                break;
++            }
++            case OPTION_VOIDGRAM_BOOKMARK: {
++                final MessageObject bookmarkMessage = selectedObject;
++                if (org.telegram.messenger.voidgram.VoidGramBookmarks.contains(currentAccount, bookmarkMessage.getDialogId(), bookmarkMessage.getId())) {
++                    org.telegram.messenger.voidgram.VoidGramBookmarks.remove(currentAccount, bookmarkMessage.getDialogId(), bookmarkMessage.getId());
++                    BulletinFactory.of(ChatActivity.this).createSimpleBulletin(R.raw.contact_check, org.telegram.messenger.voidgram.VoidGram.t("Закладка удалена", "Bookmark removed")).show();
++                    break;
++                }
++                android.widget.EditText tagsField = new android.widget.EditText(getParentActivity());
++                tagsField.setHint("#работа #идеи");
++                tagsField.setSingleLine(true);
++                tagsField.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
++                AlertDialog.Builder tagsBuilder = new AlertDialog.Builder(getParentActivity());
++                tagsBuilder.setTitle(org.telegram.messenger.voidgram.VoidGram.t("В закладки", "Bookmark"));
++                tagsBuilder.setMessage(org.telegram.messenger.voidgram.VoidGram.t("Теги необязательны: #работа #идеи. Закладки — в VoidGram → Закладки.", "Tags are optional: #work #ideas. Bookmarks are in VoidGram → Bookmarks."));
++                tagsBuilder.setView(tagsField);
++                String bookmarkTitle = currentUser != null ? UserObject.getUserName(currentUser) : currentChat != null ? currentChat.title : "";
++                tagsBuilder.setPositiveButton(org.telegram.messenger.voidgram.VoidGram.t("Сохранить", "Save"), (d, w) -> {
++                    org.telegram.messenger.voidgram.VoidGramBookmarks.add(currentAccount, bookmarkMessage, bookmarkTitle, tagsField.getText().toString());
++                    BulletinFactory.of(ChatActivity.this).createSimpleBulletin(R.raw.contact_check, org.telegram.messenger.voidgram.VoidGram.t("Сохранено в закладки", "Saved to bookmarks")).show();
++                });
++                tagsBuilder.setNegativeButton(org.telegram.messenger.voidgram.VoidGram.t("Отмена", "Cancel"), null);
++                showDialog(tagsBuilder.create());
 +                break;
 +            }
 +            case OPTION_VOIDGRAM_QUOTE: {
@@ -10002,6 +10192,160 @@ index 0000000..20a79be
 +                }
 +            }
 +        }
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramBookmarksActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramBookmarksActivity.java
+new file mode 100644
+index 0000000..c575090
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramBookmarksActivity.java
+@@ -0,0 +1,148 @@
++package org.telegram.ui.voidgram;
++
++import android.os.Bundle;
++import android.view.View;
++import android.widget.EditText;
++
++import org.telegram.messenger.R;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramBookmarks;
++import org.telegram.ui.ActionBar.AlertDialog;
++import org.telegram.ui.ActionBar.Theme;
++import org.telegram.ui.ChatActivity;
++import org.telegram.ui.Components.UItem;
++import org.telegram.ui.Components.UniversalAdapter;
++import org.telegram.ui.Components.UniversalFragment;
++
++import java.text.DateFormat;
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.Locale;
++
++/** VoidGram → Bookmarks: search, filter by #tag, open the chat, delete. */
++public class VoidGramBookmarksActivity extends UniversalFragment {
++    private static final int ID_SEARCH = 1;
++    private static final int ID_ALL_TAGS = 2;
++    private static final int ID_TAG_BASE = 100;
++    private static final int ID_ITEM_BASE = 1000;
++
++    private String query = "";
++    private String tag = null;
++    private ArrayList<String> tags = new ArrayList<>();
++    private final ArrayList<VoidGramBookmarks.Bookmark> shown = new ArrayList<>();
++
++    @Override
++    protected CharSequence getTitle() {
++        return VoidGram.t("Закладки", "Bookmarks");
++    }
++
++    @Override
++    protected void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
++        items.add(UItem.asButton(ID_SEARCH, R.drawable.msg_search, VoidGram.t("Поиск", "Search"), query));
++        tags = VoidGramBookmarks.tags(currentAccount);
++        if (!tags.isEmpty()) {
++            items.add(UItem.asRadio(ID_ALL_TAGS, VoidGram.t("Все теги", "All tags")).setChecked(tag == null));
++            for (int i = 0; i < Math.min(20, tags.size()); i++) {
++                items.add(UItem.asRadio(ID_TAG_BASE + i, tags.get(i)).setChecked(tags.get(i).equals(tag)));
++            }
++        }
++        items.add(UItem.asShadow(null));
++        shown.clear();
++        String needle = query.toLowerCase(Locale.getDefault());
++        DateFormat format = DateFormat.getDateInstance(DateFormat.SHORT);
++        for (VoidGramBookmarks.Bookmark bookmark : VoidGramBookmarks.list(currentAccount)) {
++            if (tag != null && !(" " + bookmark.tags + " ").contains(" " + tag + " ")) {
++                continue;
++            }
++            if (!needle.isEmpty() && !(bookmark.text + " " + bookmark.tags + " " + bookmark.chatTitle).toLowerCase(Locale.getDefault()).contains(needle)) {
++                continue;
++            }
++            shown.add(bookmark);
++            String body = bookmark.text.isEmpty() ? VoidGram.t("[медиа]", "[media]") : bookmark.text.replace('\n', ' ');
++            if (body.length() > 60) {
++                body = body.substring(0, 60) + "…";
++            }
++            String title = (bookmark.chatTitle.isEmpty() ? "" : bookmark.chatTitle + ": ") + body;
++            String value = (bookmark.tags.isEmpty() ? "" : bookmark.tags + " · ") + format.format(new Date(bookmark.date * 1000L));
++            items.add(UItem.asButton(ID_ITEM_BASE + shown.size() - 1, title, value));
++        }
++        items.add(UItem.asShadow(shown.isEmpty()
++                ? VoidGram.t("Закладок нет. Добавить: удерживайте сообщение → «В закладки».", "No bookmarks. To add one: hold a message → \"Bookmark\".")
++                : VoidGram.t("Нажмите — открыть в чате, удерживайте — изменить теги или удалить. Хранится только на этом устройстве.", "Tap to open in the chat; hold to edit tags or delete. Kept on this device only.")));
++    }
++
++    private void update() {
++        if (listView != null && listView.adapter != null) {
++            listView.adapter.update(true);
++        }
++    }
++
++    @Override
++    protected void onClick(UItem item, View view, int position, float x, float y) {
++        if (item.id == ID_SEARCH) {
++            EditText field = new EditText(getContext());
++            field.setText(query);
++            field.setSingleLine(true);
++            field.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
++            AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
++            builder.setTitle(VoidGram.t("Поиск", "Search"));
++            builder.setView(field);
++            builder.setPositiveButton("OK", (d, w) -> {
++                query = field.getText().toString().trim();
++                update();
++            });
++            builder.setNeutralButton(VoidGram.t("Сбросить", "Clear"), (d, w) -> {
++                query = "";
++                update();
++            });
++            showDialog(builder.create());
++        } else if (item.id == ID_ALL_TAGS) {
++            tag = null;
++            update();
++        } else if (item.id >= ID_TAG_BASE && item.id - ID_TAG_BASE < tags.size()) {
++            tag = tags.get(item.id - ID_TAG_BASE);
++            update();
++        } else if (item.id >= ID_ITEM_BASE && item.id - ID_ITEM_BASE < shown.size()) {
++            VoidGramBookmarks.Bookmark bookmark = shown.get(item.id - ID_ITEM_BASE);
++            Bundle args = new Bundle();
++            if (bookmark.dialogId > 0) {
++                args.putLong("user_id", bookmark.dialogId);
++            } else {
++                args.putLong("chat_id", -bookmark.dialogId);
++            }
++            args.putInt("message_id", bookmark.messageId);
++            presentFragment(new ChatActivity(args));
++        }
++    }
++
++    @Override
++    protected boolean onLongClick(UItem item, View view, int position, float x, float y) {
++        if (item.id < ID_ITEM_BASE || item.id - ID_ITEM_BASE >= shown.size()) {
++            return false;
++        }
++        VoidGramBookmarks.Bookmark bookmark = shown.get(item.id - ID_ITEM_BASE);
++        AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
++        builder.setTitle(bookmark.chatTitle);
++        builder.setItems(new CharSequence[]{VoidGram.t("Изменить теги", "Edit tags"), VoidGram.t("Удалить закладку", "Delete the bookmark")}, (d, which) -> {
++            if (which == 1) {
++                VoidGramBookmarks.remove(currentAccount, bookmark.dialogId, bookmark.messageId);
++                update();
++                return;
++            }
++            EditText field = new EditText(getContext());
++            field.setText(bookmark.tags);
++            field.setSingleLine(true);
++            field.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
++            AlertDialog.Builder tagsBuilder = new AlertDialog.Builder(getContext());
++            tagsBuilder.setTitle(VoidGram.t("Теги", "Tags"));
++            tagsBuilder.setView(field);
++            tagsBuilder.setPositiveButton("OK", (d2, w2) -> {
++                VoidGramBookmarks.setTags(currentAccount, bookmark.dialogId, bookmark.messageId, field.getText().toString());
++                update();
++            });
++            showDialog(tagsBuilder.create());
++        });
++        showDialog(builder.create());
++        return true;
 +    }
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramBulkDownload.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramBulkDownload.java
@@ -13925,10 +14269,10 @@ index 0000000..70cdf0b
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
 new file mode 100644
-index 0000000..addce35
+index 0000000..89502b4
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
-@@ -0,0 +1,343 @@
+@@ -0,0 +1,348 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.content.Context;
@@ -13978,6 +14322,7 @@ index 0000000..addce35
 +    private static final int ID_HIDDEN = 17;
 +    private static final int ID_CUSTOMIZATION = 18;
 +    private static final int ID_PLUGINS = 19;
++    private static final int ID_BOOKMARKS = 20;
 +    private static final int REQUEST_IMPORT = 9301;
 +
 +    private FrameLayout musicRow;
@@ -13994,6 +14339,7 @@ index 0000000..addce35
 +        items.add(UItem.asHeader(VoidGram.t("Приватность", "Privacy")));
 +        items.add(UItem.asButton(ID_GHOST, R.drawable.msg2_secret, VoidGram.t("Призрак и история", "Ghost and history"), org.telegram.messenger.voidgram.VoidGramGhost.isEnabled(currentAccount) ? VoidGram.t("Призрак вкл.", "Ghost on") : VoidGram.t("Выкл.", "Off")));
 +        items.add(UItem.asButton(ID_HIDDEN, R.drawable.msg_archive, VoidGram.t("Скрытые чаты", "Hidden chats"), String.valueOf(org.telegram.messenger.voidgram.VoidGramHiddenChats.list(currentAccount).size())));
++        items.add(UItem.asButton(ID_BOOKMARKS, R.drawable.msg_fave, VoidGram.t("Закладки", "Bookmarks"), String.valueOf(org.telegram.messenger.voidgram.VoidGramBookmarks.list(currentAccount).size())));
 +        items.add(UItem.asButton(ID_FEED, R.drawable.msg_delete, VoidGram.t("Удалённые и изменённые", "Deleted and edited")));
 +        items.add(UItem.asButton(ID_CHATS, R.drawable.msg2_discussion, VoidGram.t("Чаты", "Chats")));
 +        items.add(UItem.asButton(ID_PEERS, R.drawable.msg_search, VoidGram.t("Поиск каналов и людей", "Find channels and people")));
@@ -14125,6 +14471,9 @@ index 0000000..addce35
 +    @Override
 +    protected void onClick(UItem item, View view, int position, float x, float y) {
 +        switch (item.id) {
++            case ID_BOOKMARKS:
++                presentFragment(new VoidGramBookmarksActivity());
++                break;
 +            case ID_PLUGINS:
 +                presentFragment(new VoidGramPluginsActivity());
 +                break;
