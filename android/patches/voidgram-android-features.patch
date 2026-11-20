@@ -3295,7 +3295,7 @@ index 5dc090f..42ae0c5 100644
  
      void measureTime(MessageObject messageObject) {
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
-index a54b134..5af1667 100644
+index a54b134..31ad658 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 @@ -1246,6 +1246,10 @@ public class ChatActivity extends BaseFragment implements
@@ -3309,7 +3309,16 @@ index a54b134..5af1667 100644
      public final static int OPTION_SAVE_TO_GALLERY = 4;
      public final static int OPTION_APPLY_LOCALIZATION_OR_THEME = 5;
      public final static int OPTION_SHARE = 6;
-@@ -1707,6 +1711,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -1674,6 +1678,8 @@ public class ChatActivity extends BaseFragment implements
+     };
+ 
+     private final static int copy = 10;
++    /** VoidGram: MessageShot of the selected messages. */
++    private final static int voidgram_message_shot = 9202;
+     private final static int forward = 11;
+     private final static int delete = 12;
+     private final static int chat_enc_timer = 13;
+@@ -1707,6 +1713,8 @@ public class ChatActivity extends BaseFragment implements
      private final static int view_as_topics = 59;
  
      private final static int search = 40;
@@ -3318,7 +3327,7 @@ index a54b134..5af1667 100644
  
      private final static int topic_close = 60;
      private final static int open_forum = 61;
-@@ -2835,6 +2841,15 @@ public class ChatActivity extends BaseFragment implements
+@@ -2835,6 +2843,15 @@ public class ChatActivity extends BaseFragment implements
          }
  
          dialog_id_Long = dialog_id;
@@ -3334,7 +3343,7 @@ index a54b134..5af1667 100644
  
          transitionAnimationGlobalIndex = NotificationCenter.getGlobalInstance().setAnimationInProgress(transitionAnimationGlobalIndex, new int[0]);
  
-@@ -3336,8 +3351,16 @@ public class ChatActivity extends BaseFragment implements
+@@ -3336,8 +3353,16 @@ public class ChatActivity extends BaseFragment implements
          }
      }
  
@@ -3351,7 +3360,16 @@ index a54b134..5af1667 100644
          super.onFragmentDestroy();
          if (messageMetricsView != null) {
              messageMetricsView.finish();
-@@ -3988,6 +4011,12 @@ public class ChatActivity extends BaseFragment implements
+@@ -3746,6 +3771,8 @@ public class ChatActivity extends BaseFragment implements
+                         getMessagesController().getTopicsController().toggleViewForumAsMessages(-dialog_id, false);
+                         TopicsFragment.prepareToSwitchAnimation(ChatActivity.this);
+                     }
++                } else if (id == voidgram_message_shot) {
++                    org.telegram.ui.voidgram.VoidGramMessageShot.show(ChatActivity.this, chatListView, selectedMessagesIds, isPeerNoForwards());
+                 } else if (id == copy) {
+                     SpannableStringBuilder str = new SpannableStringBuilder();
+                     long previousUid = 0;
+@@ -3988,6 +4015,12 @@ public class ChatActivity extends BaseFragment implements
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/help", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
                  } else if (id == bot_settings) {
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/settings", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
@@ -3364,7 +3382,7 @@ index a54b134..5af1667 100644
                  } else if (id == search) {
                      openSearchWithText(isSupportedTags() ? "" : null);
                  } else if (id == translate) {
-@@ -4398,6 +4427,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -4398,6 +4431,9 @@ public class ChatActivity extends BaseFragment implements
              if (searchItem != null) {
                  headerItem.lazilyAddSubItem(search, R.drawable.msg_search, LocaleController.getString(R.string.Search));
              }
@@ -3374,7 +3392,17 @@ index a54b134..5af1667 100644
              if (ChatObject.isBoostSupported(currentChat) && (getUserConfig().isPremium() || ChatObject.isBoosted(chatInfo) || ChatObject.hasAdminRights(currentChat))) {
                  RLottieDrawable drawable = new RLottieDrawable(R.raw.boosts, dp(24), dp(24));
                  headerItem.lazilyAddSubItem(boost_group, drawable, LocaleController.getString(ChatObject.isChannelAndNotMegaGroup(currentChat) ? R.string.BoostingBoostChannelMenu : R.string.BoostingBoostGroupMenu));
-@@ -21371,7 +21403,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -10820,6 +10856,9 @@ public class ChatActivity extends BaseFragment implements
+                 actionModeViews.add(actionMode.addItemWithWidth(forward, R.drawable.msg_forward, dp(48), LocaleController.getString(R.string.Forward)));
+             }
+             actionModeViews.add(actionMode.addItemWithWidth(share, R.drawable.msg_shareout, dp(48), LocaleController.getString(R.string.ShareFile)));
++            if (!org.telegram.messenger.voidgram.VoidGramDecoy.isActive()) {
++                actionModeViews.add(actionMode.addItemWithWidth(voidgram_message_shot, R.drawable.msg_photos, dp(48), "MessageShot"));
++            }
+             actionModeViews.add(actionMode.addItemWithWidth(delete, R.drawable.msg_delete, dp(48), LocaleController.getString(R.string.Delete)));
+         } else {
+             actionModeViews.add(actionMode.addItemWithWidth(edit, R.drawable.msg_edit, dp(48), LocaleController.getString(R.string.Edit)));
+@@ -21371,7 +21410,8 @@ public class ChatActivity extends BaseFragment implements
          if (postponedScroll) {
              postponedScrollToLastMessageQueryIndex = 0;
          }
@@ -3384,7 +3412,7 @@ index a54b134..5af1667 100644
          layOutWidgetsForSideMenu(messArr);
  
          boolean universalNotify = false;
-@@ -22807,8 +22840,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -22807,8 +22847,9 @@ public class ChatActivity extends BaseFragment implements
          } else if (id == NotificationCenter.didReceiveNewMessages) {
              FileLog.d("ChatActivity didReceiveNewMessages start");
              long did = (Long) args[0];
@@ -3395,7 +3423,7 @@ index a54b134..5af1667 100644
              if (did == dialog_id) {
                  boolean scheduled = (Boolean) args[2];
                  int mode = (Integer) args[3];
-@@ -31957,6 +31991,17 @@ public class ChatActivity extends BaseFragment implements
+@@ -31957,6 +31998,17 @@ public class ChatActivity extends BaseFragment implements
                  icons.add(R.drawable.msg_calendar2);
              }
  
@@ -3413,7 +3441,7 @@ index a54b134..5af1667 100644
              if (options.isEmpty() && optionsView == null) {
                  return false;
              }
-@@ -34293,6 +34338,17 @@ public class ChatActivity extends BaseFragment implements
+@@ -34293,6 +34345,17 @@ public class ChatActivity extends BaseFragment implements
          }
          boolean preserveDim = false;
          switch (option) {
@@ -4432,6 +4460,177 @@ index 0000000..a7b718c
 +            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
 +        }
 +        dialog.show();
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramMessageShot.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramMessageShot.java
+new file mode 100644
+index 0000000..ce0f21c
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramMessageShot.java
+@@ -0,0 +1,165 @@
++package org.telegram.ui.voidgram;
++
++import android.app.Dialog;
++import android.content.Intent;
++import android.graphics.Bitmap;
++import android.graphics.Canvas;
++import android.graphics.Color;
++import android.graphics.drawable.ColorDrawable;
++import android.graphics.drawable.Drawable;
++import android.net.Uri;
++import android.util.SparseArray;
++import android.view.Gravity;
++import android.view.View;
++import android.view.ViewGroup;
++import android.widget.FrameLayout;
++import android.widget.ImageView;
++import android.widget.LinearLayout;
++import android.widget.TextView;
++
++import androidx.core.content.FileProvider;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.ApplicationLoader;
++import org.telegram.messenger.FileLog;
++import org.telegram.messenger.MessageObject;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.ui.ActionBar.BaseFragment;
++import org.telegram.ui.ActionBar.Theme;
++import org.telegram.ui.Cells.ChatMessageCell;
++
++import java.io.File;
++import java.io.FileOutputStream;
++import java.util.ArrayList;
++
++/**
++ * VoidGram MessageShot, as on iOS: the selected messages as one image card on the chat
++ * background, with a preview and the system share sheet. Protected chats are excluded.
++ */
++public final class VoidGramMessageShot {
++    private VoidGramMessageShot() {
++    }
++
++    public static void show(BaseFragment fragment, ViewGroup listView, SparseArray<MessageObject>[] selected, boolean protectedChat) {
++        if (fragment == null || fragment.getParentActivity() == null || listView == null) {
++            return;
++        }
++        if (protectedChat) {
++            org.telegram.ui.Components.BulletinFactory.of(fragment).createErrorBulletin(VoidGram.t("В защищённом чате снимок сообщений недоступен", "Message shots are not available in a protected chat")).show();
++            return;
++        }
++        ArrayList<View> cells = new ArrayList<>();
++        int top = Integer.MAX_VALUE, bottom = Integer.MIN_VALUE;
++        for (int i = 0; i < listView.getChildCount(); i++) {
++            View child = listView.getChildAt(i);
++            if (!(child instanceof ChatMessageCell)) {
++                continue;
++            }
++            MessageObject message = ((ChatMessageCell) child).getMessageObject();
++            if (message == null) {
++                continue;
++            }
++            boolean isSelected = false;
++            for (SparseArray<MessageObject> array : selected) {
++                if (array != null && array.get(message.getId()) != null) {
++                    isSelected = true;
++                }
++            }
++            if (!isSelected) {
++                continue;
++            }
++            cells.add(child);
++            top = Math.min(top, child.getTop());
++            bottom = Math.max(bottom, child.getBottom());
++        }
++        if (cells.isEmpty() || bottom <= top) {
++            org.telegram.ui.Components.BulletinFactory.of(fragment).createErrorBulletin(VoidGram.t("Выделенные сообщения должны быть на экране", "The selected messages must be on screen")).show();
++            return;
++        }
++        int padding = AndroidUtilities.dp(12);
++        int width = listView.getWidth();
++        int height = Math.min(bottom - top + padding * 2, AndroidUtilities.dp(4000));
++        Bitmap bitmap;
++        try {
++            bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
++        } catch (Throwable e) {
++            return;
++        }
++        Canvas canvas = new Canvas(bitmap);
++        Drawable wallpaper = Theme.getCachedWallpaper();
++        if (wallpaper != null) {
++            wallpaper.setBounds(0, 0, width, Math.max(height, listView.getHeight()));
++            wallpaper.draw(canvas);
++        } else {
++            canvas.drawColor(Theme.getColor(Theme.key_windowBackgroundGray));
++        }
++        for (View cell : cells) {
++            canvas.save();
++            canvas.translate(cell.getLeft(), cell.getTop() - top + padding);
++            cell.draw(canvas);
++            canvas.restore();
++        }
++        preview(fragment, bitmap);
++    }
++
++    private static void preview(BaseFragment fragment, Bitmap bitmap) {
++        final Dialog dialog = new Dialog(fragment.getParentActivity(), android.R.style.Theme_DeviceDefault_NoActionBar);
++        LinearLayout root = new LinearLayout(fragment.getParentActivity());
++        root.setOrientation(LinearLayout.VERTICAL);
++        root.setBackgroundColor(0xF0101014);
++        root.setPadding(AndroidUtilities.dp(16), AndroidUtilities.dp(16) + AndroidUtilities.statusBarHeight, AndroidUtilities.dp(16), AndroidUtilities.dp(16));
++        ImageView image = new ImageView(fragment.getParentActivity());
++        image.setImageBitmap(bitmap);
++        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
++        root.addView(image, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
++        LinearLayout buttons = new LinearLayout(fragment.getParentActivity());
++        buttons.setGravity(Gravity.CENTER);
++        TextView close = button(fragment, VoidGram.t("Закрыть", "Close"));
++        TextView share = button(fragment, VoidGram.t("Поделиться", "Share"));
++        buttons.addView(close, new LinearLayout.LayoutParams(0, AndroidUtilities.dp(46), 1f));
++        LinearLayout.LayoutParams shareParams = new LinearLayout.LayoutParams(0, AndroidUtilities.dp(46), 1f);
++        shareParams.leftMargin = AndroidUtilities.dp(12);
++        buttons.addView(share, shareParams);
++        LinearLayout.LayoutParams buttonsParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
++        buttonsParams.topMargin = AndroidUtilities.dp(14);
++        root.addView(buttons, buttonsParams);
++        close.setOnClickListener(v -> dialog.dismiss());
++        share.setOnClickListener(v -> {
++            try {
++                File directory = new File(ApplicationLoader.applicationContext.getFilesDir(), "cache");
++                directory.mkdirs();
++                File file = new File(directory, "voidgram_messageshot.png");
++                try (FileOutputStream stream = new FileOutputStream(file)) {
++                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream);
++                }
++                Uri uri = FileProvider.getUriForFile(ApplicationLoader.applicationContext, ApplicationLoader.getApplicationId() + ".provider", file);
++                Intent intent = new Intent(Intent.ACTION_SEND);
++                intent.setType("image/png");
++                intent.putExtra(Intent.EXTRA_STREAM, uri);
++                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
++                fragment.getParentActivity().startActivity(Intent.createChooser(intent, "MessageShot"));
++            } catch (Throwable e) {
++                FileLog.e(e);
++            }
++        });
++        dialog.setContentView(root);
++        if (dialog.getWindow() != null) {
++            dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
++            dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
++        }
++        dialog.show();
++    }
++
++    private static TextView button(BaseFragment fragment, String text) {
++        TextView view = new TextView(fragment.getParentActivity());
++        view.setText(text);
++        view.setTextColor(Color.WHITE);
++        view.setTypeface(AndroidUtilities.bold());
++        view.setGravity(Gravity.CENTER);
++        android.graphics.drawable.GradientDrawable background = new android.graphics.drawable.GradientDrawable();
++        background.setColor(0x33FFFFFF);
++        background.setCornerRadius(AndroidUtilities.dp(12));
++        view.setBackground(background);
++        return view;
 +    }
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramNightLookActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramNightLookActivity.java
