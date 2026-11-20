@@ -1,0 +1,2136 @@
+diff --git a/submodules/AccountContext/Sources/AyuMiniLyrics.swift b/submodules/AccountContext/Sources/AyuMiniLyrics.swift
+new file mode 100644
+index 00000000..7b1bfda1
+--- /dev/null
++++ b/submodules/AccountContext/Sources/AyuMiniLyrics.swift
+@@ -0,0 +1,96 @@
++import Foundation
++import SwiftSignalKit
++
++/// The current lyrics line for the minimized music player (the bar under the navigation bar):
++/// while a track with timed lyrics plays, the bar shows the line being sung in place of the
++/// track title. TelegramUI installs `fetch` (the same lookup as the full player, custom texts
++/// included) and pushes texts the user edits; the bar only reads.
++public final class AyuMiniLyrics {
++    public static let shared = AyuMiniLyrics()
++
++    public struct Line: Equatable {
++        public let time: Double
++        public let endTime: Double
++        public let text: String
++
++        public init(time: Double, endTime: Double, text: String) {
++            self.time = time
++            self.endTime = endTime
++            self.text = text
++        }
++    }
++
++    private static let enabledKey = "ayu.player.miniLyrics"
++    public static let didUpdateNotification = Notification.Name("VoidGram.MiniLyricsUpdated")
++
++    /// On by default; Player → lyrics options → "Lyrics in the mini player".
++    public static var isEnabled: Bool {
++        get { return UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true }
++        set {
++            UserDefaults.standard.set(newValue, forKey: enabledKey)
++            NotificationCenter.default.post(name: didUpdateNotification, object: nil)
++        }
++    }
++
++    /// Timed lines for a track (title, artist, duration), or nil when it has none.
++    public var fetch: ((String, String?, Double) -> Signal<[Line]?, NoError>)?
++
++    private var key: String?
++    private var lines: [Line] = []
++    private let disposable = MetaDisposable()
++
++    private init() {
++    }
++
++    private static func key(title: String, artist: String?) -> String {
++        return title.lowercased() + "\u{0}" + (artist ?? "").lowercased()
++    }
++
++    /// The per-track timing adjustment the full player saves (Lyrics 0.5 s earlier / later).
++    public static func offset(accountPeerId: Int64, title: String, artist: String?, duration: Double) -> Double {
++        let identity = "\(accountPeerId)|\(title)|\(artist ?? "")|\(Int(duration))"
++        return UserDefaults.standard.double(forKey: "ayu.lyrics." + Data(identity.utf8).base64EncodedString())
++    }
++
++    /// Starts a lookup for this track unless one is loaded or running. Main thread.
++    public func request(title: String, artist: String?, duration: Double) {
++        let key = AyuMiniLyrics.key(title: title, artist: artist)
++        guard AyuMiniLyrics.isEnabled, self.key != key, let fetch = self.fetch, duration > 0.0 else { return }
++        self.key = key
++        self.lines = []
++        self.disposable.set((fetch(title, artist, duration)
++        |> deliverOnMainQueue).startStrict(next: { [weak self] lines in
++            guard let self, self.key == key else { return }
++            self.lines = lines ?? []
++            NotificationCenter.default.post(name: AyuMiniLyrics.didUpdateNotification, object: nil)
++        }))
++    }
++
++    /// The full player loaded or the user edited this track's text: use it at once.
++    public func update(title: String, artist: String?, lines: [Line]?) {
++        let key = AyuMiniLyrics.key(title: title, artist: artist)
++        self.disposable.set(nil)
++        self.key = key
++        self.lines = lines ?? []
++        NotificationCenter.default.post(name: AyuMiniLyrics.didUpdateNotification, object: nil)
++    }
++
++    /// The line being sung at `timestamp`, or nil (no timed lyrics, before the first line, or an
++    /// instrumental gap).
++    public func line(title: String, artist: String?, at timestamp: Double) -> String? {
++        guard AyuMiniLyrics.isEnabled, self.key == AyuMiniLyrics.key(title: title, artist: artist), !self.lines.isEmpty, timestamp.isFinite else { return nil }
++        var low = 0
++        var high = self.lines.count
++        while low < high {
++            let middle = (low + high) / 2
++            if self.lines[middle].time <= timestamp { low = middle + 1 } else { high = middle }
++        }
++        guard low > 0 else { return nil }
++        let line = self.lines[low - 1]
++        let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
++        if text.isEmpty || (line.endTime > line.time && timestamp > line.endTime + 1.5) {
++            return nil
++        }
++        return text
++    }
++}
+diff --git a/submodules/SettingsUI/Sources/AyuCategoriesController.swift b/submodules/SettingsUI/Sources/AyuCategoriesController.swift
+index d70e0a8c..5fde53f2 100644
+--- a/submodules/SettingsUI/Sources/AyuCategoriesController.swift
++++ b/submodules/SettingsUI/Sources/AyuCategoriesController.swift
+@@ -146,6 +146,7 @@ func ayuCategoryItems(_ category: AyuCategory) -> [AyuCategoryItem] {
+             AyuCategoryItem(id: 64, symbol: "antenna.radiowaves.left.and.right", color: 0x007AFF, titleRu: "Контакты рядом", titleEn: "Nearby contact", subtitleRu: "", subtitleEn: "", open: page { ayuNearbyContactController(context: $0) }),
+             AyuCategoryItem(id: 65, symbol: "gearshape.fill", color: 0x8E8E93, titleRu: "Общие", titleEn: "General", subtitleRu: "", subtitleEn: "", open: page { ayuGeneralSettingsController(context: $0) }),
+             AyuCategoryItem(id: 66, symbol: "star.circle.fill", color: 0xFF9500, titleRu: "Прочее", titleEn: "Other", subtitleRu: "", subtitleEn: "", open: page { ayuOtherSettingsController(context: $0, navigation: nil) }),
++            AyuCategoryItem(id: 68, symbol: "battery.100", color: 0x34C759, titleRu: "Энергосбережение", titleEn: "Power saving", subtitleRu: "Профили для телефона, планшета и ноутбука", subtitleEn: "Profiles for a phone, a tablet and a laptop", open: page { ayuPowerSavingController(context: $0) }),
+             AyuCategoryItem(id: 67, symbol: "square.and.arrow.up.on.square.fill", color: 0x34C759, titleRu: "Настройки VoidGram", titleEn: "VoidGram settings", subtitleRu: "Экспорт, импорт, сброс, пункты Настроек", subtitleEn: "Export, import, reset, Settings rows", open: page { ayuWhiteGramController(context: $0, groups: [.settings], title: ayuIsRussian($0) ? "Настройки VoidGram" : "VoidGram settings") })
+         ]
+     }
+diff --git a/submodules/SettingsUI/Sources/AyuDecoySettingsController.swift b/submodules/SettingsUI/Sources/AyuDecoySettingsController.swift
+index f4a1d917..f17d5c1b 100644
+--- a/submodules/SettingsUI/Sources/AyuDecoySettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuDecoySettingsController.swift
+@@ -77,6 +77,12 @@ func ayuDecoySettingsController(context: AccountContext) -> ViewController {
+                     }))
+                 }
+                 sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
++                // An action sheet on iPad (and on a Mac) must have an anchor, or UIKit raises.
++                if let popover = sheet.popoverPresentationController, let view = context.sharedContext.mainWindow?.viewController?.view {
++                    popover.sourceView = view
++                    popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1.0, height: 1.0)
++                    popover.permittedArrowDirections = []
++                }
+                 context.sharedContext.applicationBindings.presentNativeController(sheet)
+             })
+         default:
+diff --git a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
+index 0de2d106..d839d3f7 100644
+--- a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
+@@ -58,7 +58,7 @@ private enum AyuGramRow: Int32 {
+     var creditURL: String? {
+         switch self {
+         case .creditMurkGitHub: return "https://github.com/murk-sus"
+-        case .creditMurkTelegram: return "https://t.me/asuka4scape_developer"
++        case .creditMurkTelegram: return "https://t.me/natsuk1n_dev"
+         case .creditNeistvGitHub: return "https://github.com/neistv"
+         case .creditNeistvTelegram: return "https://t.me/neistv"
+         case .creditOwnerGitHub: return "https://github.com/neosay-dev"
+@@ -223,7 +223,7 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+             link(8, .creditOwnerGitHub, ru ? "Создатель репозитория" : "Repository owner", "GitHub"),
+             link(8, .creditOwnerTelegram, "@neosay", "Telegram"),
+             link(8, .creditMurkGitHub, "murk-sus", "GitHub"),
+-            link(8, .creditMurkTelegram, "@asuka4scape_developer", "Telegram"),
++            link(8, .creditMurkTelegram, "@natsuk1n_dev", "Telegram"),
+             link(8, .creditNeistvGitHub, "neistv", "GitHub"),
+             link(8, .creditNeistvTelegram, "@neistv", "Telegram")
+         ])
+diff --git a/submodules/SettingsUI/Sources/AyuPowerSavingController.swift b/submodules/SettingsUI/Sources/AyuPowerSavingController.swift
+new file mode 100644
+index 00000000..4f5ef8ec
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuPowerSavingController.swift
+@@ -0,0 +1,183 @@
++import Foundation
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import TelegramPresentationData
++import TelegramUIPreferences
++import ItemListUI
++import AccountContext
++
++// Settings → VoidGram → More → Power saving: a profile for a phone, a tablet and a laptop.
++
++private enum AyuPowerRow {
++    static let deviceHeader: Int32 = 0
++    static let device: Int32 = 1
++    static let status: Int32 = 2
++    static let modeHeader: Int32 = 10
++    static let mode: Int32 = 11
++    static let modeInfo: Int32 = 12
++    static let thresholdHeader: Int32 = 20
++    static let threshold: Int32 = 21
++    static let lowPower: Int32 = 22
++    static let onBattery: Int32 = 23
++    static let triggersInfo: Int32 = 24
++    static let limitsHeader: Int32 = 30
++    static let limitBase: Int32 = 31
++    static let reset: Int32 = 50
++    static let resetInfo: Int32 = 51
++}
++
++func ayuPowerSavingController(context: AccountContext) -> ViewController {
++    var selectedKind = AyuPowerSaving.DeviceKind.current
++    let selectedKindPromise = ValuePromise(selectedKind, ignoreRepeated: true)
++
++    let changed = Signal<Void, NoError> { subscriber in
++        subscriber.putNext(Void())
++        let names: [Notification.Name] = [AyuPowerSaving.didChangeNotification, UIDevice.batteryLevelDidChangeNotification, UIDevice.batteryStateDidChangeNotification, Notification.Name.NSProcessInfoPowerStateDidChange]
++        let observers = names.map { name in
++            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main, using: { _ in subscriber.putNext(Void()) })
++        }
++        return ActionDisposable {
++            for observer in observers {
++                NotificationCenter.default.removeObserver(observer)
++            }
++        }
++    }
++
++    func update(_ f: (inout AyuPowerSaving.Profile) -> Void) {
++        var profile = AyuPowerSaving.profile(for: selectedKind)
++        f(&profile)
++        AyuPowerSaving.setProfile(profile, for: selectedKind)
++    }
++
++    func present(_ sheet: UIAlertController) {
++        // An action sheet needs an anchor on iPad and on a Mac.
++        if let popover = sheet.popoverPresentationController, let view = context.sharedContext.mainWindow?.viewController?.view {
++            popover.sourceView = view
++            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1.0, height: 1.0)
++            popover.permittedArrowDirections = []
++        }
++        context.sharedContext.applicationBindings.presentNativeController(sheet)
++    }
++
++    var arguments = AyuSectionedArguments(open: { id in
++        let ru = ayuIsRussian(context)
++        switch id {
++        case AyuPowerRow.device:
++            let sheet = UIAlertController(title: ru ? "Профиль устройства" : "Device profile", message: ru ? "Это устройство: \(AyuPowerSaving.DeviceKind.current.title(true)). Профили других устройств переносятся вместе с резервной копией VoidGram." : "This device: \(AyuPowerSaving.DeviceKind.current.title(false)). Other devices' profiles travel with a VoidGram backup.", preferredStyle: .actionSheet)
++            for kind in AyuPowerSaving.DeviceKind.allCases {
++                sheet.addAction(UIAlertAction(title: kind.title(ru) + (kind == selectedKind ? " ✓" : ""), style: .default, handler: { _ in
++                    selectedKind = kind
++                    selectedKindPromise.set(kind)
++                }))
++            }
++            sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
++            present(sheet)
++        case AyuPowerRow.mode:
++            let current = AyuPowerSaving.profile(for: selectedKind).mode
++            let sheet = UIAlertController(title: ru ? "Когда экономить" : "When to save power", message: nil, preferredStyle: .actionSheet)
++            for mode in AyuPowerSaving.Mode.allCases {
++                sheet.addAction(UIAlertAction(title: mode.title(ru) + (mode == current ? " ✓" : ""), style: .default, handler: { _ in
++                    update { $0.mode = mode }
++                }))
++            }
++            sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
++            present(sheet)
++        case AyuPowerRow.reset:
++            AyuPowerSaving.resetProfile(for: selectedKind)
++        default:
++            break
++        }
++    }, toggle: { id, value in
++        switch id {
++        case AyuPowerRow.lowPower:
++            update { $0.followLowPowerMode = value }
++        case AyuPowerRow.onBattery:
++            update { $0.onBatteryOnly = value }
++        default:
++            let index = Int(id - AyuPowerRow.limitBase)
++            if index >= 0 && index < AyuPowerSaving.Limit.allCases.count {
++                let limit = AyuPowerSaving.Limit.allCases[index]
++                // The switch reads "keep it on": off means the saver turns it off.
++                update { profile in
++                    if value {
++                        profile.limits.remove(limit)
++                    } else {
++                        profile.limits.insert(limit)
++                    }
++                }
++            }
++        }
++    })
++    arguments.slider = { id, value in
++        if id == AyuPowerRow.threshold {
++            update { $0.threshold = Int(value) }
++        }
++    }
++    let finalArguments = arguments
++
++    let signal = combineLatest(context.sharedContext.presentationData, changed, selectedKindPromise.get())
++    |> deliverOnMainQueue
++    |> map { presentationData, _, kind -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let profile = AyuPowerSaving.profile(for: kind)
++        let isCurrent = kind == AyuPowerSaving.DeviceKind.current
++        let symbol: String
++        switch kind {
++        case .phone: symbol = "iphone"
++        case .tablet: symbol = "ipad"
++        case .laptop: symbol = "laptopcomputer"
++        }
++
++        var status: String
++        if !isCurrent {
++            status = ru ? "Этот профиль сработает на устройстве «\(kind.title(true))»." : "This profile applies on a \(kind.title(false).lowercased())."
++        } else if let saving = AyuPowerSaving.isSavingNow(profile) {
++            status = saving ? (ru ? "Сейчас: экономия включена." : "Now: saving power.") : (ru ? "Сейчас: экономия выключена." : "Now: not saving power.")
++        } else {
++            status = ru ? "Сейчас решают настройки Telegram (Данные и память → Энергосбережение)." : "Telegram's own Power Saving settings decide now (Data and Storage → Power Saving)."
++        }
++        if isCurrent {
++            let level = UIDevice.current.batteryLevel
++            if level >= 0.0 {
++                status += ru ? " Заряд: \(Int(level * 100.0))%." : " Battery: \(Int(level * 100.0))%."
++            }
++            if ProcessInfo.processInfo.isLowPowerModeEnabled {
++                status += ru ? " Включён режим энергосбережения системы." : " System Low Power Mode is on."
++            }
++        }
++
++        var entries: [AyuSectionedEntry] = [
++            .header(1, AyuPowerRow.deviceHeader, ru ? "УСТРОЙСТВО" : "DEVICE"),
++            .link(1, AyuPowerRow.device, AyuSettingsIcons.symbol(symbol, color: UIColor(rgb: 0x34C759)), ru ? "Профиль" : "Profile", kind.title(ru) + (isCurrent ? (ru ? " (это)" : " (this)") : "")),
++            .info(1, AyuPowerRow.status, status),
++            .header(2, AyuPowerRow.modeHeader, ru ? "РЕЖИМ" : "MODE"),
++            .link(2, AyuPowerRow.mode, AyuSettingsIcons.symbol("bolt.fill", color: UIColor(rgb: 0xFF9500)), ru ? "Когда экономить" : "When to save power", profile.mode.title(ru)),
++            .info(2, AyuPowerRow.modeInfo, ru ? "«Как в Telegram» оставляет обычный экран энергосбережения Telegram. Остальные режимы заменяют его на этом устройстве." : "\"Telegram's setting\" keeps Telegram's own Power Saving screen. The other modes replace it on this device.")
++        ]
++        if profile.mode != .telegram {
++            if profile.mode == .battery {
++                entries.append(.header(3, AyuPowerRow.thresholdHeader, ru ? "ПОРОГ ЗАРЯДА: \(profile.threshold)%" : "BATTERY LEVEL: \(profile.threshold)%"))
++                entries.append(.slider(3, AyuPowerRow.threshold, Int32(profile.threshold), 5, 95))
++            } else {
++                entries.append(.header(3, AyuPowerRow.thresholdHeader, ru ? "ДОПОЛНИТЕЛЬНО" : "ALSO"))
++            }
++            entries.append(.toggle(3, AyuPowerRow.lowPower, AyuSettingsIcons.symbol("battery.25", color: UIColor(rgb: 0xFFCC00)), ru ? "При системной экономии" : "With system Low Power Mode", nil, profile.followLowPowerMode))
++            entries.append(.toggle(3, AyuPowerRow.onBattery, AyuSettingsIcons.symbol("powerplug.fill", color: UIColor(rgb: 0x8E8E93)), ru ? "Всегда без зарядки" : "Whenever not charging", nil, profile.onBatteryOnly))
++            entries.append(.info(3, AyuPowerRow.triggersInfo, ru ? "«Всегда без зарядки» удобно для ноутбука: экономия включается, как только вы отключаете питание." : "\"Whenever not charging\" suits a laptop: saving starts as soon as you unplug it."))
++
++            entries.append(.header(4, AyuPowerRow.limitsHeader, ru ? "ЧТО ОСТАВИТЬ ВО ВРЕМЯ ЭКОНОМИИ" : "KEEP WHILE SAVING POWER"))
++            for (index, limit) in AyuPowerSaving.Limit.allCases.enumerated() {
++                entries.append(.toggle(4, AyuPowerRow.limitBase + Int32(index), nil, limit.title(ru), nil, !profile.limits.contains(limit)))
++            }
++        }
++        entries.append(.link(5, AyuPowerRow.reset, AyuSettingsIcons.symbol("arrow.counterclockwise", color: UIColor(rgb: 0xFF3B30)), ru ? "Сбросить профиль" : "Reset profile", ""))
++        entries.append(.info(5, AyuPowerRow.resetInfo, ru ? "Возвращает стандартные значения для устройства «\(kind.title(true))»." : "Restores the defaults for a \(kind.title(false).lowercased())."))
++
++        let data = ItemListPresentationData(presentationData)
++        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Энергосбережение" : "Power saving"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), finalArguments))
++    }
++    return ItemListController(context: context, state: signal)
++}
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsSearch.swift b/submodules/SettingsUI/Sources/AyuSettingsSearch.swift
+index 283ff405..ea0fde58 100644
+--- a/submodules/SettingsUI/Sources/AyuSettingsSearch.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsSearch.swift
+@@ -80,6 +80,7 @@ private func ayuSettingsSearchEntries(context: AccountContext, ru: Bool) -> [Ayu
+     page("tools", "Инструменты", "Tools", "голос voice иконки icons ИИ AI VirusTotal") { ayuToolsController(context: context) }
+     page("people", "Поиск каналов и людей", "Find channels and people") { ayuPeerSearchController(context: context) }
+     page("decoy", "Фейк-режим", "Decoy mode", "фейк код пароль ложный двойной тап decoy fake code passcode") { ayuDecoySettingsController(context: context) }
++    page("power", "Энергосбережение", "Power saving", "энергосбережение батарея заряд экономия телефон планшет ноутбук mac power battery saving low power tablet laptop") { ayuPowerSavingController(context: context) }
+     page("material", "Material Design", "Material Design", "md3 material дизайн переключатели") { ayuMaterialDesignController(context: context) }
+     page("translation", "Перевод", "Translation", "переводчик translate deepl") { ayuTranslationSettingsController(context: context) }
+     page("reactions", "Реакции", "Reactions") { ayuReactionSettingsController(context: context) }
+diff --git a/submodules/TelegramBaseController/Sources/MediaNavigationAccessoryHeaderNode.swift b/submodules/TelegramBaseController/Sources/MediaNavigationAccessoryHeaderNode.swift
+index 07aef5a3..f1318d8a 100644
+--- a/submodules/TelegramBaseController/Sources/MediaNavigationAccessoryHeaderNode.swift
++++ b/submodules/TelegramBaseController/Sources/MediaNavigationAccessoryHeaderNode.swift
+@@ -26,6 +26,8 @@ private func normalizeValue(_ value: CGFloat) -> CGFloat {
+ private class MediaHeaderItemNode: ASDisplayNode {
+     private let titleNode: TextNode
+     private let subtitleNode: TextNode
++    /// VoidGram: the line being sung, shown in place of the track title (AyuMiniLyrics).
++    var ayuLyricLine: String?
+     
+     override init() {
+         self.titleNode = TextNode()
+@@ -51,8 +53,13 @@ private class MediaHeaderItemNode: ASDisplayNode {
+             switch displayData {
+                 case let .music(title, performer, _, long, _):
+                     rateButtonHidden = !long
+-                    let titleText: String = title ?? strings.MediaPlayer_UnknownTrack
+-                    let subtitleText: String = performer ?? strings.MediaPlayer_UnknownArtist
++                    var titleText: String = title ?? strings.MediaPlayer_UnknownTrack
++                    var subtitleText: String = performer ?? strings.MediaPlayer_UnknownArtist
++                    if let line = self.ayuLyricLine {
++                        // VoidGram: the current lyrics line replaces the title; the title joins the artist.
++                        subtitleText = titleText + " — " + subtitleText
++                        titleText = "♪ " + line
++                    }
+                     
+                     titleString = NSAttributedString(string: titleText, font: titleFont, textColor: theme.rootController.navigationBar.primaryTextColor)
+                     subtitleString = NSAttributedString(string: subtitleText, font: subtitleFont, textColor: theme.rootController.navigationBar.secondaryTextColor)
+@@ -207,6 +214,79 @@ public final class MediaNavigationAccessoryHeaderNode: ASDisplayNode, ASScrollVi
+     public var playbackStatus: Signal<MediaPlayerStatus, NoError>? {
+         didSet {
+             self.scrubbingNode.status = self.playbackStatus
++            self.ayuObservePlaybackStatus()
++        }
++    }
++
++    // MARK: VoidGram mini lyrics
++
++    deinit {
++        self.ayuStatusDisposable?.dispose()
++        self.ayuLyricsTimer?.invalidate()
++        if let observer = self.ayuLyricsObserver {
++            NotificationCenter.default.removeObserver(observer)
++        }
++    }
++
++    private var ayuStatusDisposable: Disposable?
++    private var ayuLastStatus: MediaPlayerStatus?
++    private var ayuLyricsTimer: SwiftSignalKit.Timer?
++    private var ayuLyricsObserver: NSObjectProtocol?
++
++    private func ayuObservePlaybackStatus() {
++        self.ayuStatusDisposable?.dispose()
++        self.ayuStatusDisposable = nil
++        self.ayuLastStatus = nil
++        if self.ayuLyricsObserver == nil {
++            self.ayuLyricsObserver = NotificationCenter.default.addObserver(forName: AyuMiniLyrics.didUpdateNotification, object: nil, queue: .main, using: { [weak self] _ in
++                self?.ayuLyricsTick()
++            })
++        }
++        guard let playbackStatus = self.playbackStatus else {
++            self.ayuStopLyricsTimer()
++            self.ayuLyricsTick()
++            return
++        }
++        self.ayuStatusDisposable = (playbackStatus
++        |> deliverOnMainQueue).startStrict(next: { [weak self] status in
++            guard let self else { return }
++            self.ayuLastStatus = status
++            if case .playing = status.status, AyuMiniLyrics.isEnabled {
++                if self.ayuLyricsTimer == nil {
++                    let timer = SwiftSignalKit.Timer(timeout: 0.25, repeat: true, completion: { [weak self] in
++                        self?.ayuLyricsTick()
++                    }, queue: Queue.mainQueue())
++                    self.ayuLyricsTimer = timer
++                    timer.start()
++                }
++            } else {
++                self.ayuStopLyricsTimer()
++            }
++            self.ayuLyricsTick()
++        })
++    }
++
++    private func ayuStopLyricsTimer() {
++        self.ayuLyricsTimer?.invalidate()
++        self.ayuLyricsTimer = nil
++    }
++
++    private func ayuLyricsTick() {
++        var line: String?
++        if AyuMiniLyrics.isEnabled, let displayData = self.playbackItems?.0?.displayData, case let .music(title, performer, _, long, _) = displayData, !long, let title, let status = self.ayuLastStatus {
++            AyuMiniLyrics.shared.request(title: title, artist: performer, duration: status.duration)
++            var timestamp = status.timestamp
++            if case .playing = status.status {
++                timestamp += max(0.0, CACurrentMediaTime() - status.generationTimestamp) * status.baseRate
++            }
++            timestamp += AyuMiniLyrics.offset(accountPeerId: self.context.account.peerId.toInt64(), title: title, artist: performer, duration: status.duration)
++            line = AyuMiniLyrics.shared.line(title: title, artist: performer, at: timestamp)
++        }
++        if line != self.currentItemNode.ayuLyricLine {
++            self.currentItemNode.ayuLyricLine = line
++            if let layout = self.validLayout {
++                self.updateLayout(size: layout.0, leftInset: layout.1, rightInset: layout.2, transition: .immediate)
++            }
+         }
+     }
+     
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuChatNotice.swift b/submodules/TelegramCore/Sources/AyuGram/AyuChatNotice.swift
+new file mode 100644
+index 00000000..e338c5b9
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuChatNotice.swift
+@@ -0,0 +1,84 @@
++import Foundation
++import Postbox
++
++/// The VoidGram privacy notice: before a person's first own message in a private chat or a group,
++/// VoidGram sends this text on their behalf (private chats: pinned for both sides). The sender
++/// cannot delete or unpin it in VoidGram; only the other side can delete it. The user agreement
++/// (AyuLicenseAgreement) tells the user about it before they sign in.
++public enum AyuChatNotice {
++    public static let textRu = "⚠️ Я использую VoidGram. Наша переписка не защищена, поэтому мы (разработчики VoidGram) настоятельно не советуем отправлять этому пользователю какие-либо личные данные, интимные фотографии и так далее. Секретные чаты и одноразовые сообщения не помогут."
++    public static let textEn = "⚠️ I use VoidGram. Our conversation is not protected, so we (the VoidGram developers) strongly advise against sending this user any personal data, intimate photos and so on. Secret chats and view-once messages will not help."
++
++    public static func text(russian: Bool) -> String {
++        return russian ? textRu : textEn
++    }
++
++    public static func isNoticeText(_ text: String) -> Bool {
++        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
++        return trimmed == textRu || trimmed == textEn
++    }
++
++    /// The account's own notice: it may not be deleted or unpinned from this app.
++    public static func isProtected(_ message: Message, accountPeerId: PeerId) -> Bool {
++        guard message.media.isEmpty, isNoticeText(message.text) else { return false }
++        if let author = message.author {
++            return author.id == accountPeerId
++        }
++        return !message.flags.contains(.Incoming)
++    }
++
++    // MARK: Sent chats
++
++    private static func sentKey(_ accountPeerId: PeerId) -> String {
++        return "ayu.notice.sent.\(accountPeerId.toInt64())"
++    }
++
++    private static func pinnedKey(_ accountPeerId: PeerId) -> String {
++        return "ayu.notice.pinned.\(accountPeerId.toInt64())"
++    }
++
++    private static let lock = NSLock()
++
++    public static func wasSent(accountPeerId: PeerId, peerId: PeerId) -> Bool {
++        lock.lock()
++        defer { lock.unlock() }
++        let sent = UserDefaults.standard.stringArray(forKey: sentKey(accountPeerId)) ?? []
++        return sent.contains("\(peerId.toInt64())")
++    }
++
++    /// Marks the chat before the notice is even queued, so two quick sends cannot both add one.
++    /// Returns false when it was already marked.
++    public static func markSent(accountPeerId: PeerId, peerId: PeerId) -> Bool {
++        lock.lock()
++        defer { lock.unlock() }
++        var sent = UserDefaults.standard.stringArray(forKey: sentKey(accountPeerId)) ?? []
++        let value = "\(peerId.toInt64())"
++        if sent.contains(value) {
++            return false
++        }
++        sent.append(value)
++        UserDefaults.standard.set(sent, forKey: sentKey(accountPeerId))
++        return true
++    }
++
++    /// The cloud id of the pinned notice in a private chat, kept so the pin can be restored.
++    public static func pinnedNoticeId(accountPeerId: PeerId, peerId: PeerId) -> MessageId? {
++        lock.lock()
++        defer { lock.unlock() }
++        let map = UserDefaults.standard.dictionary(forKey: pinnedKey(accountPeerId)) as? [String: NSNumber] ?? [:]
++        guard let id = map["\(peerId.toInt64())"] else { return nil }
++        return MessageId(peerId: peerId, namespace: Namespaces.Message.Cloud, id: id.int32Value)
++    }
++
++    public static func setPinnedNoticeId(accountPeerId: PeerId, id: MessageId?, peerId: PeerId) {
++        lock.lock()
++        defer { lock.unlock() }
++        var map = UserDefaults.standard.dictionary(forKey: pinnedKey(accountPeerId)) as? [String: NSNumber] ?? [:]
++        if let id {
++            map["\(peerId.toInt64())"] = NSNumber(value: id.id)
++        } else {
++            map.removeValue(forKey: "\(peerId.toInt64())")
++        }
++        UserDefaults.standard.set(map, forKey: pinnedKey(accountPeerId))
++    }
++}
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/DeleteMessagesInteractively.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/DeleteMessagesInteractively.swift
+index 25aa6980..f727afd9 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/DeleteMessagesInteractively.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/DeleteMessagesInteractively.swift
+@@ -9,8 +9,17 @@ private enum EphemeralDeleteMessageRequest {
+     case welcomeMessage(peer: Api.InputPeer, id: Int32)
+ }
+ 
+-func _internal_deleteMessagesInteractively(account: Account, messageIds: [MessageId], type: InteractiveMessagesDeletionType, deleteAllInGroup: Bool = false) -> Signal<Void, NoError> {
++func _internal_deleteMessagesInteractively(account: Account, messageIds initialMessageIds: [MessageId], type: InteractiveMessagesDeletionType, deleteAllInGroup: Bool = false) -> Signal<Void, NoError> {
+     return account.postbox.transaction { transaction -> [EphemeralDeleteMessageRequest] in
++        // VoidGram: the account's own privacy notice cannot be deleted from this app, whatever path
++        // asked for it (context menu, selection, swipe, plugins). The other side can delete it.
++        let messageIds = initialMessageIds.filter { id in
++            guard let message = transaction.getMessage(id) else { return true }
++            return !AyuChatNotice.isProtected(message, accountPeerId: account.peerId)
++        }
++        if messageIds.isEmpty {
++            return []
++        }
+         var ephemeralRequests: [EphemeralDeleteMessageRequest] = []
+         for messageId in messageIds where messageId.namespace == Namespaces.Message.EphemeralLocal || messageId.namespace == Namespaces.Message.WelcomeMessageCloud {
+             guard let message = transaction.getMessage(messageId), let peer = transaction.getPeer(messageId.peerId), let inputPeer = apiInputPeer(peer), let attribute = message.attributes.first(where: { $0 is EphemeralMessageAttribute }) as? EphemeralMessageAttribute else {
+diff --git a/submodules/TelegramUI/Components/MediaPlaybackHeaderPanelComponent/Sources/MediaNavigationAccessoryHeaderNode.swift b/submodules/TelegramUI/Components/MediaPlaybackHeaderPanelComponent/Sources/MediaNavigationAccessoryHeaderNode.swift
+index 3748592d..e8708f92 100644
+--- a/submodules/TelegramUI/Components/MediaPlaybackHeaderPanelComponent/Sources/MediaNavigationAccessoryHeaderNode.swift
++++ b/submodules/TelegramUI/Components/MediaPlaybackHeaderPanelComponent/Sources/MediaNavigationAccessoryHeaderNode.swift
+@@ -26,6 +26,8 @@ private func normalizeValue(_ value: CGFloat) -> CGFloat {
+ private class MediaHeaderItemNode: ASDisplayNode {
+     private let titleNode: TextNode
+     private let subtitleNode: TextNode
++    /// VoidGram: the line being sung, shown in place of the track title (AyuMiniLyrics).
++    var ayuLyricLine: String?
+     
+     override init() {
+         self.titleNode = TextNode()
+@@ -51,8 +53,13 @@ private class MediaHeaderItemNode: ASDisplayNode {
+             switch displayData {
+                 case let .music(title, performer, _, long, _):
+                     rateButtonHidden = !long
+-                    let titleText: String = title ?? strings.MediaPlayer_UnknownTrack
+-                    let subtitleText: String = performer ?? strings.MediaPlayer_UnknownArtist
++                    var titleText: String = title ?? strings.MediaPlayer_UnknownTrack
++                    var subtitleText: String = performer ?? strings.MediaPlayer_UnknownArtist
++                    if let line = self.ayuLyricLine {
++                        // VoidGram: the current lyrics line replaces the title; the title joins the artist.
++                        subtitleText = titleText + " — " + subtitleText
++                        titleText = "♪ " + line
++                    }
+                     
+                     titleString = NSAttributedString(string: titleText, font: titleFont, textColor: theme.rootController.navigationBar.primaryTextColor)
+                     subtitleString = NSAttributedString(string: subtitleText, font: subtitleFont, textColor: theme.rootController.navigationBar.secondaryTextColor)
+@@ -202,6 +209,79 @@ public final class MediaNavigationAccessoryHeaderNode: ASDisplayNode, ASScrollVi
+     public var playbackStatus: Signal<MediaPlayerStatus, NoError>? {
+         didSet {
+             self.scrubbingNode.status = self.playbackStatus
++            self.ayuObservePlaybackStatus()
++        }
++    }
++
++    // MARK: VoidGram mini lyrics
++
++    deinit {
++        self.ayuStatusDisposable?.dispose()
++        self.ayuLyricsTimer?.invalidate()
++        if let observer = self.ayuLyricsObserver {
++            NotificationCenter.default.removeObserver(observer)
++        }
++    }
++
++    private var ayuStatusDisposable: Disposable?
++    private var ayuLastStatus: MediaPlayerStatus?
++    private var ayuLyricsTimer: SwiftSignalKit.Timer?
++    private var ayuLyricsObserver: NSObjectProtocol?
++
++    private func ayuObservePlaybackStatus() {
++        self.ayuStatusDisposable?.dispose()
++        self.ayuStatusDisposable = nil
++        self.ayuLastStatus = nil
++        if self.ayuLyricsObserver == nil {
++            self.ayuLyricsObserver = NotificationCenter.default.addObserver(forName: AyuMiniLyrics.didUpdateNotification, object: nil, queue: .main, using: { [weak self] _ in
++                self?.ayuLyricsTick()
++            })
++        }
++        guard let playbackStatus = self.playbackStatus else {
++            self.ayuStopLyricsTimer()
++            self.ayuLyricsTick()
++            return
++        }
++        self.ayuStatusDisposable = (playbackStatus
++        |> deliverOnMainQueue).startStrict(next: { [weak self] status in
++            guard let self else { return }
++            self.ayuLastStatus = status
++            if case .playing = status.status, AyuMiniLyrics.isEnabled {
++                if self.ayuLyricsTimer == nil {
++                    let timer = SwiftSignalKit.Timer(timeout: 0.25, repeat: true, completion: { [weak self] in
++                        self?.ayuLyricsTick()
++                    }, queue: Queue.mainQueue())
++                    self.ayuLyricsTimer = timer
++                    timer.start()
++                }
++            } else {
++                self.ayuStopLyricsTimer()
++            }
++            self.ayuLyricsTick()
++        })
++    }
++
++    private func ayuStopLyricsTimer() {
++        self.ayuLyricsTimer?.invalidate()
++        self.ayuLyricsTimer = nil
++    }
++
++    private func ayuLyricsTick() {
++        var line: String?
++        if AyuMiniLyrics.isEnabled, let displayData = self.playbackItems?.0?.displayData, case let .music(title, performer, _, long, _) = displayData, !long, let title, let status = self.ayuLastStatus {
++            AyuMiniLyrics.shared.request(title: title, artist: performer, duration: status.duration)
++            var timestamp = status.timestamp
++            if case .playing = status.status {
++                timestamp += max(0.0, CACurrentMediaTime() - status.generationTimestamp) * status.baseRate
++            }
++            timestamp += AyuMiniLyrics.offset(accountPeerId: self.context.account.peerId.toInt64(), title: title, artist: performer, duration: status.duration)
++            line = AyuMiniLyrics.shared.line(title: title, artist: performer, at: timestamp)
++        }
++        if line != self.currentItemNode.ayuLyricLine {
++            self.currentItemNode.ayuLyricLine = line
++            if let layout = self.validLayout {
++                self.updateLayout(size: layout.0, leftInset: layout.1, rightInset: layout.2, transition: .immediate)
++            }
+         }
+     }
+     
+diff --git a/submodules/TelegramUI/Sources/AppDelegate.swift b/submodules/TelegramUI/Sources/AppDelegate.swift
+index 01b5ff6e..b08e5a26 100644
+--- a/submodules/TelegramUI/Sources/AppDelegate.swift
++++ b/submodules/TelegramUI/Sources/AppDelegate.swift
+@@ -1510,6 +1510,8 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+                     self.mainWindow.debugAction = nil
+                     self.mainWindow.viewController = context.rootController
+                     self.ayuPresentStartupNotice()
++                    // People who were signed in before the agreement existed accept it once too.
++                    AyuLicenseAgreement.presentIfNeeded(in: self.window, presentationData: context.context.sharedContext.currentPresentationData.with { $0 })
+                     AyuDeveloperOverlays.shared.attach(to: self.mainWindow.hostView.containerView)
+                     AyuToast.shared.attach(to: self.mainWindow.hostView.containerView)
+                     AyuOverlayEffects.shared.attach(to: self.mainWindow.hostView.containerView)
+@@ -1517,6 +1519,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+                         AyuToast.shared.show(text)
+                     }
+                     ayuInstallPluginAppBridge(sharedContext: context.context.sharedContext)
++                    ayuInstallMiniLyrics()
+                     AyuVerifiedRegistry.shared.refresh()
+                     AyuPluginKillSwitch.shared.refresh()
+                     AyuScriptRuntime.shared.bootstrap()
+@@ -1612,6 +1615,8 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+                     progressDisposable.dispose()
+                     self.mainWindow.present(context.rootController, on: .root)
+                     self.ayuPresentStartupNotice()
++                    // The VoidGram user agreement comes before signing in.
++                    AyuLicenseAgreement.presentIfNeeded(in: self.window, presentationData: presentationData)
+                 }))
+             } else {
+                 authContextReadyDisposable.set(nil)
+diff --git a/submodules/TelegramUI/Sources/AyuChatNoticeSender.swift b/submodules/TelegramUI/Sources/AyuChatNoticeSender.swift
+new file mode 100644
+index 00000000..e7fce090
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuChatNoticeSender.swift
+@@ -0,0 +1,138 @@
++import Foundation
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import AccountContext
++import PresentationDataUtils
++
++/// Sends the VoidGram privacy notice (AyuChatNotice) before the user's first own message in a
++/// private chat or a group, and keeps it pinned in private chats.
++final class AyuChatNoticePins {
++    static let shared = AyuChatNoticePins()
++
++    private var waiting: [Int64: Disposable] = [:]
++
++    /// Waits until the notice with `correlationId` reaches the server, then pins it for both sides.
++    func pinWhenSent(context: AccountContext, peerId: EnginePeer.Id, correlationId: Int64) {
++        let engine = context.engine
++        let accountPeerId = context.account.peerId
++        let lookup: Signal<EngineMessage.Id?, NoError> = Signal<Void, NoError>.single(Void())
++        |> then(context.account.pendingMessageManager.deliveredMessageEvents(peerId: peerId) |> map { _ -> Void in return Void() })
++        |> map { _ -> EngineMessage.Id? in
++            return engine.messages.synchronouslyLookupCorrelationId(correlationId: correlationId)
++        }
++        let signal: Signal<EngineMessage.Id, NoError> = lookup
++        |> mapToSignal { id -> Signal<EngineMessage.Id, NoError> in
++            if let id {
++                return .single(id)
++            } else {
++                return .complete()
++            }
++        }
++        |> take(1)
++        |> timeout(30.0 * 60.0, queue: Queue.mainQueue(), alternate: Signal<EngineMessage.Id, NoError>.complete())
++        |> deliverOnMainQueue
++
++        self.waiting[correlationId]?.dispose()
++        self.waiting[correlationId] = signal.startStandalone(next: { id in
++            AyuChatNotice.setPinnedNoticeId(accountPeerId: accountPeerId, id: id, peerId: peerId)
++            AyuChatNoticePins.pin(engine: engine, peerId: peerId, id: id)
++        }, completed: { [weak self] in
++            Queue.mainQueue().async {
++                self?.waiting.removeValue(forKey: correlationId)
++            }
++        })
++    }
++
++    static func pin(engine: TelegramEngine, peerId: EnginePeer.Id, id: EngineMessage.Id) {
++        let _ = (engine.messages.requestUpdatePinnedMessage(peerId: peerId, update: .pin(id: id, silent: true, forThisPeerOnlyIfPossible: false))
++        |> `catch` { _ -> Signal<Void, NoError> in
++            return .complete()
++        }).startStandalone()
++    }
++
++    /// Restores the pin when it was removed (for example by "Unpin all" or from another app). When the
++    /// other side deleted the notice, nothing is sent again: deleting it is their right.
++    static func ensurePinned(context: AccountContext, peerId: EnginePeer.Id) {
++        let accountPeerId = context.account.peerId
++        guard !AyuDecoyState.isActive, let id = AyuChatNotice.pinnedNoticeId(accountPeerId: accountPeerId, peerId: peerId) else { return }
++        let engine = context.engine
++        let _ = (engine.data.get(TelegramEngine.EngineData.Item.Messages.Message(id: id))
++        |> deliverOnMainQueue).startStandalone(next: { message in
++            guard let message else {
++                AyuChatNotice.setPinnedNoticeId(accountPeerId: accountPeerId, id: nil, peerId: peerId)
++                return
++            }
++            if AyuChatNotice.isProtected(message._asMessage(), accountPeerId: accountPeerId) && !message.tags.contains(.pinned) {
++                AyuChatNoticePins.pin(engine: engine, peerId: peerId, id: id)
++            }
++        })
++    }
++}
++
++extension ChatControllerImpl {
++    private enum AyuNoticeChatKind {
++        case privateChat
++        case group
++    }
++
++    private func ayuNoticeChatKind(peerId: EnginePeer.Id) -> AyuNoticeChatKind? {
++        guard peerId != self.context.account.peerId, peerId.namespace != Namespaces.Peer.SecretChat else { return nil }
++        guard let peer = self.presentationInterfaceState.renderedPeer?.chatMainPeer, peer.id == peerId else { return nil }
++        if let user = peer as? TelegramUser {
++            // No notice for bots, Telegram's service accounts and deleted accounts.
++            let serviceIds: Set<Int64> = [777000, 333000, 42777, 489000]
++            if user.botInfo != nil || user.flags.contains(.isSupport) || serviceIds.contains(peerId.id._internalGetInt64Value()) || (user.firstName == nil && user.lastName == nil) {
++                return nil
++            }
++            return .privateChat
++        } else if peer is TelegramGroup {
++            return .group
++        } else if let channel = peer as? TelegramChannel, case .group = channel.info {
++            return .group
++        } else {
++            return nil
++        }
++    }
++
++    /// Called right before the user's own messages are queued. Queues the notice first when this
++    /// chat has not had one from this account yet.
++    func ayuSendChatNoticeIfNeeded(peerId: EnginePeer.Id) {
++        guard !AyuDecoyState.isActive, self.subject == nil else { return }
++        guard let kind = self.ayuNoticeChatKind(peerId: peerId) else { return }
++        let accountPeerId = self.context.account.peerId
++        guard AyuChatNotice.markSent(accountPeerId: accountPeerId, peerId: peerId) else {
++            if case .privateChat = kind {
++                AyuChatNoticePins.ensurePinned(context: self.context, peerId: peerId)
++            }
++            return
++        }
++        let code = self.presentationData.strings.baseLanguageCode
++        let russian = ["ru", "uk", "be", "kk"].contains(where: { code.hasPrefix($0) })
++        let correlationId = Int64.random(in: 1 ..< Int64.max)
++        let notice = EnqueueMessage.message(text: AyuChatNotice.text(russian: russian), attributes: [], inlineStickers: [:], mediaReference: nil, threadId: self.chatLocation.threadId, replyToMessageId: nil, replyToStoryId: nil, localGroupingKey: nil, correlationId: correlationId, bubbleUpEmojiOrStickersets: [])
++        let context = self.context
++        let _ = (enqueueMessages(account: context.account, peerId: peerId, messages: [notice])
++        |> deliverOnMainQueue).startStandalone(next: { _ in
++            if case .privateChat = kind {
++                AyuChatNoticePins.shared.pinWhenSent(context: context, peerId: peerId, correlationId: correlationId)
++            }
++        })
++    }
++
++    /// The own notice in this chat stays pinned: unpinning it from VoidGram is refused.
++    func ayuRefusesUnpin(_ id: EngineMessage.Id) -> Bool {
++        let accountPeerId = self.context.account.peerId
++        var isNotice = AyuChatNotice.pinnedNoticeId(accountPeerId: accountPeerId, peerId: id.peerId) == id
++        if !isNotice, let message = self.chatDisplayNode.historyNode.messageInCurrentHistoryView(id) {
++            isNotice = AyuChatNotice.isProtected(message._asMessage(), accountPeerId: accountPeerId)
++        }
++        guard isNotice else { return false }
++        let code = self.presentationData.strings.baseLanguageCode
++        let russian = ["ru", "uk", "be", "kk"].contains(where: { code.hasPrefix($0) })
++        let alert = textAlertController(context: self.context, title: nil, text: russian ? "Предупреждение VoidGram остаётся закреплённым. Удалить его может только собеседник." : "The VoidGram notice stays pinned. Only the other person can delete it.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})])
++        self.present(alert, in: .window(.root))
++        return true
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/AyuDecoyUI.swift b/submodules/TelegramUI/Sources/AyuDecoyUI.swift
+index 2b152e6a..05e441ca 100644
+--- a/submodules/TelegramUI/Sources/AyuDecoyUI.swift
++++ b/submodules/TelegramUI/Sources/AyuDecoyUI.swift
+@@ -115,7 +115,9 @@ final class AyuDecoyCoordinator {
+                 if let primary {
+                     AyuDecoyState.mainAccountId = primary.account.id.int64
+                 }
+-                if let decoy = accounts.first(where: { $0.0.int64 == decoyId }) {
++                // The chosen account must be another, still signed-in one; otherwise (it was logged
++                // out, or it is the account in use) the second space is the built-in one.
++                if let decoy = accounts.first(where: { $0.0.int64 == decoyId }), decoy.0 != primary?.account.id {
+                     sharedContext.switchToAccount(id: decoy.0)
+                     self.hideSplash()
+                 } else {
+@@ -138,23 +140,75 @@ final class AyuDecoyCoordinator {
+             self.fakeWindow = nil
+             window.isHidden = true
+         }
++        if let observer = self.foregroundObserver {
++            NotificationCenter.default.removeObserver(observer)
++            self.foregroundObserver = nil
++        }
++        self.window?.makeKeyAndVisible()
+         if !wasStandIn, let mainId = AyuDecoyState.mainAccountId, let sharedContext = self.sharedContext {
+             sharedContext.switchToAccount(id: AccountRecordId(rawValue: mainId))
+         }
+     }
+ 
+-    private func showFakeTelegram() {
+-        guard self.fakeWindow == nil else { return }
+-        let fake = UIWindow(frame: UIScreen.main.bounds)
++    /// The scene the built-in second space is shown in. The app's own window joins its scene only
++    /// when the scene connects (AppDelegate.attach(scene:)), which can be after this coordinator
++    /// starts; a window without a scene is never drawn.
++    private func activeWindowScene() -> UIWindowScene? {
+         if let scene = self.window?.windowScene {
+-            fake.windowScene = scene
++            return scene
+         }
++        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.filter { $0.session.role == .windowApplication }
++        return scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first(where: { $0.activationState == .foregroundInactive }) ?? scenes.first
++    }
++
++    private var sceneObserver: NSObjectProtocol?
++
++    private func showFakeTelegram() {
++        if let fake = self.fakeWindow {
++            // Already open: make sure it is still in the live scene and in front.
++            if let scene = self.activeWindowScene(), fake.windowScene !== scene {
++                fake.windowScene = scene
++                fake.frame = scene.coordinateSpace.bounds
++            }
++            fake.isHidden = false
++            fake.makeKeyAndVisible()
++            return
++        }
++        guard let scene = self.activeWindowScene() else {
++            // No scene yet (a cold start into an open second space): show it once one connects.
++            if self.sceneObserver == nil {
++                self.sceneObserver = NotificationCenter.default.addObserver(forName: UIScene.didActivateNotification, object: nil, queue: .main, using: { [weak self] _ in
++                    guard let self else { return }
++                    if let observer = self.sceneObserver {
++                        NotificationCenter.default.removeObserver(observer)
++                        self.sceneObserver = nil
++                    }
++                    if AyuDecoyState.isActive && self.lockView == nil {
++                        self.showFakeTelegram()
++                    }
++                })
++            }
++            return
++        }
++        let fake = UIWindow(windowScene: scene)
++        fake.frame = scene.coordinateSpace.bounds
+         fake.windowLevel = .normal + 1.0
++        fake.backgroundColor = UIColor.systemBackground
+         fake.rootViewController = AyuFakeTelegramController()
+         fake.makeKeyAndVisible()
+         self.fakeWindow = fake
++        // The app re-keys its own window when its scene (re)connects or comes back; keep the
++        // second space in front while it is open.
++        if self.foregroundObserver == nil {
++            self.foregroundObserver = NotificationCenter.default.addObserver(forName: UIScene.didActivateNotification, object: nil, queue: .main, using: { [weak self] _ in
++                guard let self, AyuDecoyState.isActive, self.fakeWindow != nil, self.lockView == nil else { return }
++                self.showFakeTelegram()
++            })
++        }
+     }
+ 
++    private var foregroundObserver: NSObjectProtocol?
++
+     // MARK: Code lock
+ 
+     private func showLock() {
+diff --git a/submodules/TelegramUI/Sources/AyuLicenseAgreement.swift b/submodules/TelegramUI/Sources/AyuLicenseAgreement.swift
+new file mode 100644
+index 00000000..f1fe2b83
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuLicenseAgreement.swift
+@@ -0,0 +1,308 @@
++import Foundation
++import UIKit
++import Display
++import TelegramPresentationData
++
++/// The VoidGram user agreement. It is shown before the sign-in screen (and once to people who were
++/// already signed in when it appeared), over everything else in the window. "Accept" works only
++/// after the text has been scrolled to its very end.
++enum AyuLicenseAgreement {
++    /// Bump when the text changes in substance: everyone accepts it again.
++    static let version = 1
++    private static let key = "ayu.license.acceptedVersion"
++
++    static var isAccepted: Bool {
++        return UserDefaults.standard.integer(forKey: key) >= version
++    }
++
++    private static weak var shownView: AyuLicenseAgreementView?
++
++    /// Shows the agreement over `window` unless it is accepted or already showing.
++    static func presentIfNeeded(in window: UIWindow?, presentationData: PresentationData) {
++        guard !isAccepted, shownView == nil, let window else { return }
++        let code = presentationData.strings.baseLanguageCode
++        let preferred = Locale.preferredLanguages.first ?? ""
++        let russian = ["ru", "uk", "be", "kk"].contains(where: { code.hasPrefix($0) || preferred.hasPrefix($0) })
++        let view = AyuLicenseAgreementView(frame: window.bounds, russian: russian, accentColor: presentationData.theme.list.itemAccentColor)
++        view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
++        view.accepted = { [weak view] in
++            UserDefaults.standard.set(version, forKey: key)
++            UIView.animate(withDuration: 0.25, animations: {
++                view?.alpha = 0.0
++            }, completion: { _ in
++                view?.removeFromSuperview()
++            })
++        }
++        window.endEditing(true)
++        window.addSubview(view)
++        shownView = view
++    }
++
++    static func text(russian: Bool) -> String {
++        if russian {
++            return """
++            Пользовательское соглашение VoidGram
++
++            Пожалуйста, внимательно прочитайте это соглашение до конца. Кнопка «Принимаю» станет доступна только после того, как вы долистаете текст до самого низа. Нажимая «Принимаю», вы подтверждаете, что прочитали, поняли и полностью согласны со всеми условиями ниже. Если вы не согласны — не пользуйтесь VoidGram и удалите приложение.
++
++            1. Неофициальный клиент
++            VoidGram — неофициальный клиент Telegram. Он не связан с Telegram FZ-LLC, Telegram Messenger Inc. и их партнёрами, не одобрен и не поддерживается ими. Названия и товарные знаки Telegram принадлежат их владельцам.
++
++            2. «Как есть», без гарантий
++            VoidGram предоставляется «как есть» и «как доступно», без каких-либо гарантий — явных или подразумеваемых, включая гарантии работоспособности, безопасности, точности, совместимости, пригодности для определённой цели и отсутствия ошибок. Приложение может работать нестабильно, терять данные или перестать работать в любой момент.
++
++            3. Отказ от ответственности
++            Разработчики, участники проекта и распространители VoidGram не несут НИКАКОЙ ответственности за любой прямой, косвенный, случайный, особый или последующий ущерб, связанный с использованием или невозможностью использования приложения. В том числе, но не только, за:
++            • блокировку, ограничение, заморозку или удаление вашего аккаунта Telegram;
++            • потерю, повреждение, утечку или раскрытие переписки, медиа, контактов и любых других данных;
++            • действия других пользователей, ботов, плагинов и третьих лиц;
++            • финансовые потери, включая звёзды, подарки, NFT и подписки;
++            • последствия нарушения правил Telegram, законов вашей страны или прав третьих лиц.
++            Вся ответственность за использование VoidGram лежит только на вас.
++
++            4. Правила Telegram
++            Некоторые функции VoidGram (например, режим призрака, сохранение удалённых и изменённых сообщений, сохранение одноразовых медиа) могут противоречить Условиям использования Telegram API и Условиям обслуживания Telegram. Включая такие функции, вы делаете это на свой страх и риск и понимаете, что Telegram может ограничить ваш аккаунт.
++
++            5. Конфиденциальность переписки
++            VoidGram может сохранять на устройстве удалённые и изменённые сообщения, одноразовые фото, видео и голосовые сообщения, а также позволяет делать снимки экрана там, где обычный Telegram их запрещает. Поэтому переписку с пользователем VoidGram нельзя считать защищённой — ни в обычных, ни в секретных чатах, ни через одноразовые сообщения.
++
++            6. Автоматическое предупреждение собеседников
++            Чтобы ваши собеседники знали об этом, VoidGram автоматически отправляет от вашего имени предупреждающее сообщение:
++            • в каждый личный чат — один раз, и закрепляет его. Вы не можете удалить или открепить это сообщение в VoidGram; удалить его может только ваш собеседник;
++            • в каждую группу, где вы пишете, — один раз, без закрепления.
++            Сообщение отправляется перед вашим первым сообщением в этом чате. Принимая соглашение, вы соглашаетесь на эту отправку.
++
++            7. Плагины и сторонний код
++            Плагины, темы и скрипты пишут третьи лица. Разработчики VoidGram их не проверяют полностью и не отвечают за их работу, безопасность и последствия использования. Устанавливайте только то, чему доверяете.
++
++            8. Данные
++            Настройки, история и архивы VoidGram хранятся локально на вашем устройстве. Для значков и некоторых функций приложение обращается к серверу VoidGram. Разработчики не обязаны хранить, восстанавливать или передавать ваши данные.
++
++            9. Законы
++            Вы обязуетесь использовать VoidGram только в рамках законов вашей страны. Запрещено использовать приложение для слежки, преследования, шантажа, распространения чужих личных данных и любых других незаконных действий.
++
++            10. Изменения
++            Условия могут меняться. При существенных изменениях VoidGram снова попросит принять соглашение. Продолжая пользоваться приложением, вы принимаете действующую редакцию.
++
++            11. Возраст
++            Пользуясь VoidGram, вы подтверждаете, что достигли возраста, с которого в вашей стране разрешено самостоятельно принимать такие условия, либо получили согласие родителей или законных представителей.
++
++            Вы дочитали до конца. Если вы согласны со всеми условиями — нажмите «Принимаю».
++            """
++        } else {
++            return """
++            VoidGram User Agreement
++
++            Please read this agreement carefully to the end. The "Accept" button becomes available only after you scroll the text all the way down. By tapping "Accept" you confirm that you have read, understood and fully agree to every term below. If you do not agree, do not use VoidGram and delete the app.
++
++            1. Unofficial client
++            VoidGram is an unofficial Telegram client. It is not affiliated with, endorsed or supported by Telegram FZ-LLC, Telegram Messenger Inc. or their partners. Telegram names and trademarks belong to their owners.
++
++            2. "As is", no warranty
++            VoidGram is provided "as is" and "as available", without any warranty, express or implied, including warranties of operation, security, accuracy, compatibility, fitness for a particular purpose and freedom from errors. The app may be unstable, lose data or stop working at any time.
++
++            3. No liability
++            The developers, contributors and distributors of VoidGram accept NO liability for any direct, indirect, incidental, special or consequential damage related to using or being unable to use the app, including but not limited to:
++            • a ban, limit, freeze or deletion of your Telegram account;
++            • loss, corruption, leak or disclosure of messages, media, contacts or any other data;
++            • actions of other users, bots, plugins and third parties;
++            • financial losses, including Stars, gifts, NFTs and subscriptions;
++            • the consequences of breaking Telegram's rules, the laws of your country or the rights of others.
++            You alone are responsible for how you use VoidGram.
++
++            4. Telegram's rules
++            Some VoidGram features (for example Ghost Mode, keeping deleted and edited messages, keeping view-once media) may conflict with the Telegram API Terms of Service and Telegram's Terms of Service. You turn them on at your own risk and understand that Telegram may restrict your account.
++
++            5. Privacy of conversations
++            VoidGram can keep deleted and edited messages and view-once photos, videos and voice messages on the device, and allows screenshots where ordinary Telegram forbids them. A conversation with a VoidGram user therefore cannot be considered protected: not in ordinary chats, not in secret chats and not with view-once messages.
++
++            6. Automatic notice to the people you talk to
++            So that the people you talk to know this, VoidGram automatically sends a warning message on your behalf:
++            • to every private chat, once, and pins it. You cannot delete or unpin it in VoidGram; only the other person can delete it;
++            • to every group you write in, once, without pinning.
++            The message is sent before your first message in that chat. By accepting this agreement you agree to it being sent.
++
++            7. Plugins and third-party code
++            Plugins, themes and scripts are written by third parties. The VoidGram developers do not fully review them and are not responsible for how they work, their safety or the consequences of using them. Install only what you trust.
++
++            8. Data
++            VoidGram settings, history and archives are stored locally on your device. For badges and some features the app contacts the VoidGram server. The developers are not obliged to store, restore or hand over your data.
++
++            9. Law
++            You agree to use VoidGram only within the laws of your country. Using the app for surveillance, stalking, blackmail, spreading other people's personal data or any other unlawful activity is forbidden.
++
++            10. Changes
++            These terms may change. After a substantial change VoidGram will ask you to accept the agreement again. By continuing to use the app you accept the current version.
++
++            11. Age
++            By using VoidGram you confirm that you are old enough in your country to accept such terms yourself, or that you have the consent of your parents or legal guardians.
++
++            You have reached the end. If you agree to all of the terms, tap "Accept".
++            """
++        }
++    }
++}
++
++final class AyuLicenseAgreementView: UIView, UIScrollViewDelegate {
++    var accepted: (() -> Void)?
++
++    private let russian: Bool
++    private let accentColor: UIColor
++    private let titleLabel = UILabel()
++    private let textView = UITextView()
++    private let hintLabel = UILabel()
++    private let progressView = UIProgressView(progressViewStyle: .bar)
++    private let acceptButton = UIButton(type: .system)
++    private let declineButton = UIButton(type: .system)
++    private var reachedEnd = false
++
++    init(frame: CGRect, russian: Bool, accentColor: UIColor) {
++        self.russian = russian
++        self.accentColor = accentColor
++        super.init(frame: frame)
++        self.backgroundColor = UIColor.systemBackground
++
++        self.titleLabel.text = russian ? "Пользовательское соглашение" : "User Agreement"
++        self.titleLabel.font = UIFont.systemFont(ofSize: 22.0, weight: .bold)
++        self.titleLabel.textAlignment = .center
++        self.titleLabel.numberOfLines = 0
++        self.titleLabel.adjustsFontForContentSizeCategory = true
++
++        self.textView.isEditable = false
++        self.textView.isSelectable = false
++        self.textView.alwaysBounceVertical = true
++        self.textView.backgroundColor = UIColor.secondarySystemBackground
++        self.textView.layer.cornerRadius = 14.0
++        self.textView.layer.cornerCurve = .continuous
++        self.textView.textContainerInset = UIEdgeInsets(top: 16.0, left: 12.0, bottom: 24.0, right: 12.0)
++        self.textView.font = UIFont.preferredFont(forTextStyle: .body)
++        self.textView.textColor = UIColor.label
++        self.textView.adjustsFontForContentSizeCategory = true
++        self.textView.text = AyuLicenseAgreement.text(russian: russian)
++        self.textView.delegate = self
++
++        self.progressView.progressTintColor = accentColor
++        self.progressView.trackTintColor = UIColor.tertiarySystemFill
++        self.progressView.progress = 0.0
++
++        self.hintLabel.text = russian ? "Долистайте до самого конца, чтобы принять" : "Scroll to the very end to accept"
++        self.hintLabel.font = UIFont.preferredFont(forTextStyle: .footnote)
++        self.hintLabel.textColor = UIColor.secondaryLabel
++        self.hintLabel.textAlignment = .center
++        self.hintLabel.numberOfLines = 0
++
++        self.acceptButton.setTitle(russian ? "Принимаю" : "Accept", for: .normal)
++        self.acceptButton.titleLabel?.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)
++        self.acceptButton.setTitleColor(.white, for: .normal)
++        self.acceptButton.setTitleColor(UIColor.white.withAlphaComponent(0.8), for: .disabled)
++        self.acceptButton.layer.cornerRadius = 12.0
++        self.acceptButton.layer.cornerCurve = .continuous
++        self.acceptButton.addTarget(self, action: #selector(self.acceptPressed), for: .touchUpInside)
++
++        self.declineButton.setTitle(russian ? "Не принимаю" : "Decline", for: .normal)
++        self.declineButton.titleLabel?.font = UIFont.systemFont(ofSize: 15.0)
++        self.declineButton.setTitleColor(UIColor.secondaryLabel, for: .normal)
++        self.declineButton.addTarget(self, action: #selector(self.declinePressed), for: .touchUpInside)
++
++        for view in [self.titleLabel, self.textView, self.progressView, self.hintLabel, self.acceptButton, self.declineButton] as [UIView] {
++            view.translatesAutoresizingMaskIntoConstraints = false
++            self.addSubview(view)
++        }
++        let guide = self.safeAreaLayoutGuide
++        // Readable width on iPad and Mac; full width (with a 16 pt gutter) on a phone.
++        let content = UILayoutGuide()
++        self.addLayoutGuide(content)
++        let maxWidth = content.widthAnchor.constraint(lessThanOrEqualToConstant: 640.0)
++        let fill = content.widthAnchor.constraint(equalTo: guide.widthAnchor, constant: -32.0)
++        fill.priority = .defaultHigh
++        NSLayoutConstraint.activate([
++            content.centerXAnchor.constraint(equalTo: guide.centerXAnchor),
++            content.topAnchor.constraint(equalTo: guide.topAnchor),
++            content.bottomAnchor.constraint(equalTo: guide.bottomAnchor),
++            maxWidth,
++            fill,
++            content.widthAnchor.constraint(lessThanOrEqualTo: guide.widthAnchor, constant: -32.0),
++
++            self.titleLabel.topAnchor.constraint(equalTo: content.topAnchor, constant: 20.0),
++            self.titleLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor),
++            self.titleLabel.trailingAnchor.constraint(equalTo: content.trailingAnchor),
++
++            self.textView.topAnchor.constraint(equalTo: self.titleLabel.bottomAnchor, constant: 16.0),
++            self.textView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
++            self.textView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
++
++            self.progressView.topAnchor.constraint(equalTo: self.textView.bottomAnchor, constant: 10.0),
++            self.progressView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
++            self.progressView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
++            self.progressView.heightAnchor.constraint(equalToConstant: 3.0),
++
++            self.hintLabel.topAnchor.constraint(equalTo: self.progressView.bottomAnchor, constant: 8.0),
++            self.hintLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor),
++            self.hintLabel.trailingAnchor.constraint(equalTo: content.trailingAnchor),
++
++            self.acceptButton.topAnchor.constraint(equalTo: self.hintLabel.bottomAnchor, constant: 12.0),
++            self.acceptButton.leadingAnchor.constraint(equalTo: content.leadingAnchor),
++            self.acceptButton.trailingAnchor.constraint(equalTo: content.trailingAnchor),
++            self.acceptButton.heightAnchor.constraint(equalToConstant: 50.0),
++
++            self.declineButton.topAnchor.constraint(equalTo: self.acceptButton.bottomAnchor, constant: 4.0),
++            self.declineButton.centerXAnchor.constraint(equalTo: content.centerXAnchor),
++            self.declineButton.heightAnchor.constraint(equalToConstant: 40.0),
++            self.declineButton.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -8.0)
++        ])
++        self.updateAcceptState()
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    override func layoutSubviews() {
++        super.layoutSubviews()
++        // The whole text may fit at once on a large screen: then there is nothing to scroll.
++        self.checkScrollPosition()
++    }
++
++    func scrollViewDidScroll(_ scrollView: UIScrollView) {
++        self.checkScrollPosition()
++    }
++
++    private func checkScrollPosition() {
++        let scrollView = self.textView
++        guard scrollView.bounds.height > 0.0, scrollView.contentSize.height > 0.0 else { return }
++        let visibleBottom = scrollView.contentOffset.y + scrollView.bounds.height - scrollView.adjustedContentInset.bottom
++        let total = scrollView.contentSize.height
++        let maxOffset = max(1.0, total - scrollView.bounds.height + scrollView.adjustedContentInset.bottom)
++        self.progressView.setProgress(Float(min(1.0, max(0.0, scrollView.contentOffset.y / maxOffset))), animated: false)
++        // "The very end": the last line is fully visible (2 pt tolerance for rounding).
++        if !self.reachedEnd && visibleBottom >= total - 2.0 {
++            self.reachedEnd = true
++            self.progressView.setProgress(1.0, animated: true)
++            UISelectionFeedbackGenerator().selectionChanged()
++            UIView.animate(withDuration: 0.2, animations: {
++                self.updateAcceptState()
++            })
++        }
++    }
++
++    private func updateAcceptState() {
++        self.acceptButton.isEnabled = self.reachedEnd
++        self.acceptButton.backgroundColor = self.reachedEnd ? self.accentColor : UIColor.systemGray3
++        self.hintLabel.text = self.reachedEnd ? (self.russian ? "Спасибо, что дочитали" : "Thank you for reading to the end") : (self.russian ? "Долистайте до самого конца, чтобы принять" : "Scroll to the very end to accept")
++    }
++
++    @objc private func acceptPressed() {
++        guard self.reachedEnd else { return }
++        self.accepted?()
++    }
++
++    @objc private func declinePressed() {
++        let alert = UIAlertController(title: self.russian ? "Без согласия нельзя" : "Agreement required", message: self.russian ? "Пользоваться VoidGram можно только после принятия соглашения. Если вы не согласны, удалите приложение." : "VoidGram can be used only after accepting the agreement. If you do not agree, delete the app.", preferredStyle: .alert)
++        alert.addAction(UIAlertAction(title: "OK", style: .default))
++        var presenter = self.window?.rootViewController
++        while let presented = presenter?.presentedViewController {
++            presenter = presented
++        }
++        presenter?.present(alert, animated: true)
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/AyuLyrics.swift b/submodules/TelegramUI/Sources/AyuLyrics.swift
+index 94cc3242..ee290a23 100644
+--- a/submodules/TelegramUI/Sources/AyuLyrics.swift
++++ b/submodules/TelegramUI/Sources/AyuLyrics.swift
+@@ -28,6 +28,10 @@ final class AyuLyricsDiagnostics {
+ /// keeps the best candidate: word timing over line timing over plain text, never a different
+ /// song or recording. Only track metadata is sent; audio is never uploaded.
+ func ayuFetchLyrics(title: String, artist: String?, duration: Double) -> Signal<AyuLyrics, NoError> {
++    // Text the user typed or corrected for this song wins over every source.
++    if let custom = AyuUserLyrics.load(title: title, artist: artist, duration: duration) {
++        return .single(custom)
++    }
+     // Sped-up / slowed uploads: find the original without a length lock, then stretch its
+     // timeline by how much faster or slower this file is.
+     if let tempo = AyuMusicMetadata.tempoVariant(title) {
+diff --git a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
+index 97b92591..5c65de21 100644
+--- a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
++++ b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
+@@ -77,6 +77,7 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+             self?.dismiss()
+         }
+         playerView.lyricsOptions = { [weak self] in self?.showLyricsOptions() }
++        playerView.requestLyricsEditor = { [weak self] in self?.presentLyricsEditor() }
+         self.playerView = playerView
+         self.displayNode.view.addSubview(playerView)
+     }
+@@ -112,6 +113,36 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+         })
+     }
+ 
++    /// VoidGram: type lyrics that were not found, or correct the ones that were.
++    private func presentLyricsEditor() {
++        guard let playerView = self.playerView, !playerView.songTitle.isEmpty else { return }
++        let russian = self.context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let text = AyuUserLyrics.source(title: playerView.songTitle, artist: playerView.songArtist) ?? AyuUserLyrics.editableText(playerView.lyricsOnScreen)
++        let title = playerView.songTitle
++        let editor = AyuLyricsEditorController(title: title, text: text, russian: russian, completion: { [weak self] result in
++            guard let self, let result, let playerView = self.playerView, playerView.songTitle == title else { return }
++            if !playerView.applyUserLyrics(result) {
++                self.showDone(russian ? "Не удалось сохранить текст." : "The text could not be saved.")
++            }
++        })
++        let navigation = UINavigationController(rootViewController: editor)
++        navigation.modalPresentationStyle = .formSheet
++        navigation.overrideUserInterfaceStyle = .dark
++        self.context.sharedContext.applicationBindings.presentNativeController(navigation)
++    }
++
++    private func showNightLookOptions() {
++        let russian = self.context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let menu = UIAlertController(title: russian ? "Ночной режим плеера" : "Player night look", message: russian ? "Ночью фон плеера становится теплее и темнее, а текст не слепит." : "At night the player's backdrop turns warmer and darker, and the text glares less.", preferredStyle: .actionSheet)
++        for mode in AyuPlayerNightLook.allCases {
++            menu.addAction(UIAlertAction(title: mode.title(russian) + (mode == AyuPlayerNightLook.current ? " ✓" : ""), style: .default, handler: { _ in AyuPlayerNightLook.current = mode }))
++        }
++        menu.addAction(UIAlertAction(title: russian ? "Отмена" : "Cancel", style: .cancel))
++        menu.popoverPresentationController?.sourceView = self.view
++        menu.popoverPresentationController?.sourceRect = CGRect(x: self.view.bounds.midX, y: self.view.bounds.maxY - 80.0, width: 1.0, height: 1.0)
++        self.context.sharedContext.applicationBindings.presentNativeController(menu)
++    }
++
+     private func showDone(_ text: String) {
+         let alert = UIAlertController(title: nil, message: text, preferredStyle: .alert)
+         alert.addAction(UIAlertAction(title: "OK", style: .default))
+@@ -164,6 +195,18 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+             self.importingLyricsFor = self.playerView?.lyricsIdentity
+             self.context.sharedContext.applicationBindings.presentNativeController(picker)
+         }))
++        // VoidGram: custom and corrected lyrics.
++        let hasLyricsText: Bool
++        switch self.playerView?.lyricsOnScreen {
++        case .synced?, .plain?: hasLyricsText = true
++        default: hasLyricsText = false
++        }
++        menu.addAction(UIAlertAction(title: hasLyricsText ? (russian ? "Изменить текст песни" : "Edit lyrics") : (russian ? "Написать свой текст" : "Write your own lyrics"), style: .default, handler: { [weak self] _ in self?.presentLyricsEditor() }))
++        if self.playerView?.hasUserLyrics == true {
++            menu.addAction(UIAlertAction(title: russian ? "Вернуть найденный текст" : "Restore found lyrics", style: .destructive, handler: { [weak self] _ in self?.playerView?.revertUserLyrics() }))
++        }
++        menu.addAction(UIAlertAction(title: (russian ? "Ночной режим: " : "Night look: ") + AyuPlayerNightLook.current.title(russian), style: .default, handler: { [weak self] _ in self?.showNightLookOptions() }))
++        menu.addAction(UIAlertAction(title: (russian ? "Строка песни в мини-плеере" : "Lyrics line in the mini player") + (AyuMiniLyrics.isEnabled ? " ✓" : ""), style: .default, handler: { _ in AyuMiniLyrics.isEnabled = !AyuMiniLyrics.isEnabled }))
+         if self.playerView?.currentHapticsFile != nil {
+             menu.addAction(UIAlertAction(title: russian ? "Музыка в профиле…" : "Profile music…", style: .default, handler: { [weak self] _ in self?.showProfileMusicOptions() }))
+         }
+@@ -342,6 +385,13 @@ final class AyuMusicPlayerView: UIView {
+     private let backdropNode = TransformImageNode()
+     private let backdropBlur = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
+     private let backdropDim = UIView()
++    /// VoidGram night look: a warm, darker backdrop and less glare from the white text.
++    private let nightTint = UIView()
++    private let nightGlare = UIView()
++    private var nightTimer: Foundation.Timer?
++    private var nightLookOn = false
++    /// Opens the lyrics editor (the controller presents it).
++    var requestLyricsEditor: (() -> Void)?
+     private let grabber = UIView()
+ 
+     private let artworkShadow = UIView()
+@@ -423,6 +473,17 @@ final class AyuMusicPlayerView: UIView {
+         self.addSubview(self.backdropBlur)
+         self.backdropDim.backgroundColor = UIColor(white: 0.0, alpha: 0.28)
+         self.addSubview(self.backdropDim)
++        self.nightTint.isUserInteractionEnabled = false
++        self.nightTint.backgroundColor = UIColor(red: 0.16, green: 0.08, blue: 0.02, alpha: 1.0)
++        self.nightTint.alpha = 0.0
++        self.addSubview(self.nightTint)
++        self.nightGlare.isUserInteractionEnabled = false
++        self.nightGlare.backgroundColor = UIColor(red: 0.04, green: 0.02, blue: 0.0, alpha: 1.0)
++        self.nightGlare.alpha = 0.0
++        self.nightTimer = Foundation.Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true, block: { [weak self] _ in
++            self?.applyNightLook(animated: true)
++        })
++        self.appearanceObservers.append(NotificationCenter.default.addObserver(forName: AyuPlayerNightLook.didChangeNotification, object: nil, queue: .main, using: { [weak self] _ in self?.applyNightLook(animated: true) }))
+         for name in [AyuPlayerTextStyle.didChangeNotification, UIAccessibility.reduceMotionStatusDidChangeNotification] {
+             self.appearanceObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main, using: { [weak self] _ in self?.applyPlayerAppearance() }))
+         }
+@@ -457,6 +518,18 @@ final class AyuMusicPlayerView: UIView {
+         self.lyricsView.seek = { [weak self] time in
+             self?.control(.seek(time))
+         }
++        self.lyricsView.requestCustomLyrics = { [weak self] in
++            self?.requestLyricsEditor?()
++        }
++        self.lyricsView.lyricsChanged = { [weak self] lyrics in
++            guard let self else { return }
++            // The mini player shows the line being sung from the same text.
++            if case let .synced(lines)? = lyrics {
++                AyuMiniLyrics.shared.update(title: self.title, artist: self.artist, lines: lines.map { AyuMiniLyrics.Line(time: $0.time, endTime: $0.endTime, text: $0.text) })
++            } else {
++                AyuMiniLyrics.shared.update(title: self.title, artist: self.artist, lines: nil)
++            }
++        }
+         self.addSubview(self.lyricsView)
+         self.queueView.isHidden = true
+         self.queueView.haptics = { [weak self] in
+@@ -541,6 +614,8 @@ final class AyuMusicPlayerView: UIView {
+         let pan = UIPanGestureRecognizer(target: self, action: #selector(self.dismissPan(_:)))
+         self.addGestureRecognizer(pan)
+         self.debugOverlay.isHidden = !AyuDeveloperSettings.shared.playerDebugOverlay
++        // The night glare filter sits over every control (it takes no touches).
++        self.addSubview(self.nightGlare)
+         self.addSubview(self.debugOverlay)
+ 
+         self.stateDisposable = (context.sharedContext.mediaManager.musicMediaPlayerState
+@@ -571,6 +646,7 @@ final class AyuMusicPlayerView: UIView {
+         self.stateDisposable?.dispose()
+         self.lyricsDisposable?.dispose()
+         self.displayLink?.invalidate()
++        self.nightTimer?.invalidate()
+     }
+ 
+     private func applyPlayerAppearance() {
+@@ -580,6 +656,60 @@ final class AyuMusicPlayerView: UIView {
+         case "aurora": self.backdropDim.backgroundColor = UIColor(red: 0.13, green: 0.07, blue: 0.24, alpha: 0.72)
+         default: self.backdropDim.backgroundColor = UIColor(white: 0.0, alpha: 0.28)
+         }
++        self.applyNightLook(animated: false)
++    }
++
++    private func applyNightLook(animated: Bool) {
++        let on = AyuPlayerNightLook.isActiveNow
++        guard on != self.nightLookOn || !animated else { return }
++        self.nightLookOn = on
++        let apply = {
++            self.nightTint.alpha = on ? 0.42 : 0.0
++            self.nightGlare.alpha = on ? 0.22 : 0.0
++        }
++        if animated && !UIAccessibility.isReduceMotionEnabled {
++            UIView.animate(withDuration: 1.2, delay: 0.0, options: [.beginFromCurrentState, .allowUserInteraction], animations: apply)
++        } else {
++            apply()
++        }
++    }
++
++    // MARK: Custom lyrics
++
++    var songTitle: String { return self.title }
++    var songArtist: String? { return self.artist }
++    var lyricsOnScreen: AyuLyrics? { return self.lyricsView.currentLyrics }
++    var hasUserLyrics: Bool { return !self.title.isEmpty && AyuUserLyrics.has(title: self.title, artist: self.artist) }
++
++    /// Saves the user's text for this song and shows it; an empty text goes back to the found one.
++    func applyUserLyrics(_ text: String) -> Bool {
++        guard !self.title.isEmpty else { return false }
++        let duration = self.status?.duration ?? 0.0
++        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
++            self.revertUserLyrics()
++            return true
++        }
++        guard AyuUserLyrics.save(text, title: self.title, artist: self.artist), let lyrics = AyuUserLyrics.parse(text, duration: duration) else { return false }
++        self.lyricsDisposable?.dispose()
++        self.lyricsTrackKey = self.trackKey
++        self.lyricsView.set(lyrics: lyrics, loading: false, russian: self.russian)
++        if case let .plain(plain) = lyrics, let trackKey = self.trackKey {
++            self.timePlainLyrics(plain, trackKey: trackKey, duration: duration)
++        }
++        if !self.showsLyrics { self.lyricsPressed() }
++        self.tick()
++        return true
++    }
++
++    /// Forgets the user's text for this song and looks the lyrics up again.
++    func revertUserLyrics() {
++        AyuUserLyrics.remove(title: self.title, artist: self.artist)
++        self.lyricsTrackKey = nil
++        if self.showsLyrics {
++            self.loadLyrics()
++        } else {
++            self.lyricsPressed()
++        }
+     }
+ 
+     // MARK: State
+@@ -973,6 +1103,10 @@ final class AyuMusicPlayerView: UIView {
+         var lines = ayuParseLyricsfile(source, duration: self.status?.duration)
+         if lines.isEmpty { lines = ayuParseLrc(source, duration: self.status?.duration) }
+         guard !lines.isEmpty else { return false }
++        // VoidGram: an imported file is kept for this song, like a typed text.
++        if !self.title.isEmpty {
++            AyuUserLyrics.save(source, title: self.title, artist: self.artist)
++        }
+         self.lyricsDisposable?.dispose()
+         self.lyricsTrackKey = self.trackKey
+         self.lyricsView.set(lyrics: .synced(lines), loading: false, russian: self.russian)
+@@ -1073,6 +1207,8 @@ final class AyuMusicPlayerView: UIView {
+         applyBackdrop()
+         self.backdropBlur.frame = bounds
+         self.backdropDim.frame = bounds
++        self.nightTint.frame = bounds
++        self.nightGlare.frame = bounds
+ 
+         self.grabber.frame = CGRect(x: floor((size.width - 36.0) / 2.0), y: insets.top + 6.0, width: 36.0, height: 5.0)
+ 
+@@ -1350,6 +1486,12 @@ private final class AyuMusicScrubber: UIView {
+ /// lines are dimmed, and tapping a synced line seeks to it.
+ private final class AyuLyricsView: UIView {
+     var seek: ((Double) -> Void)?
++    /// VoidGram: tapping "No lyrics found" offers to type the text.
++    var requestCustomLyrics: (() -> Void)?
++    /// VoidGram: the lyrics now on screen changed (the mini player follows them).
++    var lyricsChanged: ((AyuLyrics?) -> Void)?
++    /// The lyrics now on screen, for editing.
++    private(set) var currentLyrics: AyuLyrics?
+     private var animationStyle: AyuPlayerTextStyle { return AyuPlayerTextStyle.current.effective(reduceMotion: UIAccessibility.isReduceMotionEnabled) }
+ 
+     func refreshTextStyle() {
+@@ -1399,6 +1541,8 @@ private final class AyuLyricsView: UIView {
+         self.statusLabel.textColor = UIColor(white: 1.0, alpha: 0.6)
+         self.statusLabel.textAlignment = .center
+         self.statusLabel.numberOfLines = 0
++        self.statusLabel.isUserInteractionEnabled = true
++        self.statusLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.statusTapped)))
+         self.addSubview(self.statusLabel)
+         self.timingLabel.font = .systemFont(ofSize: 11.0)
+         self.timingLabel.textColor = UIColor(white: 1.0, alpha: 0.5)
+@@ -1420,6 +1564,16 @@ private final class AyuLyricsView: UIView {
+         self.userScrollUntil = CACurrentMediaTime() + 3.0
+     }
+ 
++    @objc private func statusTapped() {
++        guard let lyrics = self.currentLyrics else { return }
++        switch lyrics {
++        case .notFound, .instrumental:
++            self.requestCustomLyrics?()
++        default:
++            break
++        }
++    }
++
+     func set(lyrics: AyuLyrics?, loading: Bool, russian: Bool) {
+         for label in self.lineLabels {
+             label.removeFromSuperview()
+@@ -1450,11 +1604,15 @@ private final class AyuLyricsView: UIView {
+             case let .plain(text):
+                 texts = text.components(separatedBy: .newlines)
+             case .instrumental:
+-                status = russian ? "Инструментальная композиция" : "Instrumental"
++                status = russian ? "Инструментальная композиция\n\nНажмите, чтобы добавить свой текст" : "Instrumental\n\nTap to add your own text"
+             case .notFound:
+-                status = russian ? "Слова для этого трека не найдены" : "No lyrics found for this track"
++                status = russian ? "Слова для этого трека не найдены\n\nНажмите, чтобы добавить свой текст" : "No lyrics found for this track\n\nTap to add your own text"
+             }
+         }
++        self.currentLyrics = loading ? nil : lyrics
++        if !loading {
++            self.lyricsChanged?(lyrics)
++        }
+         self.statusLabel.text = status
+         self.statusLabel.isHidden = status == nil
+         let synced = !self.lines.isEmpty
+diff --git a/submodules/TelegramUI/Sources/AyuUserLyrics.swift b/submodules/TelegramUI/Sources/AyuUserLyrics.swift
+new file mode 100644
+index 00000000..c127e991
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuUserLyrics.swift
+@@ -0,0 +1,234 @@
++import Foundation
++import UIKit
++import CryptoKit
++import SwiftSignalKit
++import AccountContext
++
++/// Lyrics the user typed or corrected in the player. They live in Application Support (not the
++/// cache, so the system never drops them), one file per song (title + artist), and win over every
++/// online source. LRC timestamps make them timed; anything else is plain text.
++enum AyuUserLyrics {
++    private struct Entry: Codable {
++        let updated: Date
++        let title: String
++        let artist: String?
++        let source: String
++    }
++
++    private static var directory: URL? {
++        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("ayu-user-lyrics-v1", isDirectory: true)
++    }
++
++    private static func key(title: String, artist: String?) -> String {
++        let identity = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() + "\u{0}" + (artist ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
++        return SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
++    }
++
++    static func source(title: String, artist: String?) -> String? {
++        guard let directory, let data = try? Data(contentsOf: directory.appendingPathComponent(key(title: title, artist: artist) + ".json")), data.count <= 1_048_576, let entry = try? JSONDecoder().decode(Entry.self, from: data) else { return nil }
++        return entry.source
++    }
++
++    static func has(title: String, artist: String?) -> Bool {
++        return source(title: title, artist: artist) != nil
++    }
++
++    /// The saved text as lyrics for a track of `duration` seconds.
++    static func load(title: String, artist: String?, duration: Double) -> AyuLyrics? {
++        guard let source = source(title: title, artist: artist) else { return nil }
++        return parse(source, duration: duration)
++    }
++
++    static func parse(_ source: String, duration: Double) -> AyuLyrics? {
++        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
++        guard !trimmed.isEmpty else { return nil }
++        var lines = ayuParseLyricsfile(trimmed, duration: duration > 0.0 ? duration : nil)
++        if lines.isEmpty {
++            lines = ayuParseLrc(trimmed, duration: duration > 0.0 ? duration : nil)
++        }
++        if !lines.isEmpty {
++            return .synced(lines)
++        }
++        return .plain(trimmed)
++    }
++
++    /// Saves `source`; an empty text removes the saved one. Returns false when it cannot be written.
++    @discardableResult
++    static func save(_ source: String, title: String, artist: String?) -> Bool {
++        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
++        guard let directory else { return false }
++        let url = directory.appendingPathComponent(key(title: title, artist: artist) + ".json")
++        if trimmed.isEmpty {
++            try? FileManager.default.removeItem(at: url)
++            return true
++        }
++        guard trimmed.utf8.count <= 512 * 1024, let data = try? JSONEncoder().encode(Entry(updated: Date(), title: title, artist: artist, source: trimmed)) else { return false }
++        do {
++            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
++            try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
++            return true
++        } catch {
++            return false
++        }
++    }
++
++    static func remove(title: String, artist: String?) {
++        guard let directory else { return }
++        try? FileManager.default.removeItem(at: directory.appendingPathComponent(key(title: title, artist: artist) + ".json"))
++    }
++
++    /// Editable text for lyrics on screen: timed lines become LRC ("[01:02.35] text"), so the
++    /// timing survives an edit; plain text stays as it is.
++    static func editableText(_ lyrics: AyuLyrics?) -> String {
++        guard let lyrics else { return "" }
++        switch lyrics {
++        case let .synced(lines):
++            return lines.map { line in
++                let time = max(0.0, line.time)
++                let minutes = Int(time) / 60
++                let seconds = time - Double(minutes * 60)
++                return String(format: "[%02d:%05.2f] ", minutes, seconds) + line.text
++            }.joined(separator: "\n")
++        case let .plain(text):
++            return text
++        case .instrumental, .notFound:
++            return ""
++        }
++    }
++}
++
++/// Timed lines for the mini player, from the same lookup as the full player.
++func ayuInstallMiniLyrics() {
++    AyuMiniLyrics.shared.fetch = { title, artist, duration in
++        return ayuFetchLyrics(title: title, artist: artist, duration: duration)
++        |> deliverOn(Queue.concurrentDefaultQueue())
++        |> map { lyrics -> [AyuMiniLyrics.Line]? in
++            if case let .synced(lines) = ayuApplyLyricsPlugins(lyrics) {
++                return lines.map { AyuMiniLyrics.Line(time: $0.time, endTime: $0.endTime, text: $0.text) }
++            }
++            return nil
++        }
++    }
++}
++
++/// A full-screen text editor for the player's lyrics.
++final class AyuLyricsEditorController: UIViewController, UITextViewDelegate {
++    private let russian: Bool
++    private let initialText: String
++    private let songTitle: String
++    private let completion: (String?) -> Void
++    private let textView = UITextView()
++    private let hintLabel = UILabel()
++
++    /// `completion(nil)`: cancelled; otherwise the text to save (empty: remove the custom text).
++    init(title: String, text: String, russian: Bool, completion: @escaping (String?) -> Void) {
++        self.songTitle = title
++        self.initialText = text
++        self.russian = russian
++        self.completion = completion
++        super.init(nibName: nil, bundle: nil)
++        self.modalPresentationStyle = .formSheet
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        self.view.backgroundColor = UIColor.systemBackground
++        self.navigationItem.title = self.songTitle
++        self.navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .cancel, target: self, action: #selector(self.cancelPressed))
++        self.navigationItem.rightBarButtonItem = UIBarButtonItem(title: self.russian ? "Сохранить" : "Save", style: .done, target: self, action: #selector(self.savePressed))
++
++        self.hintLabel.text = self.russian ? "Каждая строка — отдельная строка песни. Чтобы текст шёл синхронно, оставьте или добавьте время в начале строки: [01:23.45] Текст строки." : "One line per line of the song. To keep the text in sync, keep or add a time at the start of a line: [01:23.45] Line text."
++        self.hintLabel.font = UIFont.preferredFont(forTextStyle: .footnote)
++        self.hintLabel.textColor = UIColor.secondaryLabel
++        self.hintLabel.numberOfLines = 0
++        self.hintLabel.adjustsFontForContentSizeCategory = true
++
++        self.textView.text = self.initialText
++        self.textView.font = UIFont.preferredFont(forTextStyle: .body)
++        self.textView.adjustsFontForContentSizeCategory = true
++        self.textView.autocorrectionType = .no
++        self.textView.smartQuotesType = .no
++        self.textView.smartDashesType = .no
++        self.textView.alwaysBounceVertical = true
++        self.textView.keyboardDismissMode = .interactive
++        self.textView.backgroundColor = UIColor.secondarySystemBackground
++        self.textView.layer.cornerRadius = 12.0
++        self.textView.layer.cornerCurve = .continuous
++        self.textView.textContainerInset = UIEdgeInsets(top: 12.0, left: 8.0, bottom: 12.0, right: 8.0)
++        self.textView.delegate = self
++
++        for view in [self.hintLabel, self.textView] as [UIView] {
++            view.translatesAutoresizingMaskIntoConstraints = false
++            self.view.addSubview(view)
++        }
++        let guide = self.view.safeAreaLayoutGuide
++        NSLayoutConstraint.activate([
++            self.hintLabel.topAnchor.constraint(equalTo: guide.topAnchor, constant: 12.0),
++            self.hintLabel.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 16.0),
++            self.hintLabel.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16.0),
++            self.textView.topAnchor.constraint(equalTo: self.hintLabel.bottomAnchor, constant: 12.0),
++            self.textView.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 16.0),
++            self.textView.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16.0),
++            self.textView.bottomAnchor.constraint(equalTo: self.view.keyboardLayoutGuide.topAnchor, constant: -12.0)
++        ])
++    }
++
++    override func viewDidAppear(_ animated: Bool) {
++        super.viewDidAppear(animated)
++        self.textView.becomeFirstResponder()
++    }
++
++    @objc private func cancelPressed() {
++        self.view.endEditing(true)
++        self.dismiss(animated: true, completion: { [completion] in completion(nil) })
++    }
++
++    @objc private func savePressed() {
++        let text = self.textView.text ?? ""
++        self.view.endEditing(true)
++        self.dismiss(animated: true, completion: { [completion] in completion(text) })
++    }
++}
++
++/// The player's night look: a warmer, darker backdrop and dimmer text, so the player is easy on
++/// the eyes in the dark. Automatic from 22:00 to 7:00 by default.
++enum AyuPlayerNightLook: Int, CaseIterable {
++    case automatic = 0
++    case always = 1
++    case never = 2
++
++    private static let key = "ayu.player.night"
++    static let didChangeNotification = Notification.Name("VoidGram.PlayerNightLookChanged")
++
++    static var current: AyuPlayerNightLook {
++        get { return AyuPlayerNightLook(rawValue: UserDefaults.standard.integer(forKey: key)) ?? .automatic }
++        set {
++            UserDefaults.standard.set(newValue.rawValue, forKey: key)
++            NotificationCenter.default.post(name: didChangeNotification, object: nil)
++        }
++    }
++
++    static var isActiveNow: Bool {
++        switch current {
++        case .always:
++            return true
++        case .never:
++            return false
++        case .automatic:
++            let hour = Calendar.current.component(.hour, from: Date())
++            return hour >= 22 || hour < 7
++        }
++    }
++
++    func title(_ russian: Bool) -> String {
++        switch self {
++        case .automatic: return russian ? "Авто (22:00–7:00)" : "Auto (22:00–7:00)"
++        case .always: return russian ? "Всегда" : "Always"
++        case .never: return russian ? "Выключен" : "Off"
++        }
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
+index d916dd55..758ec0eb 100644
+--- a/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
+@@ -3390,6 +3390,10 @@ extension ChatControllerImpl {
+                 }
+             }
+         }, unpinMessage: { [weak self] id, askForConfirmation, contextController in
++            if let self, self.ayuRefusesUnpin(id) {
++                contextController?.dismiss(completion: {})
++                return
++            }
+             let impl: () -> Void = {
+                 guard let strongSelf = self else {
+                     return
+diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
+index e73fc0a3..6004d012 100644
+--- a/submodules/TelegramUI/Sources/ChatController.swift
++++ b/submodules/TelegramUI/Sources/ChatController.swift
+@@ -7971,6 +7971,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+             |> deliverOnMainQueue).startStandalone(next: { peer in
+                 if let peer { archive.record(peer) }
+             })
++            // VoidGram: put the privacy notice back on top if its pin was removed.
++            if peerId.namespace == Namespaces.Peer.CloudUser {
++                AyuChatNoticePins.ensurePinned(context: self.context, peerId: peerId)
++            }
+         }
+ 
+         self.didAppear = true
+@@ -9471,6 +9475,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+             if commit || !isScheduledMessages {
+                 self.commitPurposefulAction()
+                 
++                // VoidGram: the privacy notice goes before the first own message in this chat.
++                if !isScheduledMessages && !shouldDivert && !postpone {
++                    self.ayuSendChatNoticeIfNeeded(peerId: peerId)
++                }
+                 let transformedMessages = self.transformEnqueueMessages(messages, postpone: postpone)
+                 let multiReplyTargets = self.takeMultiReplyTargets(transformedMessages)
+                 let _ = (enqueueMessages(account: self.context.account, peerId: peerId, messages: transformedMessages)
+diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
+index b9a5a108..e2539af5 100644
+--- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
++++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
+@@ -1786,7 +1786,9 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+                 }
+             }
+             
+-            if let pinnedSelectedMessageId = pinnedSelectedMessageId {
++            if let pinnedSelectedMessageId = pinnedSelectedMessageId, messages.contains(where: { $0.id == pinnedSelectedMessageId && AyuChatNotice.isProtected($0, accountPeerId: chatPresentationInterfaceState.accountPeerId) }) {
++                // VoidGram: the own privacy notice stays pinned.
++            } else if let pinnedSelectedMessageId = pinnedSelectedMessageId {
+                 actions.append(.action(ContextMenuActionItem(text: chatPresentationInterfaceState.strings.Conversation_Unpin, icon: { theme in
+                     return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Unpin"), color: theme.actionSheet.primaryTextColor)
+                 }, action: { c, _ in
+@@ -3103,6 +3105,15 @@ func chatAvailableMessageActionsImpl(engine: TelegramEngine, accountPeerId: Engi
+             }
+         }
+                 
++        // VoidGram: the account's own privacy notice offers no Delete (see AyuChatNotice).
++        for id in messageIds {
++            if let message = getMessage(id), AyuChatNotice.isProtected(message, accountPeerId: accountPeerId) {
++                optionsMap[id]?.remove(.deleteLocally)
++                optionsMap[id]?.remove(.deleteGlobally)
++                optionsMap[id]?.remove(.unsendPersonal)
++            }
++        }
++
+         if !optionsMap.isEmpty {
+             var reducedOptions = optionsMap.values.first!
+             for value in optionsMap.values {
+diff --git a/submodules/TelegramUI/Sources/SharedAccountContext.swift b/submodules/TelegramUI/Sources/SharedAccountContext.swift
+index 4bd1106e..72be4d4b 100644
+--- a/submodules/TelegramUI/Sources/SharedAccountContext.swift
++++ b/submodules/TelegramUI/Sources/SharedAccountContext.swift
+@@ -385,7 +385,10 @@ public final class SharedAccountContextImpl: SharedAccountContext {
+         self.currentInAppNotificationSettings = Atomic(value: initialPresentationDataAndSettings.inAppNotificationSettings)
+         self.currentChatSettings = Atomic(value: initialPresentationDataAndSettings.chatSettings)
+         
+-        if automaticEnergyUsageShouldBeOnNow(settings: self.currentAutomaticMediaDownloadSettings) {
++        if let ayuSettings = AyuPowerSaving.effectiveSettingsNow(base: self.currentAutomaticMediaDownloadSettings.energyUsageSettings) {
++            // VoidGram power saving profile for this kind of device.
++            self.energyUsageSettings = ayuSettings
++        } else if automaticEnergyUsageShouldBeOnNow(settings: self.currentAutomaticMediaDownloadSettings) {
+             self.energyUsageSettings = EnergyUsageSettings.powerSavingDefault
+         } else {
+             self.energyUsageSettings = self.currentAutomaticMediaDownloadSettings.energyUsageSettings
+@@ -573,15 +576,20 @@ public final class SharedAccountContextImpl: SharedAccountContext {
+             if let strongSelf = self {
+                 strongSelf.currentAutomaticMediaDownloadSettings = next
+                 
+-                if automaticEnergyUsageShouldBeOnNow(settings: next) {
++                if let ayuSettings = AyuPowerSaving.effectiveSettingsNow(base: next.energyUsageSettings) {
++                    strongSelf.energyUsageSettings = ayuSettings
++                } else if automaticEnergyUsageShouldBeOnNow(settings: next) {
+                     strongSelf.energyUsageSettings = EnergyUsageSettings.powerSavingDefault
+                 } else {
+                     strongSelf.energyUsageSettings = next.energyUsageSettings
+                 }
+-                strongSelf.energyUsageAutomaticDisposable.set((automaticEnergyUsageShouldBeOn(settings: next)
+-                |> deliverOnMainQueue).start(next: { value in
++                strongSelf.energyUsageAutomaticDisposable.set((combineLatest(automaticEnergyUsageShouldBeOn(settings: next), AyuPowerSaving.effectiveSettings(base: next.energyUsageSettings))
++                |> deliverOnMainQueue).start(next: { value, ayuSettings in
+                     if let strongSelf = self {
+-                        if value {
++                        if let ayuSettings {
++                            // VoidGram power saving profile for this kind of device.
++                            strongSelf.energyUsageSettings = ayuSettings
++                        } else if value {
+                             strongSelf.energyUsageSettings = EnergyUsageSettings.powerSavingDefault
+                         } else {
+                             strongSelf.energyUsageSettings = next.energyUsageSettings
+diff --git a/submodules/TelegramUIPreferences/Sources/AyuPowerSaving.swift b/submodules/TelegramUIPreferences/Sources/AyuPowerSaving.swift
+new file mode 100644
+index 00000000..6be3e6e3
+--- /dev/null
++++ b/submodules/TelegramUIPreferences/Sources/AyuPowerSaving.swift
+@@ -0,0 +1,220 @@
++import Foundation
++import UIKit
++import SwiftSignalKit
++
++/// VoidGram power saving (Settings → VoidGram → More → Power saving): one profile per kind of
++/// device, so the same backup can carry a phone, a tablet and a laptop (the app on a Mac). Each
++/// profile chooses when saving turns on (never, below a battery level, always) and extra triggers
++/// (system Low Power Mode, running on battery), and what it turns off. A profile left on "Telegram"
++/// keeps Telegram's own Power Saving screen in charge.
++public enum AyuPowerSaving {
++    public enum DeviceKind: String, CaseIterable {
++        case phone
++        case tablet
++        case laptop
++
++        public static var current: DeviceKind {
++            if ProcessInfo.processInfo.isiOSAppOnMac || ProcessInfo.processInfo.isMacCatalystApp {
++                return .laptop
++            }
++            return UIDevice.current.userInterfaceIdiom == .pad ? .tablet : .phone
++        }
++
++        public func title(_ russian: Bool) -> String {
++            switch self {
++            case .phone: return russian ? "Телефон" : "Phone"
++            case .tablet: return russian ? "Планшет" : "Tablet"
++            case .laptop: return russian ? "Ноутбук (Mac)" : "Laptop (Mac)"
++            }
++        }
++    }
++
++    public enum Mode: Int, CaseIterable {
++        /// Telegram's own Power Saving settings decide.
++        case telegram = 0
++        case off = 1
++        case battery = 2
++        case always = 3
++
++        public func title(_ russian: Bool) -> String {
++            switch self {
++            case .telegram: return russian ? "Как в Telegram" : "Telegram's setting"
++            case .off: return russian ? "Никогда" : "Never"
++            case .battery: return russian ? "При низком заряде" : "When battery is low"
++            case .always: return russian ? "Всегда" : "Always"
++            }
++        }
++    }
++
++    /// What a profile turns off while it is saving power.
++    public enum Limit: String, CaseIterable {
++        case autoplayVideo
++        case autoplayGif
++        case loopStickers
++        case loopEmoji
++        case translucency
++        case backgroundWork
++        case backgroundDownloads
++
++        public func title(_ russian: Bool) -> String {
++            switch self {
++            case .autoplayVideo: return russian ? "Автовоспроизведение видео" : "Autoplay videos"
++            case .autoplayGif: return russian ? "Автовоспроизведение GIF" : "Autoplay GIFs"
++            case .loopStickers: return russian ? "Анимация стикеров" : "Animated stickers"
++            case .loopEmoji: return russian ? "Анимация эмодзи" : "Animated emoji"
++            case .translucency: return russian ? "Размытие и стекло" : "Blur and glass"
++            case .backgroundWork: return russian ? "Работа в фоне" : "Background work"
++            case .backgroundDownloads: return russian ? "Загрузки в фоне" : "Background downloads"
++            }
++        }
++    }
++
++    public struct Profile: Equatable {
++        public var mode: Mode
++        /// Battery percent at or below which `.battery` saves power (5…95).
++        public var threshold: Int
++        /// Also save power while iOS/macOS Low Power Mode is on.
++        public var followLowPowerMode: Bool
++        /// Save power whenever the device is not charging (useful on a laptop).
++        public var onBatteryOnly: Bool
++        /// Limits that are turned off while saving.
++        public var limits: Set<Limit>
++
++        public static func defaults(for kind: DeviceKind) -> Profile {
++            switch kind {
++            case .phone:
++                return Profile(mode: .telegram, threshold: 20, followLowPowerMode: true, onBatteryOnly: false, limits: Set(Limit.allCases))
++            case .tablet:
++                return Profile(mode: .telegram, threshold: 15, followLowPowerMode: true, onBatteryOnly: false, limits: [.autoplayVideo, .autoplayGif, .loopEmoji, .backgroundWork, .backgroundDownloads])
++            case .laptop:
++                return Profile(mode: .telegram, threshold: 20, followLowPowerMode: true, onBatteryOnly: true, limits: [.autoplayVideo, .loopEmoji, .translucency, .backgroundDownloads])
++            }
++        }
++    }
++
++    public static let didChangeNotification = Notification.Name("VoidGram.PowerSavingChanged")
++
++    private static func key(_ kind: DeviceKind, _ name: String) -> String {
++        return "ayu.power.\(kind.rawValue).\(name)"
++    }
++
++    public static func profile(for kind: DeviceKind) -> Profile {
++        let defaults = UserDefaults.standard
++        var profile = Profile.defaults(for: kind)
++        if let mode = defaults.object(forKey: key(kind, "mode")) as? Int, let value = Mode(rawValue: mode) {
++            profile.mode = value
++        }
++        if let threshold = defaults.object(forKey: key(kind, "threshold")) as? Int {
++            profile.threshold = min(95, max(5, threshold))
++        }
++        if let value = defaults.object(forKey: key(kind, "lowPower")) as? Bool {
++            profile.followLowPowerMode = value
++        }
++        if let value = defaults.object(forKey: key(kind, "onBattery")) as? Bool {
++            profile.onBatteryOnly = value
++        }
++        if let limits = defaults.stringArray(forKey: key(kind, "limits")) {
++            profile.limits = Set(limits.compactMap(Limit.init(rawValue:)))
++        }
++        return profile
++    }
++
++    public static func setProfile(_ profile: Profile, for kind: DeviceKind) {
++        let defaults = UserDefaults.standard
++        defaults.set(profile.mode.rawValue, forKey: key(kind, "mode"))
++        defaults.set(min(95, max(5, profile.threshold)), forKey: key(kind, "threshold"))
++        defaults.set(profile.followLowPowerMode, forKey: key(kind, "lowPower"))
++        defaults.set(profile.onBatteryOnly, forKey: key(kind, "onBattery"))
++        defaults.set(profile.limits.map(\.rawValue).sorted(), forKey: key(kind, "limits"))
++        NotificationCenter.default.post(name: didChangeNotification, object: nil)
++    }
++
++    public static func resetProfile(for kind: DeviceKind) {
++        for name in ["mode", "threshold", "lowPower", "onBattery", "limits"] {
++            UserDefaults.standard.removeObject(forKey: key(kind, name))
++        }
++        NotificationCenter.default.post(name: didChangeNotification, object: nil)
++    }
++
++    // MARK: Evaluation
++
++    /// Whether the profile of this device is saving power right now. Nil: Telegram decides.
++    public static func isSavingNow(_ profile: Profile = AyuPowerSaving.profile(for: .current)) -> Bool? {
++        if profile.mode == .telegram {
++            return nil
++        }
++        let device = UIDevice.current
++        if !device.isBatteryMonitoringEnabled {
++            device.isBatteryMonitoringEnabled = true
++        }
++        if profile.followLowPowerMode && ProcessInfo.processInfo.isLowPowerModeEnabled {
++            return true
++        }
++        let state = device.batteryState
++        if profile.onBatteryOnly && state == .unplugged {
++            return true
++        }
++        switch profile.mode {
++        case .telegram, .off:
++            return false
++        case .always:
++            return true
++        case .battery:
++            let level = device.batteryLevel
++            // Charging, full, or no battery (a desktop Mac reports -1): nothing to save.
++            if level < 0.0 || state == .charging || state == .full {
++                return false
++            }
++            return level <= Float(profile.threshold) / 100.0
++        }
++    }
++
++    /// `base` with this device's profile applied right now. Nil: Telegram decides.
++    public static func effectiveSettingsNow(base: EnergyUsageSettings) -> EnergyUsageSettings? {
++        let profile = self.profile(for: .current)
++        guard let saving = self.isSavingNow(profile) else { return nil }
++        return saving ? self.apply(profile.limits, to: base) : base
++    }
++
++    public static func apply(_ limits: Set<Limit>, to base: EnergyUsageSettings) -> EnergyUsageSettings {
++        var settings = base
++        for limit in limits {
++            switch limit {
++            case .autoplayVideo: settings.autoplayVideo = false
++            case .autoplayGif: settings.autoplayGif = false
++            case .loopStickers: settings.loopStickers = false
++            case .loopEmoji: settings.loopEmoji = false
++            case .translucency: settings.fullTranslucency = false
++            case .backgroundWork: settings.extendBackgroundWork = false
++            case .backgroundDownloads: settings.autodownloadInBackground = false
++            }
++        }
++        return settings
++    }
++
++    /// Re-evaluates on battery level and state changes, Low Power Mode changes, profile changes,
++    /// and once a minute (battery notifications are coarse). Nil: Telegram decides.
++    public static func effectiveSettings(base: EnergyUsageSettings) -> Signal<EnergyUsageSettings?, NoError> {
++        return Signal { subscriber in
++            subscriber.putNext(self.effectiveSettingsNow(base: base))
++            let names: [Notification.Name] = [UIDevice.batteryLevelDidChangeNotification, UIDevice.batteryStateDidChangeNotification, Notification.Name.NSProcessInfoPowerStateDidChange, didChangeNotification]
++            let observers = names.map { name in
++                NotificationCenter.default.addObserver(forName: name, object: nil, queue: OperationQueue.main, using: { _ in
++                    subscriber.putNext(self.effectiveSettingsNow(base: base))
++                })
++            }
++            let timer = SwiftSignalKit.Timer(timeout: 60.0, repeat: true, completion: {
++                subscriber.putNext(self.effectiveSettingsNow(base: base))
++            }, queue: Queue.mainQueue())
++            timer.start()
++            return ActionDisposable {
++                timer.invalidate()
++                for observer in observers {
++                    NotificationCenter.default.removeObserver(observer)
++                }
++            }
++        }
++        |> runOn(Queue.mainQueue())
++        |> distinctUntilChanged
++    }
++}
