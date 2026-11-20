@@ -262,7 +262,7 @@ index 3a5413c..b59a1e4 100644
          int lastDec = 0;
          int KCount = 0;
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java b/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java
-index b1e2120..dac0771 100644
+index b1e2120..b0b367c 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java
 @@ -1214,6 +1214,8 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
@@ -310,7 +310,55 @@ index b1e2120..dac0771 100644
  
          if (videoPlayer != null) {
              try {
-@@ -5372,6 +5389,8 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+@@ -5088,6 +5105,47 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+         });
+     }
+ 
++    /**
++     * VoidGram "Audio → voice": 48 kHz mono 16-bit PCM into an Ogg Opus voice file, with the same
++     * encoder as the microphone recorder. Not while a recording runs.
++     */
++    public boolean voidgramEncodeVoice(String path, byte[] pcm) {
++        if (pcm == null || path == null || audioRecorder != null || audioRecorderV2Active || fileEncodingQueue == null) {
++            return false;
++        }
++        final boolean[] ok = new boolean[1];
++        final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
++        fileEncodingQueue.postRunnable(() -> {
++            try {
++                if (startRecord(path, 48000) == 0) {
++                    return;
++                }
++                ByteBuffer frame = ByteBuffer.allocateDirect(1920);
++                frame.order(ByteOrder.nativeOrder());
++                int offset = 0;
++                while (offset < pcm.length) {
++                    int count = Math.min(1920, pcm.length - offset);
++                    frame.clear();
++                    frame.put(pcm, offset, count);
++                    frame.flip();
++                    writeFrame(frame, count);
++                    offset += count;
++                }
++                stopRecord();
++                ok[0] = true;
++            } catch (Throwable e) {
++                FileLog.e(e);
++            } finally {
++                latch.countDown();
++            }
++        });
++        try {
++            latch.await(5, java.util.concurrent.TimeUnit.MINUTES);
++        } catch (InterruptedException ignore) {
++        }
++        return ok[0];
++    }
++
+     public boolean isRecordingPaused() {
+         if (audioRecorderV2Active) {
+             return audioRecorderV2Controller != null && audioRecorderV2Controller.isPreviewing();
+@@ -5372,6 +5430,8 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                  recordSendMessageChatArguments = sendMessageChatArguments;
                  fileBuffer.rewind();
  
@@ -319,7 +367,7 @@ index b1e2120..dac0771 100644
                  audioRecorder.startRecording();
              } catch (Exception e) {
                  FileLog.e(e);
-@@ -5570,7 +5589,9 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+@@ -5570,7 +5630,9 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
          ignoreOnPause = false;
      }
  
@@ -5519,10 +5567,10 @@ index 0000000..20f36d4
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramTranscribe.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramTranscribe.java
 new file mode 100644
-index 0000000..50992be
+index 0000000..452e814
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramTranscribe.java
-@@ -0,0 +1,375 @@
+@@ -0,0 +1,374 @@
 +package org.telegram.messenger.voidgram;
 +
 +import android.Manifest;
@@ -5649,7 +5697,7 @@ index 0000000..50992be
 +            return;
 +        }
 +        Utilities.globalQueue.postRunnable(() -> {
-+            byte[] pcm = decode(file);
++            byte[] pcm = decodePcm(file, SAMPLE_RATE, 20 * 60);
 +            AndroidUtilities.runOnUIThread(() -> {
 +                if (pcm == null || pcm.length == 0) {
 +                    result.run(null, VoidGram.t("Не удалось подготовить аудио.", "The audio could not be prepared."));
@@ -5660,9 +5708,8 @@ index 0000000..50992be
 +        });
 +    }
 +
-+    /** First audio track → 16 kHz mono 16-bit PCM. */
-+    @androidx.annotation.RequiresApi(33)
-+    private static byte[] decode(File file) {
++    /** First audio track → mono 16-bit little-endian PCM at targetRate, at most maxSeconds long. */
++    public static byte[] decodePcm(File file, int targetRate, int maxSeconds) {
 +        MediaExtractor extractor = new MediaExtractor();
 +        MediaCodec codec = null;
 +        try {
@@ -5692,7 +5739,7 @@ index 0000000..50992be
 +            boolean inputDone = false;
 +            boolean outputDone = false;
 +            double position = 0;
-+            long limit = 20L * 60 * SAMPLE_RATE * 2;
++            long limit = (long) maxSeconds * targetRate * 2;
 +            while (!outputDone && out.size() < limit) {
 +                if (!inputDone) {
 +                    int inputIndex = codec.dequeueInputBuffer(10000);
@@ -5724,7 +5771,7 @@ index 0000000..50992be
 +                        output.limit(info.offset + info.size);
 +                        java.nio.ShortBuffer samples = output.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer();
 +                        int frames = samples.remaining() / Math.max(1, channels);
-+                        double step = sampleRate / (double) SAMPLE_RATE;
++                        double step = sampleRate / (double) targetRate;
 +                        // Mono mix, then nearest-sample resampling to 16 kHz.
 +                        while (position < frames) {
 +                            int frame = (int) position;
@@ -6915,6 +6962,108 @@ index 529eb5c..e8358f5 100644
          return (dialogListStories != null && dialogListStories.size() > 0) || hasSelfStories();
      }
  
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramAudioToVoice.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramAudioToVoice.java
+new file mode 100644
+index 0000000..b2d9d40
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramAudioToVoice.java
+@@ -0,0 +1,96 @@
++package org.telegram.ui.voidgram;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.FileLoader;
++import org.telegram.messenger.MediaController;
++import org.telegram.messenger.MessageObject;
++import org.telegram.messenger.R;
++import org.telegram.messenger.SendMessagesHelper;
++import org.telegram.messenger.SharedConfig;
++import org.telegram.messenger.UserConfig;
++import org.telegram.messenger.Utilities;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramTranscribe;
++import org.telegram.tgnet.ConnectionsManager;
++import org.telegram.tgnet.TLRPC;
++import org.telegram.ui.ActionBar.AlertDialog;
++import org.telegram.ui.ChatActivity;
++import org.telegram.ui.Components.BulletinFactory;
++
++import java.io.File;
++
++/**
++ * "Audio → voice", as on iOS: a music or audio file is decoded, encoded with the voice
++ * recorder's Opus encoder and sent to this chat as a voice message with a waveform.
++ * Long files are cut at 10 minutes.
++ */
++public final class VoidGramAudioToVoice {
++    private VoidGramAudioToVoice() {
++    }
++
++    private static final int RATE = 48000;
++    private static final int MAX_SECONDS = 600;
++
++    public static boolean canConvert(MessageObject message) {
++        return message != null && message.getDocument() != null && (message.isMusic() || message.getDocument().mime_type != null && message.getDocument().mime_type.startsWith("audio/") && !message.isVoice());
++    }
++
++    public static void send(ChatActivity chat, MessageObject message) {
++        if (chat == null || chat.getParentActivity() == null || !canConvert(message)) {
++            return;
++        }
++        File source = FileLoader.getInstance(message.currentAccount).getPathToMessage(message.messageOwner);
++        if (source == null || !source.exists()) {
++            BulletinFactory.of(chat).createErrorBulletin(VoidGram.t("Сначала загрузите аудио.", "Download the audio first.")).show();
++            return;
++        }
++        final int account = chat.getCurrentAccount();
++        final long dialogId = chat.getDialogId();
++        AlertDialog progress = new AlertDialog(chat.getParentActivity(), AlertDialog.ALERT_TYPE_SPINNER);
++        progress.show();
++        Utilities.globalQueue.postRunnable(() -> {
++            byte[] pcm = VoidGramTranscribe.decodePcm(source, RATE, MAX_SECONDS);
++            TLRPC.TL_document document = null;
++            File target = null;
++            if (pcm != null && pcm.length > RATE / 5) {
++                document = new TLRPC.TL_document();
++                document.file_reference = new byte[0];
++                document.dc_id = Integer.MIN_VALUE;
++                document.id = SharedConfig.getLastLocalId();
++                document.user_id = UserConfig.getInstance(account).getClientUserId();
++                document.mime_type = "audio/ogg";
++                SharedConfig.saveConfig();
++                target = new File(FileLoader.getDirectory(FileLoader.MEDIA_DIR_AUDIO), FileLoader.getAttachFileName(document));
++                if (!MediaController.getInstance().voidgramEncodeVoice(target.getAbsolutePath(), pcm)) {
++                    document = null;
++                } else {
++                    TLRPC.TL_documentAttributeAudio audio = new TLRPC.TL_documentAttributeAudio();
++                    audio.voice = true;
++                    audio.duration = pcm.length / 2.0 / RATE;
++                    audio.waveform = MediaController.getWaveform(target.getAbsolutePath());
++                    if (audio.waveform != null) {
++                        audio.flags |= 4;
++                    }
++                    document.attributes.add(audio);
++                    document.size = (int) target.length();
++                    document.date = ConnectionsManager.getInstance(account).getCurrentTime();
++                }
++            }
++            final TLRPC.TL_document finalDocument = document;
++            final File finalTarget = target;
++            AndroidUtilities.runOnUIThread(() -> {
++                try {
++                    progress.dismiss();
++                } catch (Throwable ignore) {
++                }
++                if (finalDocument == null) {
++                    BulletinFactory.of(chat).createErrorBulletin(VoidGram.t("Не удалось сделать голосовое из этого аудио.", "Couldn't turn this audio into a voice message.")).show();
++                    return;
++                }
++                SendMessagesHelper.SendMessageParams params = SendMessagesHelper.SendMessageParams.of(finalDocument, null, finalTarget.getAbsolutePath(), dialogId, null, null, null, null, null, null, true, 0, 0, 0, null, null, false);
++                SendMessagesHelper.getInstance(account).sendMessage(params);
++                BulletinFactory.of(chat).createSimpleBulletin(R.raw.voip_invite, VoidGram.t("Отправлено как голосовое", "Sent as a voice message")).show();
++            });
++        });
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatExportSheet.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatExportSheet.java
 new file mode 100644
 index 0000000..53c13b2
@@ -8302,10 +8451,10 @@ index 0000000..1c86390
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramOnlineTools.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramOnlineTools.java
 new file mode 100644
-index 0000000..23e4b08
+index 0000000..129dc78
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramOnlineTools.java
-@@ -0,0 +1,592 @@
+@@ -0,0 +1,596 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.util.Base64;
@@ -8440,6 +8589,10 @@ index 0000000..23e4b08
 +                    checkFile(fragment, file, name == null || name.isEmpty() ? file.getName() : name);
 +                }
 +            });
++        }
++        if (fragment instanceof org.telegram.ui.ChatActivity && VoidGramAudioToVoice.canConvert(message)) {
++            titles.add(VoidGram.t("Отправить как голосовое", "Send as a voice message"));
++            actions.add(() -> VoidGramAudioToVoice.send((org.telegram.ui.ChatActivity) fragment, message));
 +        }
 +        String text = message.messageOwner != null ? message.messageOwner.message : null;
 +        if (text != null && text.trim().length() > 80) {
