@@ -2273,6 +2273,247 @@ index 0000000..e4f4709
 +        }
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramCustomization.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramCustomization.java
+new file mode 100644
+index 0000000..ea59784
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramCustomization.java
+@@ -0,0 +1,235 @@
++package org.telegram.messenger.voidgram;
++
++import android.graphics.drawable.ColorDrawable;
++import android.graphics.drawable.Drawable;
++import android.graphics.drawable.GradientDrawable;
++
++import org.telegram.ui.ActionBar.Theme;
++
++import java.util.HashMap;
++import java.util.Locale;
++
++/**
++ * Customization, as on iOS: local colours on top of any theme, with 29 ready palettes. Only this
++ * device sees them.
++ */
++public final class VoidGramCustomization {
++    private VoidGramCustomization() {
++    }
++
++    /** Colour slots, in the order of the settings screen. */
++    public static final String[] COLORS = {"accent", "outgoingBubble", "outgoingText", "incomingBubble", "incomingText", "wallpaper", "wallpaperSecond", "listBackground", "chatTitle"};
++
++    public static final class Preset {
++        public final String nameRu;
++        public final String nameEn;
++        public final HashMap<String, String> colors = new HashMap<>();
++
++        Preset(String nameRu, String nameEn, String... pairs) {
++            this.nameRu = nameRu;
++            this.nameEn = nameEn;
++            for (int i = 0; i + 1 < pairs.length; i += 2) {
++                colors.put(pairs[i], pairs[i + 1]);
++            }
++        }
++
++        public String name() {
++            return VoidGram.t(nameRu, nameEn);
++        }
++    }
++
++    public static final Preset[] PRESETS = {
++            new Preset("Монохром тёмный", "Monochrome dark", "accent", "#FFFFFF", "outgoingBubble", "#FFFFFF", "outgoingText", "#000000", "incomingBubble", "#1C1C1E", "incomingText", "#FFFFFF", "wallpaper", "#000000", "listBackground", "#000000", "chatTitle", "#FFFFFF"),
++            new Preset("Монохром светлый", "Monochrome light", "accent", "#000000", "outgoingBubble", "#000000", "outgoingText", "#FFFFFF", "incomingBubble", "#F2F2F2", "incomingText", "#000000", "wallpaper", "#FFFFFF", "listBackground", "#FFFFFF", "chatTitle", "#000000"),
++            new Preset("Тёмная", "Dark", "accent", "#8E8E93", "outgoingBubble", "#2C2C2E", "outgoingText", "#FFFFFF", "incomingBubble", "#1C1C1E", "incomingText", "#FFFFFF", "wallpaper", "#000000", "listBackground", "#000000", "chatTitle", "#FFFFFF"),
++            new Preset("Светлая", "Light", "accent", "#007AFF", "outgoingBubble", "#E1F0FF", "outgoingText", "#000000", "incomingBubble", "#FFFFFF", "incomingText", "#000000", "wallpaper", "#F2F2F7", "chatTitle", "#000000"),
++            new Preset("Синяя", "Blue", "accent", "#0A84FF", "outgoingBubble", "#0A5BD8", "outgoingText", "#FFFFFF", "incomingBubble", "#14233F", "incomingText", "#E3EEFF", "wallpaper", "#06101F", "wallpaperSecond", "#0D2244", "listBackground", "#06101F"),
++            new Preset("Фиолетовая", "Purple", "accent", "#BF5AF2", "outgoingBubble", "#7B3FD1", "outgoingText", "#FFFFFF", "incomingBubble", "#25183B", "incomingText", "#F1E7FF", "wallpaper", "#110A1E", "wallpaperSecond", "#2A1446", "listBackground", "#110A1E"),
++            new Preset("Сакура", "Sakura", "accent", "#FF6FA8", "outgoingBubble", "#FFC1DA", "outgoingText", "#3A0A1F", "wallpaper", "#FFF0F6", "wallpaperSecond", "#FFD6E8"),
++            new Preset("Океан", "Ocean", "accent", "#1E88E5", "outgoingBubble", "#BBDEFB", "outgoingText", "#0D2A4A", "wallpaper", "#E3F2FD", "wallpaperSecond", "#B3E5FC"),
++            new Preset("Лес", "Forest", "accent", "#2E7D32", "outgoingBubble", "#C8E6C9", "outgoingText", "#0F2E12", "wallpaper", "#E8F5E9", "wallpaperSecond", "#DCEDC8"),
++            new Preset("Закат", "Sunset", "accent", "#FF7043", "outgoingBubble", "#FFCCBC", "outgoingText", "#3E1408", "wallpaper", "#FFF3E0", "wallpaperSecond", "#FFE0B2"),
++            new Preset("Аметист", "Amethyst", "accent", "#8E5CF7", "outgoingBubble", "#5B3FA8", "outgoingText", "#FFFFFF", "incomingBubble", "#2A2140", "incomingText", "#EDE7FF", "wallpaper", "#140F22", "wallpaperSecond", "#24183D"),
++            new Preset("Неон", "Neon", "accent", "#00E5FF", "outgoingBubble", "#003B46", "outgoingText", "#B2FBFF", "incomingBubble", "#1A1A1A", "incomingText", "#E0E0E0", "wallpaper", "#000000", "wallpaperSecond", "#001A1F"),
++            new Preset("Матрица", "Matrix", "accent", "#00FF41", "outgoingBubble", "#003B00", "outgoingText", "#00FF41", "incomingBubble", "#0D0D0D", "incomingText", "#33FF66", "wallpaper", "#000000", "chatTitle", "#00FF41"),
++            new Preset("AMOLED", "AMOLED", "accent", "#8E5CF7", "outgoingBubble", "#1F1A2E", "outgoingText", "#FFFFFF", "incomingBubble", "#0E0E10", "incomingText", "#FFFFFF", "wallpaper", "#000000", "listBackground", "#000000"),
++            new Preset("Nord", "Nord", "accent", "#88C0D0", "outgoingBubble", "#5E81AC", "outgoingText", "#ECEFF4", "incomingBubble", "#3B4252", "incomingText", "#E5E9F0", "wallpaper", "#2E3440", "wallpaperSecond", "#3B4252", "listBackground", "#2E3440", "chatTitle", "#ECEFF4"),
++            new Preset("Dracula", "Dracula", "accent", "#BD93F9", "outgoingBubble", "#6272A4", "outgoingText", "#F8F8F2", "incomingBubble", "#44475A", "incomingText", "#F8F8F2", "wallpaper", "#282A36", "listBackground", "#282A36", "chatTitle", "#FF79C6"),
++            new Preset("Catppuccin Mocha", "Catppuccin Mocha", "accent", "#CBA6F7", "outgoingBubble", "#45475A", "outgoingText", "#CDD6F4", "incomingBubble", "#313244", "incomingText", "#CDD6F4", "wallpaper", "#1E1E2E", "wallpaperSecond", "#181825", "listBackground", "#1E1E2E", "chatTitle", "#F5C2E7"),
++            new Preset("Catppuccin Latte", "Catppuccin Latte", "accent", "#8839EF", "outgoingBubble", "#DCE0E8", "outgoingText", "#4C4F69", "incomingBubble", "#FFFFFF", "incomingText", "#4C4F69", "wallpaper", "#EFF1F5", "wallpaperSecond", "#E6E9EF", "chatTitle", "#4C4F69"),
++            new Preset("Tokyo Night", "Tokyo Night", "accent", "#7AA2F7", "outgoingBubble", "#3D59A1", "outgoingText", "#C0CAF5", "incomingBubble", "#24283B", "incomingText", "#C0CAF5", "wallpaper", "#1A1B26", "wallpaperSecond", "#16161E", "listBackground", "#1A1B26", "chatTitle", "#BB9AF7"),
++            new Preset("Gruvbox", "Gruvbox", "accent", "#FABD2F", "outgoingBubble", "#504945", "outgoingText", "#EBDBB2", "incomingBubble", "#3C3836", "incomingText", "#EBDBB2", "wallpaper", "#282828", "listBackground", "#282828", "chatTitle", "#FE8019"),
++            new Preset("Solarized тёмная", "Solarized dark", "accent", "#268BD2", "outgoingBubble", "#073642", "outgoingText", "#EEE8D5", "incomingBubble", "#0A3D4A", "incomingText", "#93A1A1", "wallpaper", "#002B36", "listBackground", "#002B36", "chatTitle", "#2AA198"),
++            new Preset("Solarized светлая", "Solarized light", "accent", "#268BD2", "outgoingBubble", "#EEE8D5", "outgoingText", "#586E75", "incomingBubble", "#FFFFFF", "incomingText", "#586E75", "wallpaper", "#FDF6E3", "chatTitle", "#073642"),
++            new Preset("Rosé Pine", "Rosé Pine", "accent", "#EBBCBA", "outgoingBubble", "#403D52", "outgoingText", "#E0DEF4", "incomingBubble", "#26233A", "incomingText", "#E0DEF4", "wallpaper", "#191724", "wallpaperSecond", "#1F1D2E", "listBackground", "#191724", "chatTitle", "#C4A7E7"),
++            new Preset("Мята", "Mint", "accent", "#00A884", "outgoingBubble", "#D2F5E9", "outgoingText", "#0B3B2E", "wallpaper", "#EFFBF6", "wallpaperSecond", "#D8F3E8"),
++            new Preset("Лаванда", "Lavender", "accent", "#7E57C2", "outgoingBubble", "#E6DCFA", "outgoingText", "#2A1858", "wallpaper", "#F5F0FF", "wallpaperSecond", "#E9E0FF"),
++            new Preset("Кофе", "Coffee", "accent", "#C08A5B", "outgoingBubble", "#5A3E2B", "outgoingText", "#F5E6D3", "incomingBubble", "#2E241D", "incomingText", "#EADBC8", "wallpaper", "#1B1410", "wallpaperSecond", "#2A1F18", "listBackground", "#1B1410"),
++            new Preset("Вишня", "Cherry", "accent", "#FF2D55", "outgoingBubble", "#7A0F2A", "outgoingText", "#FFE3EA", "incomingBubble", "#2A0C14", "incomingText", "#FFD9E1", "wallpaper", "#14060A", "wallpaperSecond", "#2B0A14", "listBackground", "#14060A"),
++            new Preset("Полночь", "Midnight", "accent", "#5E9EFF", "outgoingBubble", "#1E3A6E", "outgoingText", "#E6F0FF", "incomingBubble", "#111A2E", "incomingText", "#DCE6F7", "wallpaper", "#070B16", "wallpaperSecond", "#0E1730", "listBackground", "#070B16"),
++            new Preset("Песок", "Sand", "accent", "#B5835A", "outgoingBubble", "#F1E4D3", "outgoingText", "#3D2B1C", "wallpaper", "#FBF6EE", "wallpaperSecond", "#F3E9DA"),
++    };
++
++    private static int revision;
++    private static int cachedRevision = -1;
++    private static Integer[] cached;
++    private static Drawable wallpaper;
++    private static int wallpaperRevision = -1;
++
++    public static String title(String color) {
++        switch (color) {
++            case "accent": return VoidGram.t("Акцент", "Accent");
++            case "outgoingBubble": return VoidGram.t("Мои сообщения", "My bubbles");
++            case "outgoingText": return VoidGram.t("Текст моих сообщений", "My text");
++            case "incomingBubble": return VoidGram.t("Входящие сообщения", "Incoming bubbles");
++            case "incomingText": return VoidGram.t("Текст входящих", "Incoming text");
++            case "wallpaper": return VoidGram.t("Фон чата", "Chat background");
++            case "wallpaperSecond": return VoidGram.t("Второй цвет фона (градиент)", "Second background colour (gradient)");
++            case "listBackground": return VoidGram.t("Фон списков и настроек", "Lists and settings background");
++            default: return VoidGram.t("Имена в списке чатов", "Names in the chat list");
++        }
++    }
++
++    public static String hex(String color) {
++        String value = VoidGram.prefs().getString("custom_" + color, "");
++        return value.isEmpty() ? null : value;
++    }
++
++    /** "#RRGGBB", "RRGGBB" or "RGB"; -1 when not a colour. */
++    public static int parse(String text) {
++        if (text == null) {
++            return -1;
++        }
++        String hex = text.trim().replace("#", "");
++        if (hex.length() == 3) {
++            hex = "" + hex.charAt(0) + hex.charAt(0) + hex.charAt(1) + hex.charAt(1) + hex.charAt(2) + hex.charAt(2);
++        }
++        if (hex.length() != 6) {
++            return -1;
++        }
++        try {
++            return Integer.parseInt(hex, 16);
++        } catch (NumberFormatException e) {
++            return -1;
++        }
++    }
++
++    public static void set(String color, String hex) {
++        int value = parse(hex);
++        if (value < 0) {
++            VoidGram.prefs().edit().remove("custom_" + color).apply();
++        } else {
++            VoidGram.prefs().edit().putString("custom_" + color, String.format(Locale.US, "#%06X", value)).apply();
++        }
++        changed();
++    }
++
++    public static void apply(Preset preset) {
++        android.content.SharedPreferences.Editor editor = VoidGram.prefs().edit();
++        for (String color : COLORS) {
++            String value = preset.colors.get(color);
++            if (value != null) {
++                editor.putString("custom_" + color, value);
++            } else {
++                editor.remove("custom_" + color);
++            }
++        }
++        editor.apply();
++        changed();
++    }
++
++    public static void reset() {
++        android.content.SharedPreferences.Editor editor = VoidGram.prefs().edit();
++        for (String color : COLORS) {
++            editor.remove("custom_" + color);
++        }
++        editor.apply();
++        changed();
++    }
++
++    public static boolean hasColors() {
++        for (String color : COLORS) {
++            if (hex(color) != null) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    private static void changed() {
++        revision++;
++        try {
++            Theme.refreshThemeColors();
++        } catch (Throwable ignore) {
++        }
++    }
++
++    private static int rgb(String color) {
++        return parse(hex(color));
++    }
++
++    private static Integer[] colors() {
++        if (cachedRevision == revision && cached != null) {
++            return cached;
++        }
++        Integer[] result = new Integer[COLORS.length];
++        boolean active = !VoidGramDecoy.isActive();
++        for (int i = 0; i < COLORS.length; i++) {
++            int value = active ? rgb(COLORS[i]) : -1;
++            result[i] = value < 0 ? null : 0xFF000000 | value;
++        }
++        cached = result;
++        cachedRevision = revision;
++        return result;
++    }
++
++    /** Theme.getColor: the colour this key gets from the customization, or null. */
++    public static Integer override(int key) {
++        Integer[] c = colors();
++        if (key == Theme.key_switchTrackChecked || key == Theme.key_windowBackgroundWhiteBlueText4 || key == Theme.key_chats_actionBackground
++                || key == Theme.key_chat_messagePanelSend || key == Theme.key_windowBackgroundWhiteLinkText || key == Theme.key_featuredStickers_addButton
++                || key == Theme.key_radioBackgroundChecked || key == Theme.key_checkboxSquareBackground || key == Theme.key_chats_unreadCounter
++                || key == Theme.key_dialogTextLink) {
++            return c[0];
++        }
++        if (key == Theme.key_chat_outBubble || key == Theme.key_chat_outBubbleSelected || key == Theme.key_chat_outBubbleGradient1
++                || key == Theme.key_chat_outBubbleGradient2 || key == Theme.key_chat_outBubbleGradient3) {
++            return c[1];
++        }
++        if (key == Theme.key_chat_messageTextOut) {
++            return c[2];
++        }
++        if (key == Theme.key_chat_inBubble || key == Theme.key_chat_inBubbleSelected) {
++            return c[3];
++        }
++        if (key == Theme.key_chat_messageTextIn) {
++            return c[4];
++        }
++        if (key == Theme.key_chat_wallpaper) {
++            return c[5];
++        }
++        if (key == Theme.key_windowBackgroundGray || key == Theme.key_windowBackgroundWhite) {
++            return c[7];
++        }
++        if (key == Theme.key_chats_name) {
++            return c[8];
++        }
++        return null;
++    }
++
++    /** Theme wallpaper: a solid colour or a gradient when the chat background is customized. */
++    public static Drawable wallpaper() {
++        Integer[] c = colors();
++        if (c[5] == null) {
++            return null;
++        }
++        if (wallpaper != null && wallpaperRevision == revision) {
++            return wallpaper;
++        }
++        wallpaper = c[6] != null
++                ? new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[]{c[5], c[6]})
++                : new ColorDrawable(c[5]);
++        wallpaperRevision = revision;
++        return wallpaper;
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramDecoy.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramDecoy.java
 new file mode 100644
 index 0000000..4387450
@@ -7558,6 +7799,44 @@ index ab54ee3..76fffa0 100644
      public static native void native_updateDcSettings(int currentAccount);
      public static native void native_moveDatacenter(int currentAccount, int datacenterId);
      public static native void native_setNetworkAvailable(int currentAccount, boolean value, int networkType, boolean slow);
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/ActionBar/Theme.java b/TMessagesProj/src/main/java/org/telegram/ui/ActionBar/Theme.java
+index 7fc7292..1503527 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/ActionBar/Theme.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/ActionBar/Theme.java
+@@ -9098,6 +9098,11 @@ public class Theme {
+     }
+ 
+     public static int getColor(int key, ResourcesProvider provider) {
++        // VoidGram customization: local colours on top of any theme.
++        Integer voidgramColor = org.telegram.messenger.voidgram.VoidGramCustomization.override(key);
++        if (voidgramColor != null) {
++            return voidgramColor;
++        }
+         if (provider != null) {
+             if (provider.isCompactMode()) {
+                 final Integer compactColor = getCompactColor(key, provider);
+@@ -9123,6 +9128,10 @@ public class Theme {
+     }
+ 
+     public static int getColor(int key, boolean[] isDefault, boolean ignoreAnimation) {
++        Integer voidgramColor = org.telegram.messenger.voidgram.VoidGramCustomization.override(key);
++        if (voidgramColor != null) {
++            return voidgramColor;
++        }
+         if (SharedConfig.compactMode) {
+             // compact mode swaps some message colors for its own keys, see getCompactColor
+             final Integer compactColor = getCompactColor(key, null);
+@@ -10048,6 +10057,10 @@ public class Theme {
+     }
+ 
+     public static Drawable getCachedWallpaperNonBlocking() {
++        Drawable voidgramWallpaper = org.telegram.messenger.voidgram.VoidGramCustomization.wallpaper();
++        if (voidgramWallpaper != null) {
++            return voidgramWallpaper;
++        }
+         if (themedWallpaper != null) {
+             return themedWallpaper;
+         } else {
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Cells/ChatMessageCell.java b/TMessagesProj/src/main/java/org/telegram/ui/Cells/ChatMessageCell.java
 index 5dc090f..3f4b262 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/Cells/ChatMessageCell.java
@@ -9155,6 +9434,102 @@ index 0000000..f63c19e
 +        });
 +        builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
 +        showDialog(builder.create());
++    }
++
++    @Override
++    protected boolean onLongClick(UItem item, View view, int position, float x, float y) {
++        return false;
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramCustomizationActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramCustomizationActivity.java
+new file mode 100644
+index 0000000..a62cd76
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramCustomizationActivity.java
+@@ -0,0 +1,90 @@
++package org.telegram.ui.voidgram;
++
++import android.view.View;
++import android.widget.EditText;
++
++import org.telegram.messenger.R;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramCustomization;
++import org.telegram.ui.ActionBar.AlertDialog;
++import org.telegram.ui.ActionBar.Theme;
++import org.telegram.ui.Components.UItem;
++import org.telegram.ui.Components.UniversalAdapter;
++import org.telegram.ui.Components.UniversalFragment;
++
++import java.util.ArrayList;
++
++/** VoidGram → Customization: ready palettes and your own colours on top of any theme. */
++public class VoidGramCustomizationActivity extends UniversalFragment {
++    private static final int ID_PRESET_BASE = 100;
++    private static final int ID_COLOR_BASE = 200;
++    private static final int ID_RESET = 1;
++
++    @Override
++    protected CharSequence getTitle() {
++        return VoidGram.t("Кастомизация", "Customization");
++    }
++
++    @Override
++    protected void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
++        items.add(UItem.asHeader(VoidGram.t("Готовые палитры", "Palettes")));
++        for (int i = 0; i < VoidGramCustomization.PRESETS.length; i++) {
++            VoidGramCustomization.Preset preset = VoidGramCustomization.PRESETS[i];
++            String accent = preset.colors.get("accent");
++            items.add(UItem.asButton(ID_PRESET_BASE + i, preset.name(), accent != null ? "● " + accent : ""));
++        }
++        items.add(UItem.asShadow(VoidGram.t("Палитра заменяет ваши цвета ниже. Видно только на этом устройстве.", "A palette replaces your colours below. Only this device sees them.")));
++        items.add(UItem.asHeader(VoidGram.t("Свои цвета", "Your colours")));
++        for (int i = 0; i < VoidGramCustomization.COLORS.length; i++) {
++            String color = VoidGramCustomization.COLORS[i];
++            String hex = VoidGramCustomization.hex(color);
++            items.add(UItem.asButton(ID_COLOR_BASE + i, VoidGramCustomization.title(color), hex != null ? hex : VoidGram.t("как в теме", "theme")));
++        }
++        items.add(UItem.asShadow(VoidGram.t("Цвет в формате #RRGGBB. Пустое поле — как в теме Telegram. Обновлённый фон чата виден, когда чат открыт заново.", "A colour as #RRGGBB. Empty keeps the Telegram theme's colour. A new chat background shows when the chat is opened again.")));
++        items.add(UItem.asButton(ID_RESET, R.drawable.msg_reset, VoidGram.t("Сбросить кастомизацию", "Reset customization")).red());
++        items.add(UItem.asShadow(null));
++    }
++
++    private void update() {
++        if (listView != null && listView.adapter != null) {
++            listView.adapter.update(true);
++        }
++    }
++
++    @Override
++    protected void onClick(UItem item, View view, int position, float x, float y) {
++        if (item.id == ID_RESET) {
++            VoidGramCustomization.reset();
++            update();
++        } else if (item.id >= ID_PRESET_BASE && item.id - ID_PRESET_BASE < VoidGramCustomization.PRESETS.length) {
++            VoidGramCustomization.apply(VoidGramCustomization.PRESETS[item.id - ID_PRESET_BASE]);
++            update();
++        } else if (item.id >= ID_COLOR_BASE && item.id - ID_COLOR_BASE < VoidGramCustomization.COLORS.length) {
++            String color = VoidGramCustomization.COLORS[item.id - ID_COLOR_BASE];
++            EditText field = new EditText(getContext());
++            String hex = VoidGramCustomization.hex(color);
++            field.setText(hex != null ? hex : "");
++            field.setHint("#8E5CF7");
++            field.setSingleLine(true);
++            field.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
++            AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
++            builder.setTitle(VoidGramCustomization.title(color));
++            builder.setView(field);
++            builder.setPositiveButton(VoidGram.t("Сохранить", "Save"), (d, w) -> {
++                VoidGramCustomization.set(color, field.getText().toString());
++                update();
++            });
++            builder.setNeutralButton(VoidGram.t("Как в теме", "Theme colour"), (d, w) -> {
++                VoidGramCustomization.set(color, null);
++                update();
++            });
++            builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++            showDialog(builder.create());
++        }
 +    }
 +
 +    @Override
@@ -11788,10 +12163,10 @@ index 0000000..70cdf0b
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
 new file mode 100644
-index 0000000..e06ee38
+index 0000000..ab9291f
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
-@@ -0,0 +1,333 @@
+@@ -0,0 +1,338 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.content.Context;
@@ -11839,6 +12214,7 @@ index 0000000..e06ee38
 +    private static final int ID_INTERFACE = 15;
 +    private static final int ID_FEED = 16;
 +    private static final int ID_HIDDEN = 17;
++    private static final int ID_CUSTOMIZATION = 18;
 +    private static final int REQUEST_IMPORT = 9301;
 +
 +    private FrameLayout musicRow;
@@ -11877,6 +12253,7 @@ index 0000000..e06ee38
 +        items.add(UItem.asShadow(VoidGram.t("Текст песни, свой текст и его правка — в меню плеера (⋮).", "Lyrics, your own text and edits are in the player menu (⋮).")));
 +
 +        items.add(UItem.asHeader(VoidGram.t("Оформление", "Appearance")));
++        items.add(UItem.asButton(ID_CUSTOMIZATION, R.drawable.msg_theme, VoidGram.t("Кастомизация", "Customization"), org.telegram.messenger.voidgram.VoidGramCustomization.hasColors() ? VoidGram.t("вкл.", "on") : ""));
 +        items.add(UItem.asButton(ID_INTERFACE, R.drawable.msg_customize, VoidGram.t("Интерфейс", "Interface")));
 +        items.add(UItem.asCheck(ID_BADGES, VoidGram.t("Значки VoidGram", "VoidGram badges")).setChecked(org.telegram.messenger.voidgram.VoidGramBadges.isEnabled()));
 +        items.add(UItem.asShadow(VoidGram.t("Значки и подписи с сервера VoidGram, рядом с именем у тех, у кого нет своего статуса. Видны только в VoidGram. Иконки приложения VoidGram — в Настройках → Оформление → Иконка.", "Badges and labels from the VoidGram server, next to the name of people without their own status. Visible only in VoidGram. VoidGram app icons are in Settings → Appearance → App icon.")));
@@ -11984,6 +12361,9 @@ index 0000000..e06ee38
 +    @Override
 +    protected void onClick(UItem item, View view, int position, float x, float y) {
 +        switch (item.id) {
++            case ID_CUSTOMIZATION:
++                presentFragment(new VoidGramCustomizationActivity());
++                break;
 +            case ID_HIDDEN:
 +                org.telegram.messenger.voidgram.VoidGramHiddenChats.authenticate(() -> presentFragment(new VoidGramHiddenChatsActivity()));
 +                break;
