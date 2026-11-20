@@ -234,10 +234,24 @@ index 37619e6..cf72f60 100644
          final int scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
          if (level >= 0 && scale > 0) {
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java b/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java
-index b1e2120..c4c07f6 100644
+index b1e2120..67b1f3c 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java
-@@ -5570,7 +5570,9 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+@@ -4109,6 +4109,13 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+                 }
+                 audioPlayer.setStreamType(useFrontSpeaker ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
+                 audioPlayer.play();
++                // VoidGram: the music equalizer follows the player's audio session.
++                if (!messageObject.isVoice() && audioPlayer.player != null) {
++                    try {
++                        org.telegram.messenger.voidgram.VoidGramEqualizer.attach(audioPlayer.player.getAudioSessionId());
++                    } catch (Throwable ignore) {
++                    }
++                }
+                 if (!messageObject.isVoice()) {
+                     if (audioVolumeAnimator != null) {
+                         audioVolumeAnimator.removeAllListeners();
+@@ -5570,7 +5577,9 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
          ignoreOnPause = false;
      }
  
@@ -1413,6 +1427,142 @@ index 0000000..cb30503
 +        }
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramEqualizer.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramEqualizer.java
+new file mode 100644
+index 0000000..ca4a20f
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramEqualizer.java
+@@ -0,0 +1,130 @@
++package org.telegram.messenger.voidgram;
++
++import android.media.audiofx.Equalizer;
++
++import org.telegram.messenger.FileLog;
++
++/**
++ * VoidGram music equalizer, as on iOS: presets and per-band gains applied to the music player's
++ * audio session. Off by default.
++ */
++public final class VoidGramEqualizer {
++    public static final String[] PRESETS = {"flat", "bass", "vocal", "treble", "rock", "custom"};
++    /** Gains in dB for five bands (low to high) per preset; others interpolate. */
++    private static final int[][] PRESET_GAINS = {
++        {0, 0, 0, 0, 0},
++        {6, 4, 0, 0, 0},
++        {-2, 0, 4, 3, 0},
++        {0, 0, 0, 3, 6},
++        {4, 2, -1, 2, 4},
++    };
++
++    private static Equalizer equalizer;
++    private static int sessionId;
++
++    private VoidGramEqualizer() {
++    }
++
++    public static boolean isEnabled() {
++        return !VoidGramDecoy.isActive() && VoidGram.prefs().getBoolean("eq_enabled", false);
++    }
++
++    public static void setEnabled(boolean value) {
++        VoidGram.prefs().edit().putBoolean("eq_enabled", value).apply();
++        apply();
++    }
++
++    public static String preset() {
++        return VoidGram.prefs().getString("eq_preset", "flat");
++    }
++
++    public static void setPreset(String preset) {
++        VoidGram.prefs().edit().putString("eq_preset", preset).apply();
++        apply();
++    }
++
++    public static String presetTitle(String preset) {
++        switch (preset) {
++            case "bass": return VoidGram.t("Бас", "Bass");
++            case "vocal": return VoidGram.t("Голос", "Vocal");
++            case "treble": return VoidGram.t("Высокие", "Treble");
++            case "rock": return VoidGram.t("Рок", "Rock");
++            case "custom": return VoidGram.t("Свой", "Custom");
++            default: return VoidGram.t("Ровный", "Flat");
++        }
++    }
++
++    public static final int BANDS = 5;
++
++    public static String bandTitle(int band) {
++        String[] titles = {"60 Hz", "230 Hz", "910 Hz", "3.6 kHz", "14 kHz"};
++        return titles[Math.max(0, Math.min(BANDS - 1, band))];
++    }
++
++    /** Gain of a band (dB, -12…12) for the current preset. */
++    public static int gain(int band) {
++        String preset = preset();
++        for (int i = 0; i < PRESET_GAINS.length; i++) {
++            if (PRESETS[i].equals(preset)) {
++                return PRESET_GAINS[i][band];
++            }
++        }
++        return VoidGram.prefs().getInt("eq_band_" + band, 0);
++    }
++
++    public static void setGain(int band, int db) {
++        VoidGram.prefs().edit().putInt("eq_band_" + band, Math.max(-12, Math.min(12, db))).putString("eq_preset", "custom").apply();
++        apply();
++    }
++
++    /** Called when the music player starts a track. */
++    public static void attach(int audioSessionId) {
++        if (audioSessionId <= 0) {
++            return;
++        }
++        if (audioSessionId != sessionId) {
++            release();
++            sessionId = audioSessionId;
++        }
++        apply();
++    }
++
++    private static void release() {
++        if (equalizer != null) {
++            try {
++                equalizer.release();
++            } catch (Throwable ignore) {
++            }
++            equalizer = null;
++        }
++    }
++
++    private static void apply() {
++        if (sessionId <= 0) {
++            return;
++        }
++        try {
++            if (!isEnabled()) {
++                if (equalizer != null) {
++                    equalizer.setEnabled(false);
++                }
++                return;
++            }
++            if (equalizer == null) {
++                equalizer = new Equalizer(0, sessionId);
++            }
++            short bands = equalizer.getNumberOfBands();
++            short[] range = equalizer.getBandLevelRange();
++            for (short band = 0; band < bands; band++) {
++                // Map the device's bands onto the five VoidGram bands by position.
++                int index = bands <= 1 ? 0 : Math.round(band * (BANDS - 1) / (float) (bands - 1));
++                int level = gain(index) * 100;
++                level = Math.max(range[0], Math.min(range[1], level));
++                equalizer.setBandLevel(band, (short) level);
++            }
++            equalizer.setEnabled(true);
++        } catch (Throwable e) {
++            FileLog.e(e);
++        }
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramFilters.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramFilters.java
 new file mode 100644
 index 0000000..a26d1f2
@@ -1999,10 +2149,10 @@ index 0000000..02e2e04
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLyrics.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLyrics.java
 new file mode 100644
-index 0000000..a733836
+index 0000000..4361737
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLyrics.java
-@@ -0,0 +1,371 @@
+@@ -0,0 +1,471 @@
 +package org.telegram.messenger.voidgram;
 +
 +import android.content.Context;
@@ -2216,10 +2366,110 @@ index 0000000..a733836
 +        });
 +    }
 +
++    // MARK: sources
++
++    public static final String[] SOURCES = {"lrclib", "netease", "lyricsovh"};
++
++    public static boolean sourceEnabled(String source) {
++        return VoidGram.prefs().getBoolean("lyrics_source_" + source, true);
++    }
++
++    public static void setSourceEnabled(String source, boolean value) {
++        VoidGram.prefs().edit().putBoolean("lyrics_source_" + source, value).apply();
++    }
++
++    public static String sourceTitle(String source) {
++        switch (source) {
++            case "netease": return "NetEase";
++            case "lyricsovh": return "lyrics.ovh";
++            default: return "LRCLIB";
++        }
++    }
++
++    /** An LRCLIB-compatible server of the user's own instead of lrclib.net (empty: lrclib.net). */
++    public static String lrclibBase() {
++        String base = VoidGram.prefs().getString("lyrics_lrclib_base", "").trim();
++        if (base.isEmpty()) {
++            return "https://lrclib.net";
++        }
++        return base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
++    }
++
++    public static void setLrclibBase(String value) {
++        VoidGram.prefs().edit().putString("lyrics_lrclib_base", value == null ? "" : value.trim()).apply();
++    }
++
 +    private static Lyrics fetch(String title, String artist, int duration) {
++        Lyrics plain = null;
++        if (sourceEnabled("lrclib")) {
++            Lyrics lyrics = fetchLrclib(title, artist, duration);
++            if (lyrics != null && lyrics.isSynced()) {
++                return lyrics;
++            }
++            plain = lyrics;
++        }
++        if (sourceEnabled("netease")) {
++            Lyrics lyrics = fetchNetease(title, artist);
++            if (lyrics != null && lyrics.isSynced()) {
++                return lyrics;
++            }
++            if (plain == null) {
++                plain = lyrics;
++            }
++        }
++        if (plain == null && sourceEnabled("lyricsovh") && !artist.isEmpty()) {
++            try {
++                String body = load("https://api.lyrics.ovh/v1/" + Uri.encode(artist) + "/" + Uri.encode(title));
++                if (body != null) {
++                    String text = new JSONObject(body).optString("lyrics", "").trim();
++                    if (!text.isEmpty()) {
++                        plain = new Lyrics(null, text, false);
++                    }
++                }
++            } catch (Throwable e) {
++                FileLog.e(e);
++            }
++        }
++        return plain;
++    }
++
++    private static Lyrics fetchNetease(String title, String artist) {
++        try {
++            String body = load("https://music.163.com/api/search/get?type=1&limit=5&s=" + Uri.encode((artist + " " + title).trim()));
++            if (body == null) {
++                return null;
++            }
++            JSONObject result = new JSONObject(body).optJSONObject("result");
++            JSONArray songs = result != null ? result.optJSONArray("songs") : null;
++            if (songs == null) {
++                return null;
++            }
++            for (int i = 0; i < songs.length(); i++) {
++                JSONObject song = songs.getJSONObject(i);
++                String name = song.optString("name", "");
++                if (!name.toLowerCase(Locale.ROOT).contains(title.toLowerCase(Locale.ROOT)) && !title.toLowerCase(Locale.ROOT).contains(name.toLowerCase(Locale.ROOT))) {
++                    continue;
++                }
++                String lyricBody = load("https://music.163.com/api/song/lyric?lv=1&kv=1&tv=-1&id=" + song.optLong("id"));
++                if (lyricBody == null) {
++                    continue;
++                }
++                JSONObject lrc = new JSONObject(lyricBody).optJSONObject("lrc");
++                String text = lrc != null ? lrc.optString("lyric", "") : "";
++                if (!text.trim().isEmpty()) {
++                    return parse(text, false);
++                }
++            }
++        } catch (Throwable e) {
++            FileLog.e(e);
++        }
++        return null;
++    }
++
++    private static Lyrics fetchLrclib(String title, String artist, int duration) {
 +        try {
 +            if (!artist.isEmpty()) {
-+                Uri.Builder get = Uri.parse("https://lrclib.net/api/get").buildUpon()
++                Uri.Builder get = Uri.parse(lrclibBase() + "/api/get").buildUpon()
 +                        .appendQueryParameter("track_name", title)
 +                        .appendQueryParameter("artist_name", artist);
 +                if (duration > 0) {
@@ -2233,7 +2483,7 @@ index 0000000..a733836
 +                    }
 +                }
 +            }
-+            Uri.Builder search = Uri.parse("https://lrclib.net/api/search").buildUpon().appendQueryParameter("track_name", title);
++            Uri.Builder search = Uri.parse(lrclibBase() + "/api/search").buildUpon().appendQueryParameter("track_name", title);
 +            if (!artist.isEmpty()) {
 +                search.appendQueryParameter("artist_name", artist);
 +            }
@@ -4633,6 +4883,119 @@ index 0000000..ce0f21c
 +        return view;
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramMusicActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramMusicActivity.java
+new file mode 100644
+index 0000000..7e9da55
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramMusicActivity.java
+@@ -0,0 +1,107 @@
++package org.telegram.ui.voidgram;
++
++import android.view.View;
++import android.widget.EditText;
++
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramEqualizer;
++import org.telegram.messenger.voidgram.VoidGramLyrics;
++import org.telegram.messenger.voidgram.VoidGramNightLook;
++import org.telegram.ui.ActionBar.AlertDialog;
++import org.telegram.ui.ActionBar.Theme;
++import org.telegram.ui.Components.UItem;
++import org.telegram.ui.Components.UniversalAdapter;
++import org.telegram.ui.Components.UniversalFragment;
++
++import java.util.ArrayList;
++
++/** VoidGram → Music: lyrics sources, mini player line, night look, equalizer. */
++public class VoidGramMusicActivity extends UniversalFragment {
++    private static final int ID_SOURCE_BASE = 10;
++    private static final int ID_SERVER = 20;
++    private static final int ID_MINI = 21;
++    private static final int ID_NIGHT = 22;
++    private static final int ID_EQ = 30;
++    private static final int ID_PRESET_BASE = 40;
++
++    @Override
++    protected CharSequence getTitle() {
++        return VoidGram.t("Музыка", "Music");
++    }
++
++    private void refresh() {
++        if (listView != null && listView.adapter != null) {
++            listView.adapter.update(true);
++        }
++    }
++
++    @Override
++    protected void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
++        items.add(UItem.asHeader(VoidGram.t("Источники текстов песен", "Lyrics sources")));
++        for (int i = 0; i < VoidGramLyrics.SOURCES.length; i++) {
++            String source = VoidGramLyrics.SOURCES[i];
++            items.add(UItem.asCheck(ID_SOURCE_BASE + i, VoidGramLyrics.sourceTitle(source)).setChecked(VoidGramLyrics.sourceEnabled(source)));
++        }
++        items.add(UItem.asButton(ID_SERVER, VoidGram.t("Свой сервер LRCLIB", "Own LRCLIB server"), VoidGramLyrics.lrclibBase().replace("https://", "")));
++        items.add(UItem.asShadow(VoidGram.t("Отправляются только название, исполнитель и длительность трека.", "Only the title, artist and length are sent.")));
++        items.add(UItem.asCheck(ID_MINI, VoidGram.t("Строка песни в мини-плеере", "Lyrics line in the mini player")).setChecked(VoidGramLyrics.isMiniEnabled()));
++        items.add(UItem.asButton(ID_NIGHT, VoidGram.t("Ночной режим плеера", "Player night look"), VoidGramNightLook.modeTitle(VoidGramNightLook.mode())));
++        items.add(UItem.asShadow(null));
++        items.add(UItem.asHeader(VoidGram.t("Эквалайзер", "Equalizer")));
++        boolean eq = VoidGramEqualizer.isEnabled();
++        items.add(UItem.asCheck(ID_EQ, VoidGram.t("Эквалайзер", "Equalizer")).setChecked(eq));
++        if (eq) {
++            String preset = VoidGramEqualizer.preset();
++            for (int i = 0; i < VoidGramEqualizer.PRESETS.length; i++) {
++                items.add(UItem.asRadio(ID_PRESET_BASE + i, VoidGramEqualizer.presetTitle(VoidGramEqualizer.PRESETS[i])).setChecked(VoidGramEqualizer.PRESETS[i].equals(preset)));
++            }
++            for (int band = 0; band < VoidGramEqualizer.BANDS; band++) {
++                final int b = band;
++                items.add(UItem.asHeader(VoidGramEqualizer.bandTitle(band)));
++                items.add(UItem.asIntSlideView(1, -12, VoidGramEqualizer.gain(band), 12, value -> (value > 0 ? "+" : "") + value + VoidGram.t(" дБ", " dB"), value -> VoidGramEqualizer.setGain(b, value)));
++            }
++        }
++        items.add(UItem.asShadow(VoidGram.t("Меняет звук музыки в плеере VoidGram.", "Shapes the music in the VoidGram player.")));
++    }
++
++    @Override
++    protected void onClick(UItem item, View view, int position, float x, float y) {
++        int id = item.id;
++        if (id >= ID_SOURCE_BASE && id < ID_SOURCE_BASE + VoidGramLyrics.SOURCES.length) {
++            String source = VoidGramLyrics.SOURCES[id - ID_SOURCE_BASE];
++            VoidGramLyrics.setSourceEnabled(source, !VoidGramLyrics.sourceEnabled(source));
++        } else if (id == ID_SERVER) {
++            EditText field = new EditText(getContext());
++            field.setText(VoidGram.prefs().getString("lyrics_lrclib_base", ""));
++            field.setHint("https://lrclib.net");
++            field.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
++            AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
++            builder.setTitle(VoidGram.t("Свой сервер LRCLIB", "Own LRCLIB server"));
++            builder.setView(field);
++            builder.setPositiveButton(VoidGram.t("Сохранить", "Save"), (dialog, which) -> {
++                VoidGramLyrics.setLrclibBase(field.getText().toString());
++                refresh();
++            });
++            builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++            showDialog(builder.create());
++            return;
++        } else if (id == ID_MINI) {
++            VoidGramLyrics.setMiniEnabled(!VoidGramLyrics.isMiniEnabled());
++        } else if (id == ID_NIGHT) {
++            presentFragment(new VoidGramNightLookActivity());
++            return;
++        } else if (id == ID_EQ) {
++            VoidGramEqualizer.setEnabled(!VoidGramEqualizer.isEnabled());
++        } else if (id >= ID_PRESET_BASE && id < ID_PRESET_BASE + VoidGramEqualizer.PRESETS.length) {
++            VoidGramEqualizer.setPreset(VoidGramEqualizer.PRESETS[id - ID_PRESET_BASE]);
++        } else {
++            return;
++        }
++        refresh();
++    }
++
++    @Override
++    protected boolean onLongClick(UItem item, View view, int position, float x, float y) {
++        return false;
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramNightLookActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramNightLookActivity.java
 new file mode 100644
 index 0000000..1c86390
@@ -5067,10 +5430,10 @@ index 0000000..61aac10
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
 new file mode 100644
-index 0000000..97b1079
+index 0000000..2861004
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
-@@ -0,0 +1,216 @@
+@@ -0,0 +1,221 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.content.Context;
@@ -5110,6 +5473,7 @@ index 0000000..97b1079
 +    private static final int ID_CHATS = 7;
 +    private static final int ID_PEERS = 8;
 +    private static final int ID_DECOY = 9;
++    private static final int ID_MUSIC = 10;
 +
 +    private FrameLayout musicRow;
 +    private TextView musicButton;
@@ -5139,6 +5503,7 @@ index 0000000..97b1079
 +        items.add(UItem.asShadow(VoidGram.t("Профили для телефона, планшета и ноутбука.", "Profiles for a phone, a tablet and a laptop.")));
 +
 +        items.add(UItem.asHeader(VoidGram.t("Музыка", "Music")));
++        items.add(UItem.asButton(ID_MUSIC, R.drawable.msg_text_outlined, VoidGram.t("Тексты песен и эквалайзер", "Lyrics and equalizer")));
 +        items.add(UItem.asButton(ID_NIGHT, R.drawable.msg_theme, VoidGram.t("Ночной режим плеера", "Player night look"), VoidGramNightLook.modeTitle(VoidGramNightLook.mode())));
 +        items.add(UItem.asCheck(ID_MINI, VoidGram.t("Строка песни в мини-плеере", "Lyrics line in the mini player")).setChecked(VoidGramLyrics.isMiniEnabled()));
 +        items.add(UItem.asShadow(VoidGram.t("Текст песни, свой текст и его правка — в меню плеера (⋮).", "Lyrics, your own text and edits are in the player menu (⋮).")));
@@ -5243,6 +5608,9 @@ index 0000000..97b1079
 +    @Override
 +    protected void onClick(UItem item, View view, int position, float x, float y) {
 +        switch (item.id) {
++            case ID_MUSIC:
++                presentFragment(new VoidGramMusicActivity());
++                break;
 +            case ID_DECOY:
 +                presentFragment(new VoidGramDecoyActivity());
 +                break;
