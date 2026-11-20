@@ -49153,7 +49153,7 @@ index 40cc5e2..8b38ffd 100644
  	});
  }
 diff --git a/Telegram/SourceFiles/mainwidget.cpp b/Telegram/SourceFiles/mainwidget.cpp
-index 96cf0ba..5c2135e 100644
+index 96cf0ba..3787453 100644
 --- a/Telegram/SourceFiles/mainwidget.cpp
 +++ b/Telegram/SourceFiles/mainwidget.cpp
 @@ -105,6 +105,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
@@ -49165,11 +49165,30 @@ index 96cf0ba..5c2135e 100644
  
  
  namespace {
-@@ -292,6 +294,10 @@ MainWidget::MainWidget(
+@@ -292,6 +294,29 @@ MainWidget::MainWidget(
  	if (_dialogs) {
  		setupConnectingWidget();
  	}
 +	VoidGram::AttachEffects(this);
++	{
++		// VoidGram: the iOS night theme is the app's look. Applied once per install; a theme the user picks later stays.
++		const auto marker = cWorkingDir() + u"tdata/voidgram_theme_applied"_q;
++		if (!QFile::exists(marker)) {
++			const auto path = u":/gui/voidgram.tdesktop-theme"_q;
++			crl::on_main(this, [=] {
++				if (Window::Theme::IsNightMode()) {
++					Window::Theme::ApplyDefaultWithPath(path);
++				} else {
++					Window::Theme::ToggleNightMode(path);
++				}
++				Window::Theme::KeepApplied();
++				auto file = QFile(marker);
++				if (file.open(QIODevice::WriteOnly)) {
++					file.close();
++				}
++			});
++		}
++	}
 +	// Liquid Glass stays off until the chat's top bar and composer are capsules over the messages, as in the
 +	// redesign mockup: under every icon button on a flat panel it was only a grey circle.
 +	// VoidGram::InstallLiquidGlass();
