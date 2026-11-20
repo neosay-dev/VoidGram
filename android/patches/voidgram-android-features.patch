@@ -1,3 +1,16 @@
+diff --git a/TMessagesProj/build.gradle b/TMessagesProj/build.gradle
+index 4450811..c22ea78 100644
+--- a/TMessagesProj/build.gradle
++++ b/TMessagesProj/build.gradle
+@@ -50,6 +50,8 @@ dependencies {
+     implementation 'androidx.interpolator:interpolator:1.0.0'
+     implementation 'androidx.biometric:biometric:1.1.0'
+     implementation 'androidx.webkit:webkit:1.14.0'
++    // VoidGram: JavaScript plugins (QuickJS).
++    implementation 'wang.harlon.quickjs:wrapper-android:3.2.3'
+ 
+     implementation 'com.google.android.gms:play-services-cast-framework:21.4.0'
+     implementation "androidx.mediarouter:mediarouter:1.7.0"
 diff --git a/TMessagesProj/jni/TgNetWrapper.cpp b/TMessagesProj/jni/TgNetWrapper.cpp
 index cc9f5d8..8d50c31 100644
 --- a/TMessagesProj/jni/TgNetWrapper.cpp
@@ -583,10 +596,10 @@ index 9881370..262aa9c 100644
                  if (BuildVars.LOGS_ENABLED) {
                      FileLog.d("NotificationsController: process new messages, value is " + value + " ("+dialogId+", "+isChannel+", "+messageObject.isReactionPush+", "+messageObject.isStoryReactionPush+")");
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java b/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
-index 55452d3..5c2d6db 100644
+index 55452d3..afe2d09 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
-@@ -4439,6 +4439,22 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
+@@ -4439,6 +4439,26 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
      }
  
      public void sendMessage(SendMessageParams sendMessageParams) {
@@ -600,6 +613,10 @@ index 55452d3..5c2d6db 100644
 +        org.telegram.messenger.voidgram.VoidGramShortcuts.applyToOutgoing(sendMessageParams);
 +        // VoidGram: group mentions (@team → @alice @bob).
 +        org.telegram.messenger.voidgram.VoidGramGroupMentions.applyToOutgoing(sendMessageParams);
++        // VoidGram plugins: outgoing-text hooks and dot commands (a plugin may cancel the send).
++        if (!org.telegram.messenger.voidgram.VoidGramPlugins.applyOutgoing(currentAccount, sendMessageParams)) {
++            return;
++        }
 +        // VoidGram: a reply to a marked part of a photo (visual quote).
 +        org.telegram.ui.voidgram.VoidGramVisualQuote.applyToOutgoing(sendMessageParams);
 +        // VoidGram: tracking parameters are removed from links.
@@ -6035,6 +6052,875 @@ index 0000000..dc79878
 +        });
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPlugins.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPlugins.java
+new file mode 100644
+index 0000000..b1f2125
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPlugins.java
+@@ -0,0 +1,863 @@
++package org.telegram.messenger.voidgram;
++
++import android.content.Context;
++import android.content.SharedPreferences;
++import android.os.Handler;
++import android.os.HandlerThread;
++import android.widget.Toast;
++
++import com.whl.quickjs.android.QuickJSLoader;
++import com.whl.quickjs.wrapper.JSCallFunction;
++import com.whl.quickjs.wrapper.JSObject;
++import com.whl.quickjs.wrapper.QuickJSContext;
++
++import org.json.JSONArray;
++import org.json.JSONObject;
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.ApplicationLoader;
++import org.telegram.messenger.MediaController;
++import org.telegram.messenger.MessageObject;
++import org.telegram.messenger.R;
++import org.telegram.messenger.SendMessagesHelper;
++import org.telegram.messenger.Utilities;
++
++import java.io.ByteArrayOutputStream;
++import java.io.File;
++import java.io.FileInputStream;
++import java.io.FileOutputStream;
++import java.io.InputStream;
++import java.io.OutputStream;
++import java.net.HttpURLConnection;
++import java.net.URL;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.Iterator;
++import java.util.LinkedHashMap;
++import java.util.Locale;
++import java.util.concurrent.CountDownLatch;
++import java.util.concurrent.TimeUnit;
++
++/**
++ * Code plugins on Android, compatible with the iOS ones: JavaScript files with a "// @key value"
++ * header, each in its own QuickJS context on one private thread, with the same ayu.* API (the
++ * iOS prelude runs unchanged on top of a small bridge). A plugin that throws stays inside its
++ * context; one that does not answer a hook in time is turned off.
++ */
++public final class VoidGramPlugins {
++    private VoidGramPlugins() {
++    }
++
++    public static final class Plugin {
++        public String id;
++        public String name;
++        public String author;
++        public String version;
++        public String description;
++        public String language;
++        public HashSet<String> permissions = new HashSet<>();
++        public ArrayList<String> connect = new ArrayList<>();
++        public boolean enabled;
++        public String disabledReason;
++    }
++
++    private static final class Runtime {
++        Plugin plugin;
++        QuickJSContext context;
++        final HashSet<String> hooks = new HashSet<>();
++        final HashMap<Integer, Runnable> timers = new HashMap<>();
++        boolean stopped;
++    }
++
++    private static HandlerThread thread;
++    private static Handler handler;
++    private static boolean engineFailed;
++    private static final LinkedHashMap<String, Runtime> running = new LinkedHashMap<>();
++    private static final ArrayList<String> console = new ArrayList<>();
++    private static final int CONSOLE_LIMIT = 400;
++
++    // ---- Files and metadata ----
++
++    private static File directory() {
++        File dir = new File(ApplicationLoader.applicationContext.getFilesDir(), "voidgram_plugins");
++        dir.mkdirs();
++        return dir;
++    }
++
++    private static SharedPreferences state() {
++        return ApplicationLoader.applicationContext.getSharedPreferences("voidgram_plugins", Context.MODE_PRIVATE);
++    }
++
++    private static SharedPreferences storage() {
++        return ApplicationLoader.applicationContext.getSharedPreferences("voidgram_plugins_storage", Context.MODE_PRIVATE);
++    }
++
++    private static String read(File file) {
++        try (InputStream in = new FileInputStream(file)) {
++            return readAll(in);
++        } catch (Throwable e) {
++            return null;
++        }
++    }
++
++    private static String readAll(InputStream in) throws Exception {
++        ByteArrayOutputStream out = new ByteArrayOutputStream();
++        byte[] buffer = new byte[16384];
++        int count;
++        while ((count = in.read(buffer)) > 0) {
++            out.write(buffer, 0, count);
++        }
++        return out.toString("UTF-8");
++    }
++
++    /** The "// @key value" header, read without running anything. */
++    public static Plugin preview(String source, String filename) {
++        if (source == null || source.length() > 512 * 1024 || source.indexOf('\0') >= 0) {
++            return null;
++        }
++        String lower = filename == null ? "" : filename.toLowerCase(Locale.ROOT);
++        String language = lower.endsWith(".py") || lower.endsWith(".ayupy") ? "python" : lower.endsWith(".lua") || lower.endsWith(".ayulua") ? "lua" : "js";
++        String prefix = "python".equals(language) ? "#" : "lua".equals(language) ? "--" : "//";
++        HashMap<String, String> fields = new HashMap<>();
++        String[] lines = source.split("\n");
++        for (int i = 0; i < Math.min(80, lines.length); i++) {
++            String trimmed = lines[i].trim();
++            if (!trimmed.startsWith(prefix)) {
++                continue;
++            }
++            String body = trimmed.substring(prefix.length()).trim();
++            if (!body.startsWith("@")) {
++                continue;
++            }
++            String[] parts = body.substring(1).split("\\s+", 2);
++            if (parts.length > 0 && !parts[0].isEmpty()) {
++                fields.put(parts[0].toLowerCase(Locale.ROOT), parts.length > 1 ? parts[1].trim() : "");
++            }
++        }
++        String base = filename == null ? "plugin" : filename.replaceAll("\\.[^.]*$", "");
++        StringBuilder fallback = new StringBuilder();
++        for (char c : base.toLowerCase(Locale.ROOT).toCharArray()) {
++            fallback.append(c < 128 && Character.isLetterOrDigit(c) || c == '-' || c == '_' ? c : '-');
++        }
++        String lang2 = VoidGram.russian() ? "ru" : "en";
++        Plugin plugin = new Plugin();
++        plugin.id = (fields.containsKey("id") ? fields.get("id") : fallback.toString()).toLowerCase(Locale.ROOT);
++        String name = fields.containsKey("name:" + lang2) ? fields.get("name:" + lang2) : fields.get("name");
++        plugin.name = cut(name != null ? name : base, 64);
++        String description = fields.containsKey("description:" + lang2) ? fields.get("description:" + lang2) : fields.get("description");
++        plugin.description = cut(description != null ? description : "", 1024);
++        plugin.author = cut(fields.containsKey("author") ? fields.get("author") : "", 128);
++        plugin.version = cut(fields.containsKey("version") ? fields.get("version") : "1.0", 32);
++        plugin.language = language;
++        String permissions = fields.get("permissions");
++        if (permissions != null) {
++            for (String part : permissions.split("[,\\s]+")) {
++                if (!part.isEmpty()) {
++                    plugin.permissions.add(part.toLowerCase(Locale.ROOT));
++                }
++            }
++        }
++        String connect = fields.get("connect");
++        if (connect != null) {
++            for (String part : connect.split("[,\\s]+")) {
++                if (!part.isEmpty()) {
++                    plugin.connect.add(part.toLowerCase(Locale.ROOT));
++                }
++            }
++        }
++        return plugin;
++    }
++
++    private static String cut(String value, int limit) {
++        return value.length() > limit ? value.substring(0, limit) : value;
++    }
++
++    public static ArrayList<Plugin> list() {
++        ArrayList<Plugin> result = new ArrayList<>();
++        File[] files = directory().listFiles();
++        if (files == null) {
++            return result;
++        }
++        java.util.Arrays.sort(files, (a, b) -> a.getName().compareTo(b.getName()));
++        for (File file : files) {
++            if (!file.getName().endsWith(".js")) {
++                continue;
++            }
++            Plugin plugin = preview(read(file), file.getName());
++            if (plugin == null) {
++                continue;
++            }
++            plugin.id = file.getName().substring(0, file.getName().length() - 3);
++            plugin.enabled = state().getBoolean("enabled_" + plugin.id, false);
++            plugin.disabledReason = state().getString("reason_" + plugin.id, null);
++            result.add(plugin);
++        }
++        return result;
++    }
++
++    public static Plugin get(String id) {
++        for (Plugin plugin : list()) {
++            if (plugin.id.equals(id)) {
++                return plugin;
++            }
++        }
++        return null;
++    }
++
++    /** Installs (or updates) a plugin; null on success, else a readable reason. */
++    public static String install(String source, String filename) {
++        Plugin plugin = preview(source, filename);
++        if (plugin == null) {
++            return VoidGram.t("Это не плагин VoidGram (или файл больше 512 КБ).", "This is not a VoidGram plugin (or the file is over 512 KB).");
++        }
++        if (!"js".equals(plugin.language)) {
++            return VoidGram.t("На Android пока работают только плагины на JavaScript.", "Only JavaScript plugins run on Android so far.");
++        }
++        if (!plugin.id.matches("[a-z0-9._-]{1,64}")) {
++            return VoidGram.t("Неверный @id плагина.", "Invalid plugin @id.");
++        }
++        try (OutputStream out = new FileOutputStream(new File(directory(), plugin.id + ".js"))) {
++            out.write(source.getBytes("UTF-8"));
++        } catch (Throwable e) {
++            return VoidGram.t("Не удалось сохранить плагин.", "The plugin could not be saved.");
++        }
++        state().edit().remove("reason_" + plugin.id).apply();
++        if (state().getBoolean("enabled_" + plugin.id, false)) {
++            restart(plugin.id);
++        }
++        return null;
++    }
++
++    public static void setEnabled(String id, boolean enabled) {
++        state().edit().putBoolean("enabled_" + id, enabled).remove("reason_" + id).apply();
++        if (enabled) {
++            restart(id);
++        } else {
++            post(() -> stop(id, null));
++        }
++    }
++
++    public static void delete(String id) {
++        setEnabled(id, false);
++        new File(directory(), id + ".js").delete();
++        SharedPreferences.Editor editor = storage().edit();
++        for (String key : storage().getAll().keySet()) {
++            if (key.startsWith(id + "\u0001")) {
++                editor.remove(key);
++            }
++        }
++        editor.apply();
++    }
++
++    public static String source(String id) {
++        return read(new File(directory(), id + ".js"));
++    }
++
++    // ---- Console ----
++
++    private static void log(String id, String level, String message) {
++        String line = new java.text.SimpleDateFormat("HH:mm:ss", Locale.US).format(new java.util.Date()) + " [" + id + "] " + ("info".equals(level) ? "" : level.toUpperCase(Locale.ROOT) + ": ") + message;
++        synchronized (console) {
++            console.add(line);
++            while (console.size() > CONSOLE_LIMIT) {
++                console.remove(0);
++            }
++        }
++    }
++
++    public static String consoleText() {
++        synchronized (console) {
++            StringBuilder builder = new StringBuilder();
++            for (String line : console) {
++                builder.append(line).append('\n');
++            }
++            return builder.toString();
++        }
++    }
++
++    public static void clearConsole() {
++        synchronized (console) {
++            console.clear();
++        }
++    }
++
++    // ---- Runtime ----
++
++    private static synchronized void post(Runnable runnable) {
++        if (thread == null) {
++            thread = new HandlerThread("VoidGramPlugins");
++            thread.start();
++            handler = new Handler(thread.getLooper());
++        }
++        handler.post(runnable);
++    }
++
++    private static void postDelayed(Runnable runnable, long delay) {
++        post(() -> handler.postDelayed(runnable, delay));
++    }
++
++    /** ApplicationLoader / LaunchActivity: starts every enabled plugin once. */
++    public static void startAll() {
++        if (VoidGramDecoy.isActive()) {
++            return;
++        }
++        for (Plugin plugin : list()) {
++            if (plugin.enabled && !running.containsKey(plugin.id)) {
++                restart(plugin.id);
++            }
++        }
++    }
++
++    private static void restart(String id) {
++        post(() -> {
++            stop(id, null);
++            start(id);
++        });
++    }
++
++    private static String raw(int resource) {
++        try (InputStream in = ApplicationLoader.applicationContext.getResources().openRawResource(resource)) {
++            return readAll(in);
++        } catch (Throwable e) {
++            return null;
++        }
++    }
++
++    private static void start(String id) {
++        Plugin plugin = get(id);
++        String code = source(id);
++        if (plugin == null || code == null) {
++            return;
++        }
++        if (engineFailed) {
++            disable(id, VoidGram.t("Движок JavaScript недоступен на этом устройстве.", "The JavaScript engine is not available on this device."));
++            return;
++        }
++        Runtime runtime = new Runtime();
++        runtime.plugin = plugin;
++        try {
++            QuickJSLoader.init();
++            runtime.context = QuickJSContext.create();
++            runtime.context.setMaxStackSize(1024 * 1024);
++            runtime.context.setMemoryLimit(64 * 1024 * 1024);
++        } catch (Throwable e) {
++            engineFailed = true;
++            disable(id, VoidGram.t("Движок JavaScript недоступен на этом устройстве.", "The JavaScript engine is not available on this device."));
++            return;
++        }
++        running.put(id, runtime);
++        try {
++            JSObject global = runtime.context.getGlobalObject();
++            JSObject bridge = runtime.context.createNewJSObject();
++            bridge.setProperty("pluginId", (JSCallFunction) args -> id);
++            bridge.setProperty("call", (JSCallFunction) args -> call(runtime, str(args, 0), str(args, 1)));
++            bridge.setProperty("log", (JSCallFunction) args -> {
++                log(id, str(args, 0), str(args, 1));
++                return null;
++            });
++            bridge.setProperty("toast", (JSCallFunction) args -> {
++                String text = str(args, 0);
++                AndroidUtilities.runOnUIThread(() -> Toast.makeText(ApplicationLoader.applicationContext, text, Toast.LENGTH_SHORT).show());
++                return null;
++            });
++            bridge.setProperty("hookRegistered", (JSCallFunction) args -> {
++                runtime.hooks.add(str(args, 0) + "|" + str(args, 1));
++                return null;
++            });
++            bridge.setProperty("setTimer", (JSCallFunction) args -> {
++                int timer = ((Number) args[0]).intValue();
++                long ms = Math.max(0, ((Number) args[1]).longValue());
++                boolean repeats = Boolean.TRUE.equals(args[2]);
++                schedule(runtime, timer, ms, repeats);
++                return null;
++            });
++            bridge.setProperty("clearTimer", (JSCallFunction) args -> {
++                Runnable timer = runtime.timers.remove(((Number) args[0]).intValue());
++                if (timer != null) {
++                    handler.removeCallbacks(timer);
++                }
++                return null;
++            });
++            bridge.setProperty("storageGet", (JSCallFunction) args -> storage().getString(id + "\u0001" + str(args, 0), null));
++            bridge.setProperty("storageSet", (JSCallFunction) args -> {
++                String key = id + "\u0001" + str(args, 0);
++                if (args.length < 2 || args[1] == null) {
++                    storage().edit().remove(key).apply();
++                } else {
++                    storage().edit().putString(key, String.valueOf(args[1])).apply();
++                }
++                return true;
++            });
++            bridge.setProperty("settingGet", (JSCallFunction) args -> settingJson(id, str(args, 0)));
++            bridge.setProperty("settingsDeclare", (JSCallFunction) args -> {
++                state().edit().putString("settings_" + id, str(args, 0)).apply();
++                return true;
++            });
++            global.setProperty("__native", bridge);
++            runtime.context.evaluate(raw(R.raw.voidgram_plugin_bridge), "bridge.js");
++            runtime.context.evaluate(raw(R.raw.voidgram_plugin_prelude), "prelude.js");
++            runtime.context.evaluate(code, id + ".js");
++            log(id, "info", VoidGram.t("запущен", "started"));
++        } catch (Throwable e) {
++            log(id, "error", String.valueOf(e.getMessage()));
++            stop(id, VoidGram.t("Ошибка при запуске: ", "Failed to start: ") + e.getMessage());
++            state().edit().putBoolean("enabled_" + id, false).apply();
++        }
++    }
++
++    private static void disable(String id, String reason) {
++        state().edit().putBoolean("enabled_" + id, false).putString("reason_" + id, reason).apply();
++        log(id, "error", reason);
++    }
++
++    private static void stop(String id, String reason) {
++        Runtime runtime = running.remove(id);
++        if (runtime == null) {
++            if (reason != null) {
++                disable(id, reason);
++            }
++            return;
++        }
++        runtime.stopped = true;
++        for (Runnable timer : runtime.timers.values()) {
++            handler.removeCallbacks(timer);
++        }
++        runtime.timers.clear();
++        try {
++            runtime.context.evaluate("typeof __ayuDispatchEvent === 'function' && __ayuDispatchEvent('unload', null)");
++        } catch (Throwable ignore) {
++        }
++        try {
++            runtime.context.destroy();
++        } catch (Throwable ignore) {
++        }
++        if (reason != null) {
++            disable(id, reason);
++        }
++    }
++
++    private static void schedule(Runtime runtime, int timer, long ms, boolean repeats) {
++        Runnable[] task = new Runnable[1];
++        task[0] = () -> {
++            if (runtime.stopped || !runtime.timers.containsKey(timer)) {
++                return;
++            }
++            if (!repeats) {
++                runtime.timers.remove(timer);
++            }
++            evaluate(runtime, "__ayuDispatchTimer(" + timer + ")");
++            if (repeats && !runtime.stopped && runtime.timers.containsKey(timer)) {
++                handler.postDelayed(task[0], Math.max(16, ms));
++            }
++        };
++        runtime.timers.put(timer, task[0]);
++        handler.postDelayed(task[0], ms);
++    }
++
++    private static Object evaluate(Runtime runtime, String script) {
++        if (runtime.stopped) {
++            return null;
++        }
++        try {
++            return runtime.context.evaluate(script);
++        } catch (Throwable e) {
++            log(runtime.plugin.id, "error", String.valueOf(e.getMessage()));
++            return null;
++        }
++    }
++
++    private static String str(Object[] args, int index) {
++        return args != null && args.length > index && args[index] != null ? String.valueOf(args[index]) : "";
++    }
++
++    private static String quote(String value) {
++        return value == null ? "null" : JSONObject.quote(value);
++    }
++
++    /** Java → JS event for one plugin, on the plugin thread. */
++    private static void emit(Runtime runtime, String event, Object payload) {
++        post(() -> evaluate(runtime, "__ayuDispatchEvent(" + quote(event) + ", " + quote(payload == null ? null : payload.toString()) + ")"));
++    }
++
++    private static void answer(Runtime runtime, String requestId, Object choice) {
++        try {
++            JSONObject payload = new JSONObject();
++            payload.put("requestId", requestId);
++            payload.put("choice", choice == null ? JSONObject.NULL : choice);
++            emit(runtime, "uiResult", payload);
++        } catch (Throwable ignore) {
++        }
++    }
++
++    // ---- Settings declared by plugins ----
++
++    public static JSONArray declaredSettings(String id) {
++        try {
++            return new JSONArray(state().getString("settings_" + id, "[]"));
++        } catch (Throwable e) {
++            return new JSONArray();
++        }
++    }
++
++    private static String settingJson(String id, String key) {
++        String stored = state().getString("setting_" + id + "_" + key, null);
++        if (stored != null) {
++            return stored;
++        }
++        JSONArray items = declaredSettings(id);
++        for (int i = 0; i < items.length(); i++) {
++            JSONObject item = items.optJSONObject(i);
++            if (item != null && key.equals(item.optString("key")) && item.has("default")) {
++                Object value = item.opt("default");
++                return value instanceof String ? JSONObject.quote((String) value) : String.valueOf(value);
++            }
++        }
++        return null;
++    }
++
++    public static Object settingValue(String id, String key) {
++        String json = settingJson(id, key);
++        if (json == null) {
++            return null;
++        }
++        try {
++            return new JSONArray("[" + json + "]").get(0);
++        } catch (Throwable e) {
++            return null;
++        }
++    }
++
++    public static void setSetting(String id, String key, Object value) {
++        String json = value instanceof String ? JSONObject.quote((String) value) : String.valueOf(value);
++        state().edit().putString("setting_" + id + "_" + key, json).apply();
++        Runtime runtime = running.get(id);
++        if (runtime != null) {
++            try {
++                emit(runtime, "settingChanged", new JSONObject().put("key", key).put("value", value));
++            } catch (Throwable ignore) {
++            }
++        }
++    }
++
++    // ---- Host operations ----
++
++    private static String call(Runtime runtime, String op, String argsJson) {
++        JSONObject args;
++        try {
++            args = new JSONObject(argsJson == null || argsJson.isEmpty() ? "{}" : argsJson);
++        } catch (Throwable e) {
++            args = new JSONObject();
++        }
++        String id = runtime.plugin.id;
++        try {
++            switch (op) {
++                case "feature":
++                    return "true";
++                case "i18n.language":
++                    return new JSONObject().put("language", VoidGram.russian() ? "ru" : "en").toString();
++                case "commands.register": {
++                    String name = args.optString("name").replaceAll("^\\.+", "").toLowerCase(Locale.ROOT);
++                    if (!name.matches("[a-z0-9_]{1,32}")) {
++                        return "false";
++                    }
++                    log(id, "info", VoidGram.t("команда .", "command .") + name);
++                    return new JSONObject().put("name", "." + name).toString();
++                }
++                case "permissions.has":
++                    return runtime.plugin.permissions.contains(args.optString("permission").toLowerCase(Locale.ROOT)) ? "true" : "false";
++                case "ui.alert":
++                case "ui.sheet":
++                    alert(runtime, op, args);
++                    return "true";
++                case "net.fetch":
++                    return fetch(runtime, args) ? "true" : "false";
++                case "secrets.get": {
++                    String value = state().getString("secret_" + id + "_" + args.optString("key"), null);
++                    return value == null ? "null" : new JSONObject().put("value", value).toString();
++                }
++                case "secrets.set":
++                    if (args.isNull("value")) {
++                        state().edit().remove("secret_" + id + "_" + args.optString("key")).apply();
++                    } else {
++                        state().edit().putString("secret_" + id + "_" + args.optString("key"), args.optString("value")).apply();
++                    }
++                    return "true";
++                case "bus.emit": {
++                    JSONObject payload = new JSONObject().put("topic", args.optString("topic")).put("data", args.opt("data")).put("from", id);
++                    for (Runtime other : running.values()) {
++                        if (other != runtime) {
++                            emit(other, "busMessage", payload);
++                        }
++                    }
++                    return "true";
++                }
++                case "player.control": {
++                    String action = args.optString("action");
++                    AndroidUtilities.runOnUIThread(() -> {
++                        MediaController media = MediaController.getInstance();
++                        MessageObject playing = media.getPlayingMessageObject();
++                        if (playing == null) {
++                            return;
++                        }
++                        switch (action) {
++                            case "play": media.playMessage(playing); break;
++                            case "pause": media.pauseMessage(playing); break;
++                            case "next": media.playNextMessage(); break;
++                            case "previous": media.playPreviousMessage(); break;
++                            default: break;
++                        }
++                    });
++                    return "true";
++                }
++                case "player.state": {
++                    MessageObject playing = MediaController.getInstance().getPlayingMessageObject();
++                    JSONObject state = new JSONObject();
++                    if (playing != null) {
++                        state.put("title", VoidGramLyrics.title(playing));
++                        state.put("artist", VoidGramLyrics.artist(playing));
++                        state.put("playing", !MediaController.getInstance().isMessagePaused());
++                        state.put("position", playing.audioProgressSec);
++                        state.put("duration", playing.getDuration());
++                    }
++                    return state.toString();
++                }
++                case "clipboard.get":
++                case "clipboard.set":
++                    if (!runtime.plugin.permissions.contains("clipboard")) {
++                        return "false";
++                    }
++                    if ("clipboard.set".equals(op)) {
++                        String text = args.optString("text");
++                        AndroidUtilities.runOnUIThread(() -> AndroidUtilities.addToClipboard(text));
++                        return "true";
++                    }
++                    return "false";
++                default:
++                    if (state().getBoolean("missing_" + id + "_" + op, false)) {
++                        return "false";
++                    }
++                    state().edit().putBoolean("missing_" + id + "_" + op, true).apply();
++                    log(id, "warning", op + VoidGram.t(" пока работает только на iOS", " only works on iOS so far"));
++                    return "false";
++            }
++        } catch (Throwable e) {
++            log(id, "error", op + ": " + e.getMessage());
++            return "false";
++        }
++    }
++
++    private static void alert(Runtime runtime, String op, JSONObject args) {
++        String requestId = args.optString("requestId");
++        AndroidUtilities.runOnUIThread(() -> {
++            org.telegram.ui.ActionBar.BaseFragment fragment = org.telegram.ui.LaunchActivity.getLastFragment();
++            if (fragment == null || fragment.getParentActivity() == null) {
++                answer(runtime, requestId, null);
++                return;
++            }
++            org.telegram.ui.ActionBar.AlertDialog.Builder builder = new org.telegram.ui.ActionBar.AlertDialog.Builder(fragment.getParentActivity());
++            builder.setTitle(args.optString("title", runtime.plugin.name));
++            if (args.has("message")) {
++                builder.setMessage(args.optString("message"));
++            }
++            JSONArray buttons = args.optJSONArray("ui.sheet".equals(op) ? "items" : "buttons");
++            if (buttons == null) {
++                buttons = args.optJSONArray("actions");
++            }
++            final boolean[] answered = new boolean[1];
++            if ("ui.sheet".equals(op) && buttons != null) {
++                CharSequence[] titles = new CharSequence[buttons.length()];
++                for (int i = 0; i < titles.length; i++) {
++                    Object item = buttons.opt(i);
++                    titles[i] = item instanceof JSONObject ? ((JSONObject) item).optString("title") : String.valueOf(item);
++                }
++                builder.setItems(titles, (d, which) -> {
++                    answered[0] = true;
++                    Object item = args.optJSONArray("items").opt(which);
++                    answer(runtime, requestId, item instanceof JSONObject && ((JSONObject) item).has("id") ? ((JSONObject) item).opt("id") : which);
++                });
++            } else if (buttons != null && buttons.length() > 0) {
++                final JSONArray list = buttons;
++                for (int i = 0; i < Math.min(3, list.length()); i++) {
++                    final int index = i;
++                    Object item = list.opt(i);
++                    String title = item instanceof JSONObject ? ((JSONObject) item).optString("title") : String.valueOf(item);
++                    Object value = item instanceof JSONObject && ((JSONObject) item).has("id") ? ((JSONObject) item).opt("id") : index;
++                    org.telegram.ui.ActionBar.AlertDialog.OnButtonClickListener listener = (d, w) -> {
++                        answered[0] = true;
++                        answer(runtime, requestId, value);
++                    };
++                    if (i == 0) {
++                        builder.setPositiveButton(title, listener);
++                    } else if (i == 1) {
++                        builder.setNegativeButton(title, listener);
++                    } else {
++                        builder.setNeutralButton(title, listener);
++                    }
++                }
++            } else {
++                builder.setPositiveButton("OK", (d, w) -> {
++                    answered[0] = true;
++                    answer(runtime, requestId, 0);
++                });
++            }
++            org.telegram.ui.ActionBar.AlertDialog dialog = builder.create();
++            dialog.setOnDismissListener(d -> {
++                if (!answered[0]) {
++                    answer(runtime, requestId, null);
++                }
++            });
++            fragment.showDialog(dialog);
++        });
++    }
++
++    private static boolean hostAllowed(Plugin plugin, String host) {
++        for (String pattern : plugin.connect) {
++            if (pattern.equals(host) || pattern.startsWith("*.") && (host.endsWith(pattern.substring(1)) || host.equals(pattern.substring(2)))) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    private static boolean fetch(Runtime runtime, JSONObject args) {
++        String requestId = args.optString("requestId");
++        String url = args.optString("url");
++        String host;
++        try {
++            URL parsed = new URL(url);
++            if (!"https".equals(parsed.getProtocol())) {
++                return false;
++            }
++            host = parsed.getHost().toLowerCase(Locale.ROOT);
++        } catch (Throwable e) {
++            return false;
++        }
++        if (!hostAllowed(runtime.plugin, host)) {
++            log(runtime.plugin.id, "error", "net.fetch: " + host + VoidGram.t(" нет в @connect", " is not in @connect"));
++            return false;
++        }
++        Utilities.globalQueue.postRunnable(() -> {
++            JSONObject result = new JSONObject();
++            HttpURLConnection connection = null;
++            try {
++                connection = (HttpURLConnection) new URL(url).openConnection();
++                connection.setConnectTimeout(20000);
++                connection.setReadTimeout(30000);
++                connection.setRequestMethod(args.optString("method", "GET").toUpperCase(Locale.ROOT));
++                JSONObject headers = args.optJSONObject("headers");
++                if (headers != null) {
++                    Iterator<String> keys = headers.keys();
++                    while (keys.hasNext()) {
++                        String key = keys.next();
++                        connection.setRequestProperty(key, headers.optString(key));
++                    }
++                }
++                if (args.has("body") && !args.isNull("body")) {
++                    connection.setDoOutput(true);
++                    try (OutputStream out = connection.getOutputStream()) {
++                        out.write(args.optString("body").getBytes("UTF-8"));
++                    }
++                }
++                int status = connection.getResponseCode();
++                InputStream in = status < 400 ? connection.getInputStream() : connection.getErrorStream();
++                String text = in != null ? readAll(in) : "";
++                if (text.length() > 2 * 1024 * 1024) {
++                    text = text.substring(0, 2 * 1024 * 1024);
++                }
++                JSONObject responseHeaders = new JSONObject();
++                for (java.util.Map.Entry<String, java.util.List<String>> entry : connection.getHeaderFields().entrySet()) {
++                    if (entry.getKey() != null && !entry.getValue().isEmpty()) {
++                        responseHeaders.put(entry.getKey().toLowerCase(Locale.ROOT), entry.getValue().get(0));
++                    }
++                }
++                result.put("status", status).put("headers", responseHeaders).put("text", text);
++            } catch (Throwable e) {
++                try {
++                    result.put("error", String.valueOf(e.getMessage()));
++                } catch (Throwable ignore) {
++                }
++            } finally {
++                if (connection != null) {
++                    connection.disconnect();
++                }
++            }
++            answer(runtime, requestId, result);
++        });
++        return true;
++    }
++
++    // ---- Hooks ----
++
++    /** SendMessagesHelper: plugins' outgoing-text hooks and dot commands. False cancels the send. */
++    public static boolean applyOutgoing(int account, SendMessagesHelper.SendMessageParams params) {
++        if (params == null || params.message == null || params.document != null || params.photo != null || running.isEmpty() || VoidGramDecoy.isActive()) {
++            return true;
++        }
++        String text = params.message;
++        for (Runtime runtime : new ArrayList<>(running.values())) {
++            boolean any = false;
++            for (String mode : new String[]{"before", "replace", "after"}) {
++                if (runtime.hooks.contains("message.outgoing.text|" + mode)) {
++                    any = true;
++                }
++            }
++            if (!any) {
++                continue;
++            }
++            final String value = text;
++            final Object[] result = new Object[1];
++            final CountDownLatch latch = new CountDownLatch(1);
++            String context;
++            try {
++                context = new JSONObject().put("peerId", String.valueOf(params.peer)).put("account", account).toString();
++            } catch (Throwable e) {
++                context = "{}";
++            }
++            final String finalContext = context;
++            post(() -> {
++                try {
++                    for (String mode : new String[]{"before", "replace", "after"}) {
++                        if (!runtime.hooks.contains("message.outgoing.text|" + mode)) {
++                            continue;
++                        }
++                        String current = result[0] instanceof String ? (String) result[0] : value;
++                        Object answer = evaluate(runtime, "__ayuDispatchHook('message.outgoing.text', " + quote(mode) + ", " + quote(current) + ", " + quote(finalContext) + ")");
++                        if ("\u0000".equals(answer)) {
++                            result[0] = "\u0000";
++                            break;
++                        }
++                        if (answer instanceof String) {
++                            result[0] = answer;
++                        }
++                    }
++                } finally {
++                    latch.countDown();
++                }
++            });
++            boolean answered;
++            try {
++                answered = latch.await(1500, TimeUnit.MILLISECONDS);
++            } catch (InterruptedException e) {
++                answered = false;
++            }
++            if (!answered) {
++                String id = runtime.plugin.id;
++                post(() -> stop(id, VoidGram.t("Плагин не ответил вовремя и выключен.", "The plugin did not answer in time and was turned off.")));
++                continue;
++            }
++            if ("\u0000".equals(result[0])) {
++                return false;
++            }
++            if (result[0] instanceof String) {
++                text = (String) result[0];
++            }
++        }
++        if (!text.equals(params.message)) {
++            params.message = text;
++            if (params.entities != null) {
++                params.entities.clear();
++            }
++        }
++        return true;
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPowerSaving.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPowerSaving.java
 new file mode 100644
 index 0000000..1c47394
@@ -8626,7 +9512,7 @@ index e6478ee..1576e94 100644
              return frozenDialogsList;
          }
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
-index 1dd2ffe..1ee2795 100644
+index 1dd2ffe..7054cd7 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
 @@ -458,6 +458,11 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
@@ -8651,12 +9537,14 @@ index 1dd2ffe..1ee2795 100644
          isResumed = false;
          WidgetMedia.onAppPaused(true);
          PipCoordinator.getInstance().onActivityPause(this);
-@@ -7209,6 +7217,10 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
+@@ -7209,6 +7217,12 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
      @Override
      protected void onResume() {
          super.onResume();
 +        // VoidGram streamer mode.
 +        org.telegram.messenger.voidgram.VoidGramExtras.applyStreamerMode(getWindow());
++        // VoidGram: enabled code plugins start once.
++        org.telegram.messenger.voidgram.VoidGramPlugins.startAll();
 +        // VoidGram: snow, leaves and other effects over the app.
 +        org.telegram.ui.voidgram.VoidGramOverlayEffects.attach(this);
          WidgetMedia.onAppPaused(false);
@@ -12300,6 +13188,279 @@ index 0000000..561c342
 +        return false;
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramPluginsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramPluginsActivity.java
+new file mode 100644
+index 0000000..d8216ad
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramPluginsActivity.java
+@@ -0,0 +1,267 @@
++package org.telegram.ui.voidgram;
++
++import android.app.Activity;
++import android.content.Intent;
++import android.net.Uri;
++import android.view.View;
++import android.widget.EditText;
++
++import org.json.JSONArray;
++import org.json.JSONObject;
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.R;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramPlugins;
++import org.telegram.ui.ActionBar.AlertDialog;
++import org.telegram.ui.ActionBar.Theme;
++import org.telegram.ui.Components.BulletinFactory;
++import org.telegram.ui.Components.UItem;
++import org.telegram.ui.Components.UniversalAdapter;
++import org.telegram.ui.Components.UniversalFragment;
++
++import java.io.ByteArrayOutputStream;
++import java.io.InputStream;
++import java.util.ArrayList;
++
++/** VoidGram → Plugins: JavaScript plugins compatible with VoidGram for iOS. */
++public class VoidGramPluginsActivity extends UniversalFragment {
++    private static final int ID_INSTALL = 1;
++    private static final int ID_CONSOLE = 2;
++    private static final int ID_PLUGIN_BASE = 100;
++    private static final int REQUEST_PLUGIN = 9302;
++
++    private ArrayList<VoidGramPlugins.Plugin> plugins = new ArrayList<>();
++
++    @Override
++    protected CharSequence getTitle() {
++        return VoidGram.t("Плагины", "Plugins");
++    }
++
++    @Override
++    protected void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
++        plugins = VoidGramPlugins.list();
++        items.add(UItem.asHeader(VoidGram.t("Установленные", "Installed")));
++        for (int i = 0; i < plugins.size(); i++) {
++            VoidGramPlugins.Plugin plugin = plugins.get(i);
++            String subtitle = plugin.disabledReason != null ? "⚠️" : plugin.version;
++            items.add(UItem.asCheck(ID_PLUGIN_BASE + i, plugin.name + " · " + subtitle).setChecked(plugin.enabled));
++        }
++        if (plugins.isEmpty()) {
++            items.add(UItem.asShadow(VoidGram.t("Плагинов пока нет.", "No plugins yet.")));
++        }
++        items.add(UItem.asButton(ID_INSTALL, R.drawable.msg_add, VoidGram.t("Установить из файла", "Install from a file")));
++        items.add(UItem.asButton(ID_CONSOLE, R.drawable.msg_log, VoidGram.t("Консоль плагинов", "Plugin console")));
++        items.add(UItem.asShadow(VoidGram.t("Плагины на JavaScript (.js) с тем же API ayu.*, что и в VoidGram для iOS: изменение исходящих сообщений, команды через точку, диалоги, хранилище, таймеры и сеть только к хостам из @connect. Каждый работает отдельно; зависший плагин выключается. Нажмите, чтобы включить или выключить; удерживайте — настройки и подробности. Устанавливайте только то, чему доверяете.", "JavaScript plugins (.js) with the same ayu.* API as VoidGram for iOS: change outgoing messages, dot commands, dialogs, storage, timers and network only to hosts from @connect. Each runs apart; a plugin that hangs is turned off. Tap to turn one on or off; hold for settings and details. Install only what you trust.")));
++    }
++
++    private void update() {
++        if (listView != null && listView.adapter != null) {
++            listView.adapter.update(true);
++        }
++    }
++
++    @Override
++    protected void onClick(UItem item, View view, int position, float x, float y) {
++        if (item.id == ID_INSTALL) {
++            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
++            intent.addCategory(Intent.CATEGORY_OPENABLE);
++            intent.setType("*/*");
++            startActivityForResult(intent, REQUEST_PLUGIN);
++        } else if (item.id == ID_CONSOLE) {
++            showConsole();
++        } else if (item.id >= ID_PLUGIN_BASE && item.id - ID_PLUGIN_BASE < plugins.size()) {
++            VoidGramPlugins.Plugin plugin = plugins.get(item.id - ID_PLUGIN_BASE);
++            if (!plugin.enabled) {
++                confirmEnable(plugin);
++            } else {
++                VoidGramPlugins.setEnabled(plugin.id, false);
++                update();
++            }
++        }
++    }
++
++    @Override
++    protected boolean onLongClick(UItem item, View view, int position, float x, float y) {
++        if (item.id >= ID_PLUGIN_BASE && item.id - ID_PLUGIN_BASE < plugins.size()) {
++            showDetails(plugins.get(item.id - ID_PLUGIN_BASE));
++            return true;
++        }
++        return false;
++    }
++
++    private String describe(VoidGramPlugins.Plugin plugin) {
++        StringBuilder text = new StringBuilder();
++        if (!plugin.description.isEmpty()) {
++            text.append(plugin.description).append("\n\n");
++        }
++        text.append(VoidGram.t("Версия: ", "Version: ")).append(plugin.version);
++        if (!plugin.author.isEmpty()) {
++            text.append('\n').append(VoidGram.t("Автор: ", "Author: ")).append(plugin.author);
++        }
++        text.append('\n').append("ID: ").append(plugin.id);
++        if (!plugin.permissions.isEmpty()) {
++            text.append('\n').append(VoidGram.t("Разрешения: ", "Permissions: ")).append(android.text.TextUtils.join(", ", plugin.permissions));
++        }
++        if (!plugin.connect.isEmpty()) {
++            text.append('\n').append(VoidGram.t("Сеть: ", "Network: ")).append(android.text.TextUtils.join(", ", plugin.connect));
++        }
++        if (plugin.disabledReason != null) {
++            text.append("\n\n⚠️ ").append(plugin.disabledReason);
++        }
++        return text.toString();
++    }
++
++    private void confirmEnable(VoidGramPlugins.Plugin plugin) {
++        AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
++        builder.setTitle(plugin.name);
++        builder.setMessage(describe(plugin) + "\n\n" + VoidGram.t("Плагин видит текст, который ему передают хуки, и может менять ваши исходящие сообщения. Включить?", "The plugin sees the text its hooks receive and can change your outgoing messages. Turn it on?"));
++        builder.setPositiveButton(VoidGram.t("Включить", "Turn on"), (d, w) -> {
++            VoidGramPlugins.setEnabled(plugin.id, true);
++            AndroidUtilities.runOnUIThread(this::update, 300);
++        });
++        builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++        showDialog(builder.create());
++    }
++
++    private void showDetails(VoidGramPlugins.Plugin plugin) {
++        AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
++        builder.setTitle(plugin.name);
++        builder.setMessage(describe(plugin));
++        JSONArray settings = VoidGramPlugins.declaredSettings(plugin.id);
++        if (settings.length() > 0) {
++            builder.setPositiveButton(VoidGram.t("Настройки", "Settings"), (d, w) -> showSettings(plugin, settings));
++        } else {
++            builder.setPositiveButton("OK", null);
++        }
++        builder.setNeutralButton(VoidGram.t("Удалить", "Delete"), (d, w) -> {
++            VoidGramPlugins.delete(plugin.id);
++            update();
++        });
++        AlertDialog dialog = builder.create();
++        showDialog(dialog);
++        android.widget.TextView delete = (android.widget.TextView) dialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL);
++        if (delete != null) {
++            delete.setTextColor(Theme.getColor(Theme.key_text_RedBold));
++        }
++    }
++
++    private void showSettings(VoidGramPlugins.Plugin plugin, JSONArray settings) {
++        int count = settings.length();
++        CharSequence[] titles = new CharSequence[count];
++        for (int i = 0; i < count; i++) {
++            JSONObject item = settings.optJSONObject(i);
++            if (item == null) {
++                titles[i] = "?";
++                continue;
++            }
++            Object value = VoidGramPlugins.settingValue(plugin.id, item.optString("key"));
++            String shown = value == null ? "" : value instanceof Boolean ? ((Boolean) value ? VoidGram.t("вкл.", "on") : VoidGram.t("выкл.", "off")) : String.valueOf(value);
++            titles[i] = item.optString("title", item.optString("key")) + (shown.isEmpty() ? "" : ": " + shown);
++        }
++        AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
++        builder.setTitle(plugin.name);
++        builder.setItems(titles, (d, which) -> editSetting(plugin, settings, settings.optJSONObject(which)));
++        builder.setNegativeButton(VoidGram.t("Закрыть", "Close"), null);
++        showDialog(builder.create());
++    }
++
++    private void editSetting(VoidGramPlugins.Plugin plugin, JSONArray settings, JSONObject item) {
++        if (item == null) {
++            return;
++        }
++        String key = item.optString("key");
++        String type = item.optString("type", "text");
++        Object value = VoidGramPlugins.settingValue(plugin.id, key);
++        if ("toggle".equals(type) || "switch".equals(type) || "bool".equals(type)) {
++            VoidGramPlugins.setSetting(plugin.id, key, !(value instanceof Boolean && (Boolean) value));
++            showSettings(plugin, settings);
++            return;
++        }
++        JSONArray options = item.optJSONArray("options");
++        if (options != null && options.length() > 0) {
++            CharSequence[] titles = new CharSequence[options.length()];
++            for (int i = 0; i < titles.length; i++) {
++                Object option = options.opt(i);
++                titles[i] = option instanceof JSONObject ? ((JSONObject) option).optString("title", ((JSONObject) option).optString("value")) : String.valueOf(option);
++            }
++            AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
++            builder.setTitle(item.optString("title", key));
++            builder.setItems(titles, (d, which) -> {
++                Object option = options.opt(which);
++                VoidGramPlugins.setSetting(plugin.id, key, option instanceof JSONObject ? ((JSONObject) option).opt("value") : option);
++                showSettings(plugin, settings);
++            });
++            showDialog(builder.create());
++            return;
++        }
++        EditText field = new EditText(getContext());
++        field.setText(value == null ? "" : String.valueOf(value));
++        field.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
++        AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
++        builder.setTitle(item.optString("title", key));
++        builder.setView(field);
++        builder.setPositiveButton(VoidGram.t("Сохранить", "Save"), (d, w) -> {
++            String text = field.getText().toString();
++            Object stored = text;
++            if ("number".equals(type)) {
++                try {
++                    stored = Double.parseDouble(text);
++                } catch (NumberFormatException ignore) {
++                }
++            }
++            VoidGramPlugins.setSetting(plugin.id, key, stored);
++            showSettings(plugin, settings);
++        });
++        builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++        showDialog(builder.create());
++    }
++
++    private void showConsole() {
++        String text = VoidGramPlugins.consoleText();
++        AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
++        builder.setTitle(VoidGram.t("Консоль плагинов", "Plugin console"));
++        builder.setMessage(text.isEmpty() ? VoidGram.t("Пусто", "Empty") : text);
++        builder.setPositiveButton("OK", null);
++        builder.setNeutralButton(VoidGram.t("Очистить", "Clear"), (d, w) -> VoidGramPlugins.clearConsole());
++        builder.setNegativeButton(VoidGram.t("Копировать", "Copy"), (d, w) -> AndroidUtilities.addToClipboard(text));
++        showDialog(builder.create());
++    }
++
++    @Override
++    public void onActivityResultFragment(int requestCode, int resultCode, Intent data) {
++        if (requestCode != REQUEST_PLUGIN || resultCode != Activity.RESULT_OK || data == null || data.getData() == null) {
++            return;
++        }
++        Uri uri = data.getData();
++        String name = "plugin.js";
++        try (android.database.Cursor cursor = getParentActivity().getContentResolver().query(uri, new String[]{android.provider.OpenableColumns.DISPLAY_NAME}, null, null, null)) {
++            if (cursor != null && cursor.moveToFirst()) {
++                name = cursor.getString(0);
++            }
++        } catch (Throwable ignore) {
++        }
++        String source;
++        try (InputStream in = getParentActivity().getContentResolver().openInputStream(uri)) {
++            ByteArrayOutputStream out = new ByteArrayOutputStream();
++            byte[] buffer = new byte[16384];
++            int count;
++            while (in != null && (count = in.read(buffer)) > 0) {
++                out.write(buffer, 0, count);
++                if (out.size() > 512 * 1024) {
++                    break;
++                }
++            }
++            source = out.toString("UTF-8");
++        } catch (Throwable e) {
++            BulletinFactory.of(this).createErrorBulletin(VoidGram.t("Не удалось прочитать файл", "The file could not be read")).show();
++            return;
++        }
++        String error = VoidGramPlugins.install(source, name);
++        if (error != null) {
++            BulletinFactory.of(this).createErrorBulletin(error).show();
++        } else {
++            BulletinFactory.of(this).createSimpleBulletin(R.raw.done, VoidGram.t("Плагин установлен. Включите его в списке.", "Plugin installed. Turn it on in the list.")).show();
++        }
++        update();
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramPowerSavingActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramPowerSavingActivity.java
 new file mode 100644
 index 0000000..61aac10
@@ -12699,10 +13860,10 @@ index 0000000..70cdf0b
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
 new file mode 100644
-index 0000000..ab9291f
+index 0000000..addce35
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
-@@ -0,0 +1,338 @@
+@@ -0,0 +1,343 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.content.Context;
@@ -12751,6 +13912,7 @@ index 0000000..ab9291f
 +    private static final int ID_FEED = 16;
 +    private static final int ID_HIDDEN = 17;
 +    private static final int ID_CUSTOMIZATION = 18;
++    private static final int ID_PLUGINS = 19;
 +    private static final int REQUEST_IMPORT = 9301;
 +
 +    private FrameLayout musicRow;
@@ -12795,6 +13957,7 @@ index 0000000..ab9291f
 +        items.add(UItem.asShadow(VoidGram.t("Значки и подписи с сервера VoidGram, рядом с именем у тех, у кого нет своего статуса. Видны только в VoidGram. Иконки приложения VoidGram — в Настройках → Оформление → Иконка.", "Badges and labels from the VoidGram server, next to the name of people without their own status. Visible only in VoidGram. VoidGram app icons are in Settings → Appearance → App icon.")));
 +
 +        items.add(UItem.asHeader(VoidGram.t("Другое", "Other")));
++        items.add(UItem.asButton(ID_PLUGINS, R.drawable.msg_bots, VoidGram.t("Плагины", "Plugins"), String.valueOf(org.telegram.messenger.voidgram.VoidGramPlugins.list().size())));
 +        items.add(UItem.asButton(ID_TOOLS, R.drawable.msg_settings, VoidGram.t("Инструменты", "Tools"), VoidGram.t("→A, Last.fm, Premium", "→A, Last.fm, Premium")));
 +        items.add(UItem.asButton(ID_EXPORT, R.drawable.msg_shareout, VoidGram.t("Экспорт настроек VoidGram", "Export VoidGram settings")));
 +        items.add(UItem.asButton(ID_IMPORT, R.drawable.msg_download, VoidGram.t("Импорт настроек VoidGram", "Import VoidGram settings")));
@@ -12897,6 +14060,9 @@ index 0000000..ab9291f
 +    @Override
 +    protected void onClick(UItem item, View view, int position, float x, float y) {
 +        switch (item.id) {
++            case ID_PLUGINS:
++                presentFragment(new VoidGramPluginsActivity());
++                break;
 +            case ID_CUSTOMIZATION:
 +                presentFragment(new VoidGramCustomizationActivity());
 +                break;
