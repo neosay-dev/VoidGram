@@ -3767,10 +3767,10 @@ index 0000000..a26d1f2
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramGhost.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramGhost.java
 new file mode 100644
-index 0000000..7774582
+index 0000000..140db26
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramGhost.java
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,114 @@
 +package org.telegram.messenger.voidgram;
 +
 +import android.content.SharedPreferences;
@@ -3846,8 +3846,31 @@ index 0000000..7774582
 +        prefs().edit().putStringSet(key(account, "exceptions"), set).apply();
 +    }
 +
++    public static final String[] TYPES = {"users", "groups", "channels"};
++
++    public static boolean typeExcepted(String type) {
++        return VoidGram.prefs().getBoolean("ghost_off_" + type, false);
++    }
++
++    public static void setTypeExcepted(String type, boolean value) {
++        VoidGram.prefs().edit().putBoolean("ghost_off_" + type, value).apply();
++    }
++
++    /** Ghost Mode can be off for whole kinds of chats: private chats, groups or channels. */
++    private static boolean typeException(int account, long dialogId) {
++        if (dialogId == 0) {
++            return false;
++        }
++        if (dialogId > 0) {
++            return typeExcepted("users");
++        }
++        org.telegram.tgnet.TLRPC.Chat chat = org.telegram.messenger.MessagesController.getInstance(account).getChat(-dialogId);
++        boolean channel = org.telegram.messenger.ChatObject.isChannelAndNotMegaGroup(chat);
++        return typeExcepted(channel ? "channels" : "groups");
++    }
++
 +    private static boolean active(int account, long dialogId, String option) {
-+        return isEnabled(account) && option(account, option) && (dialogId == 0 || !isException(account, dialogId));
++        return isEnabled(account) && option(account, option) && (dialogId == 0 || !isException(account, dialogId) && !typeException(account, dialogId));
 +    }
 +
 +    public static boolean hideRead(int account, long dialogId) {
@@ -11543,10 +11566,10 @@ index 0000000..44df62b
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramGhostActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramGhostActivity.java
 new file mode 100644
-index 0000000..b833af0
+index 0000000..d0a23d9
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramGhostActivity.java
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,175 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.view.View;
@@ -11576,6 +11599,7 @@ index 0000000..b833af0
 +    private static final int ID_STORY_VIEWS = 43;
 +    private static final int ID_CONFIRM_CALLS = 44;
 +    private static final int ID_STATUSES = 45;
++    private static final int ID_TYPE_BASE = 50;
 +
 +    @Override
 +    protected CharSequence getTitle() {
@@ -11605,6 +11629,12 @@ index 0000000..b833af0
 +        }
 +        items.add(UItem.asShadow(VoidGram.t("Для этого аккаунта. В чате: ⋮ → «Призрак в этом чате» исключает чат. Секретные чаты, прослушивание голосовых и просмотр историй работают как обычно. Это не полная невидимость: отправленные запросы не отменить, а новое прочтение после выключения может отметить и старые сообщения. Режим противоречит правилам Telegram API — на ваш риск.", "For this account. In a chat: ⋮ → \"Ghost in this chat\" excludes it. Secret chats, voice listening and story views behave as usual. Not absolute invisibility: requests that went out cannot be taken back, and a new read after turning it off can acknowledge older messages too. The mode conflicts with Telegram's API terms — at your own risk.")));
 +
++        items.add(UItem.asHeader(VoidGram.t("Призрак выключен в", "Ghost Mode is off in")));
++        String[] typeTitles = {VoidGram.t("Личных чатах", "Private chats"), VoidGram.t("Группах", "Groups"), VoidGram.t("Каналах", "Channels")};
++        for (int i = 0; i < VoidGramGhost.TYPES.length; i++) {
++            items.add(UItem.asCheck(ID_TYPE_BASE + i, typeTitles[i]).setChecked(VoidGramGhost.typeExcepted(VoidGramGhost.TYPES[i])));
++        }
++        items.add(UItem.asShadow(VoidGram.t("В отмеченных чатах вас видно как обычно.", "In the marked kinds of chats you are seen as usual.")));
 +        items.add(UItem.asHeader(VoidGram.t("Приватность+", "Privacy+")));
 +        items.add(UItem.asButton(ID_STATUSES, VoidGram.t("Скрытые статусы", "Hidden statuses"), org.telegram.messenger.voidgram.VoidGramPrivacy.hiddenStatusCount() + VoidGram.t(" из ", " of ") + org.telegram.messenger.voidgram.VoidGramPrivacy.STATUS_ACTIONS.length));
 +        items.add(UItem.asCheck(ID_READ_ON_REPLY, VoidGram.t("Прочитать при ответе", "Read on reply")).setChecked(org.telegram.messenger.voidgram.VoidGramPrivacy.readOnReply()));
@@ -11642,6 +11672,9 @@ index 0000000..b833af0
 +            });
 +            showDialog(builder.create());
 +            return;
++        } else if (id >= ID_TYPE_BASE && id < ID_TYPE_BASE + VoidGramGhost.TYPES.length) {
++            String type = VoidGramGhost.TYPES[id - ID_TYPE_BASE];
++            VoidGramGhost.setTypeExcepted(type, !VoidGramGhost.typeExcepted(type));
 +        } else if (id == ID_STATUSES) {
 +            int[] actions = org.telegram.messenger.voidgram.VoidGramPrivacy.STATUS_ACTIONS;
 +            CharSequence[] titles = new CharSequence[actions.length];
