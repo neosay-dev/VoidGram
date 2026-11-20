@@ -233,11 +233,40 @@ index 37619e6..cf72f60 100644
          final int level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
          final int scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
          if (level >= 0 && scale > 0) {
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/LocaleController.java b/TMessagesProj/src/main/java/org/telegram/messenger/LocaleController.java
+index 3a5413c..b59a1e4 100644
+--- a/TMessagesProj/src/main/java/org/telegram/messenger/LocaleController.java
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/LocaleController.java
+@@ -2890,6 +2890,13 @@ public class LocaleController {
+     }
+ 
+     public static String formatShortNumber(int number, int[] rounded) {
++        // VoidGram: full numbers instead of 1.2K.
++        if (org.telegram.messenger.voidgram.VoidGramPremium.fullNumbers()) {
++            if (rounded != null) {
++                rounded[0] = number;
++            }
++            return org.telegram.messenger.voidgram.VoidGramPremium.fullNumber(number);
++        }
+         StringBuilder K = new StringBuilder();
+         int lastDec = 0;
+         int KCount = 0;
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java b/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java
-index b1e2120..67b1f3c 100644
+index b1e2120..a404d82 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java
-@@ -4109,6 +4109,13 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+@@ -1735,6 +1735,10 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+                                             editor.putFloat(saveFor, value).commit();
+                                         });
+                                     }
++                                    // VoidGram: Last.fm counts real listening time.
++                                    if (currentPlayingMessageObject.isMusic() && org.telegram.messenger.voidgram.VoidGramLastFm.isConnected()) {
++                                        org.telegram.messenger.voidgram.VoidGramLastFm.progress(lastProgress / 1000.0, !isPaused);
++                                    }
+                                     NotificationCenter.getInstance(currentPlayingMessageObject.currentAccount).postNotificationName(NotificationCenter.messagePlayingProgressDidChanged, currentPlayingMessageObject.getId(), value);
+                                 } catch (Exception e) {
+                                     FileLog.e(e);
+@@ -4109,6 +4113,13 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                  }
                  audioPlayer.setStreamType(useFrontSpeaker ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
                  audioPlayer.play();
@@ -251,7 +280,18 @@ index b1e2120..67b1f3c 100644
                  if (!messageObject.isVoice()) {
                      if (audioVolumeAnimator != null) {
                          audioVolumeAnimator.removeAllListeners();
-@@ -5570,7 +5577,9 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+@@ -4154,6 +4165,10 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+         }
+         startProgressTimer(playingMessageObject);
+         NotificationCenter.getInstance(messageObject.currentAccount).postNotificationName(NotificationCenter.messagePlayingDidStart, messageObject, oldMessageObject);
++        // VoidGram: Last.fm "now playing".
++        if (messageObject.isMusic()) {
++            org.telegram.messenger.voidgram.VoidGramLastFm.trackChanged(messageObject.getMusicTitle(), messageObject.getMusicAuthor(), messageObject.getDuration());
++        }
+ 
+         if (videoPlayer != null) {
+             try {
+@@ -5570,7 +5585,9 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
          ignoreOnPause = false;
      }
  
@@ -263,10 +303,21 @@ index b1e2120..67b1f3c 100644
              stopRecordingV2(send, notify, scheduleDate, once, payStars);
              return;
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/MessageObject.java b/TMessagesProj/src/main/java/org/telegram/messenger/MessageObject.java
-index 373e423..c86dd5b 100644
+index 373e423..abfc127 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/MessageObject.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/MessageObject.java
-@@ -6331,6 +6331,8 @@ public class MessageObject {
+@@ -650,6 +650,10 @@ public class MessageObject {
+     }
+ 
+     public boolean hasMediaSpoilers() {
++        // VoidGram: spoilers shown open (self-destructing media stays hidden).
++        if (org.telegram.messenger.voidgram.VoidGramPremium.revealSpoilers() && !needDrawBluredPreview() && !isHiddenSensitive()) {
++            return false;
++        }
+         return !isRepostPreview && (messageOwner.media != null && messageOwner.media.spoiler || needDrawBluredPreview()) || isHiddenSensitive();
+     }
+ 
+@@ -6331,6 +6335,8 @@ public class MessageObject {
          if (messageText == null) {
              messageText = "";
          }
@@ -275,7 +326,7 @@ index 373e423..c86dd5b 100644
  
          isEmbedVideoCached = null;
          cachedStartsTimestamp = null;
-@@ -8193,7 +8195,7 @@ public class MessageObject {
+@@ -8193,7 +8199,7 @@ public class MessageObject {
              entities.add(entityItalic);
              return addEntitiesToText(text, entities, isOutOwner(), true, photoViewer, useManualParse);
          } else {
@@ -284,7 +335,36 @@ index 373e423..c86dd5b 100644
          }
      }
  
-@@ -12099,6 +12101,10 @@ public class MessageObject {
+@@ -8268,6 +8274,8 @@ public class MessageObject {
+         if (entities == null) {
+             return spannable;
+         }
++        // VoidGram: tg://emoji links from local-Premium senders show as custom emoji.
++        entities = org.telegram.messenger.voidgram.VoidGramPremium.displayEntities(spannable, entities);
+         int limitCount = (SharedConfig.getDevicePerformanceClass() >= SharedConfig.PERFORMANCE_CLASS_HIGH ? 100 : 50) - minusLimit;
+         Emoji.EmojiSpan[] emojiSpans = spannable.getSpans(0, spannable.length(), Emoji.EmojiSpan.class);
+         for (int i = 0; i < entities.size(); ++i) {
+@@ -8339,7 +8347,7 @@ public class MessageObject {
+         }
+ 
+         ArrayList<TextStyleSpan.TextStyleRun> runs = new ArrayList<>();
+-        ArrayList<TLRPC.MessageEntity> entitiesCopy = new ArrayList<>(entities);
++        ArrayList<TLRPC.MessageEntity> entitiesCopy = new ArrayList<>(org.telegram.messenger.voidgram.VoidGramPremium.displayEntities(text, entities));
+ 
+         Collections.sort(entitiesCopy, (o1, o2) -> {
+             if (o1.offset > o2.offset) {
+@@ -8400,6 +8408,10 @@ public class MessageObject {
+             ) {
+                 continue;
+             }
++            // VoidGram: spoilers shown open.
++            if (entity instanceof TLRPC.TL_messageEntitySpoiler && org.telegram.messenger.voidgram.VoidGramPremium.revealSpoilers()) {
++                continue;
++            }
+ 
+             TextStyleSpan.TextStyleRun newRun = new TextStyleSpan.TextStyleRun();
+             newRun.start = entity.offset;
+@@ -12099,6 +12111,10 @@ public class MessageObject {
          if (message == null) {
              return false;
          }
@@ -435,6 +515,20 @@ index 55452d3..4417e40 100644
          final SendMessageChatArguments sendMessageChatArguments = sendMessageParams.sendMessageChatArguments != null ?
                  sendMessageParams.sendMessageChatArguments : SendMessageChatArguments.EMPTY;
          String message = sendMessageParams.message;
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/UserConfig.java b/TMessagesProj/src/main/java/org/telegram/messenger/UserConfig.java
+index 3abf799..02cbfaf 100644
+--- a/TMessagesProj/src/main/java/org/telegram/messenger/UserConfig.java
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/UserConfig.java
+@@ -577,7 +577,8 @@ public class UserConfig extends BaseController {
+         if (user == null) {
+             return false;
+         }
+-        return user.premium;
++        // VoidGram: local Premium (this app only).
++        return org.telegram.messenger.voidgram.VoidGramPremium.isPremium(user);
+     }
+ 
+     public Long getEmojiStatus() {
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGram.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGram.java
 new file mode 100644
 index 0000000..c64e6f9
@@ -2743,6 +2837,228 @@ index 0000000..2b3857c
 +        builder.show();
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLastFm.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLastFm.java
+new file mode 100644
+index 0000000..a8d9e68
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLastFm.java
+@@ -0,0 +1,216 @@
++package org.telegram.messenger.voidgram;
++
++import android.content.Context;
++import android.content.SharedPreferences;
++
++import org.json.JSONObject;
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.ApplicationLoader;
++import org.telegram.messenger.Utilities;
++
++import java.io.ByteArrayOutputStream;
++import java.io.InputStream;
++import java.io.OutputStream;
++import java.net.HttpURLConnection;
++import java.net.URL;
++import java.net.URLEncoder;
++import java.security.MessageDigest;
++import java.util.Map;
++import java.util.TreeMap;
++
++/**
++ * Last.fm scrobbling for the music player, with the user's own API account
++ * (last.fm/api/account/create), as on iOS. "Now playing" is sent when a track starts; a track
++ * longer than 30 s is scrobbled after half its length or four minutes of real listening.
++ */
++public final class VoidGramLastFm {
++    private static final String ENDPOINT = "https://ws.audioscrobbler.com/2.0/";
++
++    private VoidGramLastFm() {
++    }
++
++    private static final class Track {
++        String title;
++        String artist;
++        double duration;
++        long startedAt;
++        String session;
++        double played;
++        double lastPosition;
++        boolean scrobbled;
++    }
++
++    private static Track current;
++
++    /** Keys and the session stay in a private file of the app, apart from the backup. */
++    private static SharedPreferences secure() {
++        return ApplicationLoader.applicationContext.getSharedPreferences("voidgram_lastfm", Context.MODE_PRIVATE);
++    }
++
++    public static String username() {
++        return secure().getString("username", null);
++    }
++
++    public static boolean isConnected() {
++        return username() != null;
++    }
++
++    private static String md5(String value) {
++        try {
++            byte[] hash = MessageDigest.getInstance("MD5").digest(value.getBytes("UTF-8"));
++            StringBuilder builder = new StringBuilder();
++            for (byte b : hash) {
++                builder.append(String.format("%02x", b & 0xff));
++            }
++            return builder.toString();
++        } catch (Exception e) {
++            return "";
++        }
++    }
++
++    private interface Done {
++        void run(JSONObject json);
++    }
++
++    private static void call(Map<String, String> params, Done done) {
++        String apiKey = secure().getString("api_key", null);
++        String secret = secure().getString("secret", null);
++        if (apiKey == null || secret == null) {
++            if (done != null) {
++                done.run(null);
++            }
++            return;
++        }
++        TreeMap<String, String> sorted = new TreeMap<>(params);
++        sorted.put("api_key", apiKey);
++        StringBuilder base = new StringBuilder();
++        for (Map.Entry<String, String> entry : sorted.entrySet()) {
++            base.append(entry.getKey()).append(entry.getValue());
++        }
++        base.append(secret);
++        sorted.put("api_sig", md5(base.toString()));
++        sorted.put("format", "json");
++        Utilities.globalQueue.postRunnable(() -> {
++            JSONObject json = null;
++            HttpURLConnection connection = null;
++            try {
++                StringBuilder body = new StringBuilder();
++                for (Map.Entry<String, String> entry : sorted.entrySet()) {
++                    if (body.length() > 0) {
++                        body.append('&');
++                    }
++                    body.append(entry.getKey()).append('=').append(URLEncoder.encode(entry.getValue(), "UTF-8"));
++                }
++                connection = (HttpURLConnection) new URL(ENDPOINT).openConnection();
++                connection.setRequestMethod("POST");
++                connection.setConnectTimeout(20000);
++                connection.setReadTimeout(20000);
++                connection.setDoOutput(true);
++                connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
++                try (OutputStream out = connection.getOutputStream()) {
++                    out.write(body.toString().getBytes("UTF-8"));
++                }
++                InputStream in = connection.getResponseCode() < 400 ? connection.getInputStream() : connection.getErrorStream();
++                if (in != null) {
++                    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
++                    byte[] buffer = new byte[8192];
++                    int count;
++                    while ((count = in.read(buffer)) > 0) {
++                        bytes.write(buffer, 0, count);
++                    }
++                    in.close();
++                    json = new JSONObject(bytes.toString("UTF-8"));
++                }
++            } catch (Throwable ignore) {
++            } finally {
++                if (connection != null) {
++                    connection.disconnect();
++                }
++            }
++            final JSONObject result = json;
++            if (done != null) {
++                AndroidUtilities.runOnUIThread(() -> done.run(result));
++            }
++        });
++    }
++
++    /** Signs in once; the password is used for the session key and is not stored. */
++    public static void connect(String apiKey, String secret, String username, String password, Utilities.Callback<String> completion) {
++        secure().edit().putString("api_key", apiKey.trim()).putString("secret", secret.trim()).apply();
++        TreeMap<String, String> params = new TreeMap<>();
++        params.put("method", "auth.getMobileSession");
++        params.put("username", username.trim());
++        params.put("password", password);
++        call(params, json -> {
++            JSONObject session = json != null ? json.optJSONObject("session") : null;
++            String key = session != null ? session.optString("key", null) : null;
++            if (key != null && !key.isEmpty()) {
++                secure().edit().putString("session", key).putString("username", username.trim()).apply();
++                completion.run(null);
++            } else {
++                String message = json != null ? json.optString("message", null) : null;
++                completion.run(message != null ? message : VoidGram.t("Last.fm не ответил", "Last.fm did not answer"));
++            }
++        });
++    }
++
++    public static void disconnect() {
++        secure().edit().clear().apply();
++        current = null;
++    }
++
++    public static void trackChanged(String title, String artist, double duration) {
++        String session = secure().getString("session", null);
++        if (!isConnected() || session == null || VoidGramDecoy.isActive()) {
++            return;
++        }
++        if (title == null || title.isEmpty() || artist == null || artist.isEmpty()) {
++            current = null;
++            return;
++        }
++        if (current != null && title.equals(current.title) && artist.equals(current.artist) && !current.scrobbled && current.played < 1) {
++            return;
++        }
++        Track track = new Track();
++        track.title = title;
++        track.artist = artist;
++        track.duration = duration;
++        track.startedAt = System.currentTimeMillis() / 1000;
++        track.session = session;
++        current = track;
++        TreeMap<String, String> params = new TreeMap<>();
++        params.put("method", "track.updateNowPlaying");
++        params.put("track", title);
++        params.put("artist", artist);
++        params.put("sk", session);
++        if (duration > 0) {
++            params.put("duration", String.valueOf((int) duration));
++        }
++        call(params, null);
++    }
++
++    /** Only real listening counts: seeking forward does not add to the played time. */
++    public static void progress(double position, boolean playing) {
++        Track track = current;
++        if (track == null || track.scrobbled) {
++            return;
++        }
++        double delta = position - track.lastPosition;
++        if (playing && delta > 0 && delta < 3.0) {
++            track.played += delta;
++        }
++        track.lastPosition = position;
++        double needed = Math.min(240.0, track.duration / 2.0);
++        if (track.duration > 30.0 && track.played >= needed) {
++            track.scrobbled = true;
++            TreeMap<String, String> params = new TreeMap<>();
++            params.put("method", "track.scrobble");
++            params.put("track", track.title);
++            params.put("artist", track.artist);
++            params.put("timestamp", String.valueOf(track.startedAt));
++            params.put("sk", track.session);
++            params.put("duration", String.valueOf((int) track.duration));
++            call(params, null);
++        }
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLyrics.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLyrics.java
 new file mode 100644
 index 0000000..4361737
@@ -3735,6 +4051,195 @@ index 0000000..1c47394
 +        return snapMask;
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPremium.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPremium.java
+new file mode 100644
+index 0000000..54e6e87
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPremium.java
+@@ -0,0 +1,183 @@
++package org.telegram.messenger.voidgram;
++
++import org.telegram.messenger.UserConfig;
++import org.telegram.tgnet.TLObject;
++import org.telegram.tgnet.TLRPC;
++
++import java.util.ArrayList;
++
++/**
++ * Local Premium and display options, as on iOS (VoidGram → Tools).
++ * Local Premium treats this account as Premium in this app only: the server and other apps are not
++ * affected. Custom emoji that the server would strip from a non-Premium sender go out as
++ * tg://emoji?id= links, which VoidGram and AyuGram show again as custom emoji.
++ */
++public final class VoidGramPremium {
++    public static final String EMOJI_URL_PREFIX = "tg://emoji?id=";
++
++    private VoidGramPremium() {
++    }
++
++    public static boolean isLocal() {
++        return VoidGram.prefs().getBoolean("local_premium", false);
++    }
++
++    public static void setLocal(boolean value) {
++        VoidGram.prefs().edit().putBoolean("local_premium", value).apply();
++    }
++
++    public static boolean revealSpoilers() {
++        return VoidGram.prefs().getBoolean("reveal_spoilers", false);
++    }
++
++    public static void setRevealSpoilers(boolean value) {
++        VoidGram.prefs().edit().putBoolean("reveal_spoilers", value).apply();
++    }
++
++    public static boolean fullNumbers() {
++        return VoidGram.prefs().getBoolean("full_numbers", false);
++    }
++
++    public static void setFullNumbers(boolean value) {
++        VoidGram.prefs().edit().putBoolean("full_numbers", value).apply();
++    }
++
++    /** UserConfig.isPremium(): the server flag, or local Premium (not in decoy mode). */
++    public static boolean isPremium(TLRPC.User user) {
++        if (user == null) {
++            return false;
++        }
++        return user.premium || isLocal() && !VoidGramDecoy.isActive();
++    }
++
++    private static boolean rewrites(int account) {
++        if (!isLocal()) {
++            return false;
++        }
++        try {
++            TLRPC.User self = UserConfig.getInstance(account).getCurrentUser();
++            return self != null && !self.premium;
++        } catch (Throwable e) {
++            return false;
++        }
++    }
++
++    /** Outgoing requests: custom emoji become links while local Premium hides a missing subscription. */
++    public static void rewriteOutgoing(int account, TLObject object) {
++        if (object == null || !rewrites(account)) {
++            return;
++        }
++        try {
++            if (object instanceof TLRPC.TL_messages_sendMessage) {
++                TLRPC.TL_messages_sendMessage req = (TLRPC.TL_messages_sendMessage) object;
++                rewrite(req.peer, req.entities);
++            } else if (object instanceof TLRPC.TL_messages_sendMedia) {
++                TLRPC.TL_messages_sendMedia req = (TLRPC.TL_messages_sendMedia) object;
++                rewrite(req.peer, req.entities);
++            } else if (object instanceof TLRPC.TL_messages_editMessage) {
++                TLRPC.TL_messages_editMessage req = (TLRPC.TL_messages_editMessage) object;
++                rewrite(req.peer, req.entities);
++            } else if (object instanceof TLRPC.TL_messages_sendMultiMedia) {
++                TLRPC.TL_messages_sendMultiMedia req = (TLRPC.TL_messages_sendMultiMedia) object;
++                if (req.multi_media != null) {
++                    for (TLRPC.TL_inputSingleMedia media : req.multi_media) {
++                        if (media != null) {
++                            rewrite(req.peer, media.entities);
++                        }
++                    }
++                }
++            }
++        } catch (Throwable ignore) {
++        }
++    }
++
++    private static void rewrite(TLRPC.InputPeer peer, ArrayList<TLRPC.MessageEntity> entities) {
++        // Saved Messages accept custom emoji without a subscription.
++        if (peer instanceof TLRPC.TL_inputPeerSelf || entities == null) {
++            return;
++        }
++        for (int i = 0; i < entities.size(); i++) {
++            TLRPC.MessageEntity entity = entities.get(i);
++            if (entity instanceof TLRPC.TL_messageEntityCustomEmoji) {
++                TLRPC.TL_messageEntityTextUrl link = new TLRPC.TL_messageEntityTextUrl();
++                link.offset = entity.offset;
++                link.length = entity.length;
++                link.url = EMOJI_URL_PREFIX + ((TLRPC.TL_messageEntityCustomEmoji) entity).document_id;
++                entities.set(i, link);
++            }
++        }
++    }
++
++    public static long emojiId(String url) {
++        if (url == null || !url.startsWith(EMOJI_URL_PREFIX)) {
++            return 0;
++        }
++        String digits = url.substring(EMOJI_URL_PREFIX.length());
++        if (digits.isEmpty() || digits.length() > 19) {
++            return 0;
++        }
++        for (int i = 0; i < digits.length(); i++) {
++            char c = digits.charAt(i);
++            if (c < '0' || c > '9') {
++                return 0;
++            }
++        }
++        try {
++            long id = Long.parseLong(digits);
++            return id > 0 ? id : 0;
++        } catch (NumberFormatException e) {
++            return 0;
++        }
++    }
++
++    /** Display only: a tg://emoji?id= link over one emoji is shown as that custom emoji. */
++    public static ArrayList<TLRPC.MessageEntity> displayEntities(CharSequence text, ArrayList<TLRPC.MessageEntity> entities) {
++        if (entities == null || entities.isEmpty() || text == null) {
++            return entities;
++        }
++        ArrayList<TLRPC.MessageEntity> result = null;
++        for (int i = 0; i < entities.size(); i++) {
++            TLRPC.MessageEntity entity = entities.get(i);
++            if (!(entity instanceof TLRPC.TL_messageEntityTextUrl)) {
++                continue;
++            }
++            long id = emojiId(entity.url);
++            if (id == 0 || entity.offset < 0 || entity.length <= 0 || entity.offset + entity.length > text.length()) {
++                continue;
++            }
++            if (!isSingleEmoji(text.subSequence(entity.offset, entity.offset + entity.length).toString())) {
++                continue;
++            }
++            if (result == null) {
++                result = new ArrayList<>(entities);
++            }
++            TLRPC.TL_messageEntityCustomEmoji emoji = new TLRPC.TL_messageEntityCustomEmoji();
++            emoji.offset = entity.offset;
++            emoji.length = entity.length;
++            emoji.document_id = id;
++            result.set(i, emoji);
++        }
++        return result != null ? result : entities;
++    }
++
++    private static boolean isSingleEmoji(String string) {
++        if (string.isEmpty() || string.length() > 16) {
++            return false;
++        }
++        int first = string.codePointAt(0);
++        // Letters, digits and punctuation are not emoji; everything here must be one symbol.
++        if (Character.isLetterOrDigit(first) || first < 0x2000 && first != 0x00A9 && first != 0x00AE && first != 0x0023 && first != 0x002A) {
++            return false;
++        }
++        java.text.BreakIterator iterator = java.text.BreakIterator.getCharacterInstance();
++        iterator.setText(string);
++        iterator.first();
++        int next = iterator.next();
++        return next == string.length() || next == java.text.BreakIterator.DONE;
++    }
++
++    /** LocaleController.formatShortNumber with "full numbers" on. */
++    public static String fullNumber(int number) {
++        return String.format(java.util.Locale.getDefault(), "%,d", number);
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramSending.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramSending.java
 new file mode 100644
 index 0000000..db8c2e1
@@ -4390,10 +4895,10 @@ index 0000000..5266ca5
 +    }
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java b/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java
-index ab54ee3..edc83e0 100644
+index ab54ee3..7c917b3 100644
 --- a/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java
 +++ b/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java
-@@ -413,6 +413,10 @@ public class ConnectionsManager extends BaseController {
+@@ -413,6 +413,12 @@ public class ConnectionsManager extends BaseController {
  
      public int sendRequest(final TLObject object, final RequestDelegate onComplete, final RequestDelegateTimestamp onCompleteTimestamp, final QuickAckDelegate onQuickAck, final WriteToSocketDelegate onWriteToSocket, final int flags, final int datacenterId, final int connectionType, final boolean immediate) {
          final int requestToken = lastRequestToken.getAndIncrement();
@@ -4401,10 +4906,12 @@ index ab54ee3..edc83e0 100644
 +        if (org.telegram.messenger.voidgram.VoidGramTranslate.intercept(object, onComplete, onCompleteTimestamp)) {
 +            return requestToken;
 +        }
++        // VoidGram: with local Premium, custom emoji go out as tg://emoji links.
++        org.telegram.messenger.voidgram.VoidGramPremium.rewriteOutgoing(currentAccount, object);
          Utilities.stageQueue.postRunnable(() -> {
              sendRequestInternal(object, onComplete, onCompleteTimestamp, onQuickAck, onWriteToSocket, flags, datacenterId, connectionType, immediate, requestToken);
          });
-@@ -712,6 +716,8 @@ public class ConnectionsManager extends BaseController {
+@@ -712,6 +718,8 @@ public class ConnectionsManager extends BaseController {
              packageId = "";
          }
  
@@ -4413,7 +4920,7 @@ index ab54ee3..edc83e0 100644
          native_init(currentAccount, version, layer, apiId, deviceModel, systemVersion, appVersion, langCode, systemLangCode, configPath, logPath, regId, cFingerprint, installer, packageId, timezoneOffset, userId, userPremium, enablePushConnection, ApplicationLoader.isNetworkOnline(), ApplicationLoader.getCurrentNetworkType(), SharedConfig.measureDevicePerformanceClass());
          checkConnection();
      }
-@@ -1026,6 +1032,8 @@ public class ConnectionsManager extends BaseController {
+@@ -1026,6 +1034,8 @@ public class ConnectionsManager extends BaseController {
      public static native int native_isTestBackend(int currentAccount);
      public static native void native_pauseNetwork(int currentAccount);
      public static native void native_setIpStrategy(int currentAccount, byte value);
@@ -6535,10 +7042,10 @@ index 0000000..70cdf0b
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
 new file mode 100644
-index 0000000..043232d
+index 0000000..9c3389d
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
-@@ -0,0 +1,313 @@
+@@ -0,0 +1,318 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.content.Context;
@@ -6582,6 +7089,7 @@ index 0000000..043232d
 +    private static final int ID_BADGES = 11;
 +    private static final int ID_EXPORT = 12;
 +    private static final int ID_IMPORT = 13;
++    private static final int ID_TOOLS = 14;
 +    private static final int REQUEST_IMPORT = 9301;
 +
 +    private FrameLayout musicRow;
@@ -6622,6 +7130,7 @@ index 0000000..043232d
 +        items.add(UItem.asShadow(VoidGram.t("Значки и подписи с сервера VoidGram, рядом с именем у тех, у кого нет своего статуса. Видны только в VoidGram. Иконки приложения VoidGram — в Настройках → Оформление → Иконка.", "Badges and labels from the VoidGram server, next to the name of people without their own status. Visible only in VoidGram. VoidGram app icons are in Settings → Appearance → App icon.")));
 +
 +        items.add(UItem.asHeader(VoidGram.t("Другое", "Other")));
++        items.add(UItem.asButton(ID_TOOLS, R.drawable.msg_settings, VoidGram.t("Инструменты", "Tools"), VoidGram.t("Last.fm, Premium, спойлеры", "Last.fm, Premium, spoilers")));
 +        items.add(UItem.asButton(ID_EXPORT, R.drawable.msg_shareout, VoidGram.t("Экспорт настроек VoidGram", "Export VoidGram settings")));
 +        items.add(UItem.asButton(ID_IMPORT, R.drawable.msg_download, VoidGram.t("Импорт настроек VoidGram", "Import VoidGram settings")));
 +        items.add(UItem.asButton(ID_AGREEMENT, R.drawable.msg2_policy, VoidGram.t("Пользовательское соглашение", "User agreement")));
@@ -6723,6 +7232,9 @@ index 0000000..043232d
 +    @Override
 +    protected void onClick(UItem item, View view, int position, float x, float y) {
 +        switch (item.id) {
++            case ID_TOOLS:
++                presentFragment(new VoidGramToolsActivity());
++                break;
 +            case ID_MUSIC:
 +                presentFragment(new VoidGramMusicActivity());
 +                break;
@@ -6845,6 +7357,155 @@ index 0000000..043232d
 +                org.telegram.ui.Components.BulletinFactory.of(this).createErrorBulletin(VoidGram.t("Не удалось прочитать файл", "The file could not be read")).show();
 +            }
 +        });
++    }
++
++    @Override
++    protected boolean onLongClick(UItem item, View view, int position, float x, float y) {
++        return false;
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java
+new file mode 100644
+index 0000000..97c70eb
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java
+@@ -0,0 +1,143 @@
++package org.telegram.ui.voidgram;
++
++import android.content.Context;
++import android.text.InputType;
++import android.view.View;
++import android.widget.EditText;
++import android.widget.LinearLayout;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.R;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramLastFm;
++import org.telegram.messenger.voidgram.VoidGramPremium;
++import org.telegram.ui.ActionBar.AlertDialog;
++import org.telegram.ui.ActionBar.Theme;
++import org.telegram.ui.Components.BulletinFactory;
++import org.telegram.ui.Components.UItem;
++import org.telegram.ui.Components.UniversalAdapter;
++import org.telegram.ui.Components.UniversalFragment;
++
++import java.util.ArrayList;
++
++/** VoidGram → Tools: Last.fm, local Premium, spoilers, full numbers. */
++public class VoidGramToolsActivity extends UniversalFragment {
++    private static final int ID_LASTFM = 1;
++    private static final int ID_PREMIUM = 2;
++    private static final int ID_SPOILERS = 3;
++    private static final int ID_NUMBERS = 4;
++
++    @Override
++    protected CharSequence getTitle() {
++        return VoidGram.t("Инструменты", "Tools");
++    }
++
++    @Override
++    protected void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
++        items.add(UItem.asHeader(VoidGram.t("Музыка", "Music")));
++        items.add(UItem.asButton(ID_LASTFM, R.drawable.msg_media, VoidGramLastFm.isConnected() ? VoidGramLastFm.username() : VoidGram.t("Подключить Last.fm", "Connect Last.fm"), VoidGramLastFm.isConnected() ? VoidGram.t("вкл.", "on") : ""));
++        items.add(UItem.asShadow(VoidGram.t("Скробблинг треков из плеера через ваш API-аккаунт Last.fm (last.fm/api/account/create). Пароль нужен один раз и не сохраняется.", "Scrobbles player tracks through your own Last.fm API account (last.fm/api/account/create). The password is used once and not stored.")));
++
++        items.add(UItem.asHeader("Premium"));
++        items.add(UItem.asCheck(ID_PREMIUM, VoidGram.t("Локальный Premium", "Local Premium")).setChecked(VoidGramPremium.isLocal()));
++        items.add(UItem.asShadow(VoidGram.t("Только в этом приложении: значок, оформление и выбор Premium-эмодзи. Сервер и лимиты не меняются. Свои эмодзи уходят ссылками tg://emoji — в VoidGram и AyuGram они снова видны как эмодзи.", "Only in this app: the badge, looks and Premium emoji picker. The server and limits stay the same. Custom emoji go out as tg://emoji links, which VoidGram and AyuGram show as emoji again.")));
++
++        items.add(UItem.asHeader(VoidGram.t("Отображение", "Display")));
++        items.add(UItem.asCheck(ID_SPOILERS, VoidGram.t("Показывать спойлеры сразу", "Reveal spoilers")).setChecked(VoidGramPremium.revealSpoilers()));
++        items.add(UItem.asCheck(ID_NUMBERS, VoidGram.t("Числа без округления", "Numbers without rounding")).setChecked(VoidGramPremium.fullNumbers()));
++        items.add(UItem.asShadow(VoidGram.t("Просмотры и подписчики — 12 345 вместо 12K.", "Views and subscribers show 12,345 instead of 12K.")));
++    }
++
++    private void update() {
++        if (listView != null && listView.adapter != null) {
++            listView.adapter.update(true);
++        }
++    }
++
++    @Override
++    protected void onClick(UItem item, View view, int position, float x, float y) {
++        switch (item.id) {
++            case ID_LASTFM:
++                if (VoidGramLastFm.isConnected()) {
++                    AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
++                    builder.setTitle("Last.fm");
++                    builder.setMessage(VoidGram.t("Подключено: ", "Connected: ") + VoidGramLastFm.username());
++                    builder.setPositiveButton(VoidGram.t("Отключить", "Disconnect"), (d, w) -> {
++                        VoidGramLastFm.disconnect();
++                        update();
++                    });
++                    builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++                    showDialog(builder.create());
++                } else {
++                    connectLastFm();
++                }
++                break;
++            case ID_PREMIUM:
++                VoidGramPremium.setLocal(!VoidGramPremium.isLocal());
++                getNotificationCenter().postNotificationName(org.telegram.messenger.NotificationCenter.currentUserPremiumStatusChanged);
++                update();
++                break;
++            case ID_SPOILERS:
++                VoidGramPremium.setRevealSpoilers(!VoidGramPremium.revealSpoilers());
++                update();
++                break;
++            case ID_NUMBERS:
++                VoidGramPremium.setFullNumbers(!VoidGramPremium.fullNumbers());
++                update();
++                break;
++            default:
++                break;
++        }
++    }
++
++    private EditText field(Context context, String hint, boolean password) {
++        EditText field = new EditText(context);
++        field.setHint(hint);
++        field.setSingleLine(true);
++        field.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
++        field.setHintTextColor(Theme.getColor(Theme.key_dialogTextGray3));
++        field.setInputType(password ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
++        return field;
++    }
++
++    private void connectLastFm() {
++        Context context = getContext();
++        LinearLayout layout = new LinearLayout(context);
++        layout.setOrientation(LinearLayout.VERTICAL);
++        layout.setPadding(AndroidUtilities.dp(20), AndroidUtilities.dp(4), AndroidUtilities.dp(20), 0);
++        EditText apiKey = field(context, "API key", false);
++        EditText secret = field(context, "Shared secret", false);
++        EditText username = field(context, VoidGram.t("Логин Last.fm", "Last.fm username"), false);
++        EditText password = field(context, VoidGram.t("Пароль", "Password"), true);
++        layout.addView(apiKey);
++        layout.addView(secret);
++        layout.addView(username);
++        layout.addView(password);
++        AlertDialog.Builder builder = new AlertDialog.Builder(context);
++        builder.setTitle("Last.fm");
++        builder.setView(layout);
++        builder.setPositiveButton(VoidGram.t("Войти", "Sign in"), (d, w) -> {
++            String a = apiKey.getText().toString(), s = secret.getText().toString(), u = username.getText().toString(), p = password.getText().toString();
++            if (a.trim().isEmpty() || s.trim().isEmpty() || u.trim().isEmpty() || p.isEmpty()) {
++                BulletinFactory.of(this).createErrorBulletin(VoidGram.t("Заполните все поля", "Fill in every field")).show();
++                return;
++            }
++            VoidGramLastFm.connect(a, s, u, p, error -> {
++                if (error == null) {
++                    BulletinFactory.of(this).createSimpleBulletin(R.raw.done, VoidGram.t("Last.fm подключён", "Last.fm connected")).show();
++                } else {
++                    VoidGramLastFm.disconnect();
++                    BulletinFactory.of(this).createErrorBulletin("Last.fm: " + error).show();
++                }
++                update();
++            });
++        });
++        builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++        showDialog(builder.create());
 +    }
 +
 +    @Override
