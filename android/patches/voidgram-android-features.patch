@@ -405,6 +405,21 @@ index ec76835..8ee5a63 100644
          SponsoredMessagesInfo info = sponsoredMessages.get(dialogId);
          if (info != null && (info.loading || Math.abs(SystemClock.elapsedRealtime() - info.loadTime) <= 5 * 60 * 1000)) {
              return info;
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/NotificationsController.java b/TMessagesProj/src/main/java/org/telegram/messenger/NotificationsController.java
+index 9881370..262aa9c 100644
+--- a/TMessagesProj/src/main/java/org/telegram/messenger/NotificationsController.java
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/NotificationsController.java
+@@ -1289,6 +1289,10 @@ public class NotificationsController extends BaseController implements Notificat
+ 
+                     settingsCache.put(dialogId, value);
+                 }
++                // VoidGram important posts: a muted chat still notifies about matching posts.
++                if (!value && org.telegram.messenger.voidgram.VoidGramImportantPosts.isImportant(currentAccount, dialogId, messageObject)) {
++                    value = true;
++                }
+ 
+                 if (BuildVars.LOGS_ENABLED) {
+                     FileLog.d("NotificationsController: process new messages, value is " + value + " ("+dialogId+", "+isChannel+", "+messageObject.isReactionPush+", "+messageObject.isStoryReactionPush+")");
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java b/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
 index 55452d3..4417e40 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
@@ -2424,6 +2439,141 @@ index 0000000..02e2e04
 +        });
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramImportantPosts.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramImportantPosts.java
+new file mode 100644
+index 0000000..2b3857c
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramImportantPosts.java
+@@ -0,0 +1,129 @@
++package org.telegram.messenger.voidgram;
++
++import android.content.Context;
++import android.text.InputType;
++import android.widget.CheckBox;
++import android.widget.EditText;
++import android.widget.LinearLayout;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.MessageObject;
++import org.telegram.ui.ActionBar.AlertDialog;
++import org.telegram.ui.ActionBar.Theme;
++
++import java.util.ArrayList;
++import java.util.HashSet;
++import java.util.Locale;
++import java.util.Set;
++
++/**
++ * VoidGram important posts, as on iOS: a muted channel (or chat) still notifies about posts with
++ * chosen keywords or of chosen kinds (photos, videos, files, links, polls). Kept on this device.
++ */
++public final class VoidGramImportantPosts {
++    public static final String[] TYPES = {"photo", "video", "file", "link", "poll"};
++
++    private VoidGramImportantPosts() {
++    }
++
++    private static String key(int account, long dialogId, String name) {
++        return "important_" + account + "_" + dialogId + "_" + name;
++    }
++
++    public static ArrayList<String> keywords(int account, long dialogId) {
++        ArrayList<String> result = new ArrayList<>();
++        for (String word : VoidGram.prefs().getString(key(account, dialogId, "keywords"), "").split(",")) {
++            String trimmed = word.trim();
++            if (trimmed.length() > 2) {
++                result.add(trimmed);
++            }
++        }
++        return result;
++    }
++
++    public static Set<String> types(int account, long dialogId) {
++        return new HashSet<>(VoidGram.prefs().getStringSet(key(account, dialogId, "types"), new HashSet<>()));
++    }
++
++    public static boolean hasRules(int account, long dialogId) {
++        return !keywords(account, dialogId).isEmpty() || !types(account, dialogId).isEmpty();
++    }
++
++    private static String normalize(String text) {
++        return text.toLowerCase(Locale.ROOT).replace('ё', 'е');
++    }
++
++    public static boolean isImportant(int account, long dialogId, MessageObject message) {
++        if (message == null || VoidGramDecoy.isActive()) {
++            return false;
++        }
++        Set<String> types = types(account, dialogId);
++        if (!types.isEmpty()) {
++            if (types.contains("photo") && message.isPhoto() || types.contains("video") && message.isVideo()
++                    || types.contains("file") && message.getDocument() != null && !message.isVideo() && !message.isMusic() && !message.isVoice() && !message.isSticker()
++                    || types.contains("poll") && message.isPoll()
++                    || types.contains("link") && message.messageOwner != null && message.messageOwner.media instanceof org.telegram.tgnet.TLRPC.TL_messageMediaWebPage) {
++                return true;
++            }
++        }
++        ArrayList<String> keywords = keywords(account, dialogId);
++        if (keywords.isEmpty() || message.messageOwner == null || message.messageOwner.message == null) {
++            return false;
++        }
++        String text = normalize(message.messageOwner.message);
++        for (String keyword : keywords) {
++            if (text.contains(normalize(keyword))) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    private static String typeTitle(String type) {
++        switch (type) {
++            case "photo": return VoidGram.t("Фото", "Photos");
++            case "video": return VoidGram.t("Видео", "Videos");
++            case "file": return VoidGram.t("Файлы", "Files");
++            case "link": return VoidGram.t("Ссылки", "Links");
++            default: return VoidGram.t("Опросы", "Polls");
++        }
++    }
++
++    /** The editor: keywords (comma-separated) and kinds of posts that still notify. */
++    public static void showEditor(Context context, int account, long dialogId) {
++        LinearLayout layout = new LinearLayout(context);
++        layout.setOrientation(LinearLayout.VERTICAL);
++        layout.setPadding(AndroidUtilities.dp(22), 0, AndroidUtilities.dp(22), 0);
++        EditText field = new EditText(context);
++        field.setHint(VoidGram.t("ключевые слова через запятую", "keywords, comma-separated"));
++        field.setText(VoidGram.prefs().getString(key(account, dialogId, "keywords"), ""));
++        field.setInputType(InputType.TYPE_CLASS_TEXT);
++        field.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
++        layout.addView(field);
++        Set<String> types = types(account, dialogId);
++        CheckBox[] boxes = new CheckBox[TYPES.length];
++        for (int i = 0; i < TYPES.length; i++) {
++            CheckBox box = new CheckBox(context);
++            box.setText(typeTitle(TYPES[i]));
++            box.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
++            box.setChecked(types.contains(TYPES[i]));
++            boxes[i] = box;
++            layout.addView(box);
++        }
++        AlertDialog.Builder builder = new AlertDialog.Builder(context);
++        builder.setTitle(VoidGram.t("Важные посты", "Important posts"));
++        builder.setMessage(VoidGram.t("Даже без звука придёт уведомление о постах с этими словами или такого вида.", "Even when muted, posts with these words or of these kinds still notify."));
++        builder.setView(layout);
++        builder.setPositiveButton(VoidGram.t("Сохранить", "Save"), (dialog, which) -> {
++            HashSet<String> chosen = new HashSet<>();
++            for (int i = 0; i < TYPES.length; i++) {
++                if (boxes[i].isChecked()) {
++                    chosen.add(TYPES[i]);
++                }
++            }
++            VoidGram.prefs().edit().putString(key(account, dialogId, "keywords"), field.getText().toString()).putStringSet(key(account, dialogId, "types"), chosen).apply();
++        });
++        builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++        builder.show();
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLyrics.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLyrics.java
 new file mode 100644
 index 0000000..4361737
@@ -3974,7 +4124,7 @@ index 5dc090f..42ae0c5 100644
  
      void measureTime(MessageObject messageObject) {
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
-index a54b134..31ad658 100644
+index a54b134..fac7310 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 @@ -1246,6 +1246,10 @@ public class ChatActivity extends BaseFragment implements
@@ -3997,16 +4147,18 @@ index a54b134..31ad658 100644
      private final static int forward = 11;
      private final static int delete = 12;
      private final static int chat_enc_timer = 13;
-@@ -1707,6 +1713,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -1707,6 +1713,10 @@ public class ChatActivity extends BaseFragment implements
      private final static int view_as_topics = 59;
  
      private final static int search = 40;
 +    /** VoidGram: Ghost Mode for this chat only. */
 +    private final static int voidgram_ghost_chat = 9201;
++    /** VoidGram: notifications for important posts in a muted chat. */
++    private final static int voidgram_important_posts = 9203;
  
      private final static int topic_close = 60;
      private final static int open_forum = 61;
-@@ -2835,6 +2843,15 @@ public class ChatActivity extends BaseFragment implements
+@@ -2835,6 +2845,15 @@ public class ChatActivity extends BaseFragment implements
          }
  
          dialog_id_Long = dialog_id;
@@ -4022,7 +4174,7 @@ index a54b134..31ad658 100644
  
          transitionAnimationGlobalIndex = NotificationCenter.getGlobalInstance().setAnimationInProgress(transitionAnimationGlobalIndex, new int[0]);
  
-@@ -3336,8 +3353,16 @@ public class ChatActivity extends BaseFragment implements
+@@ -3336,8 +3355,16 @@ public class ChatActivity extends BaseFragment implements
          }
      }
  
@@ -4039,7 +4191,7 @@ index a54b134..31ad658 100644
          super.onFragmentDestroy();
          if (messageMetricsView != null) {
              messageMetricsView.finish();
-@@ -3746,6 +3771,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -3746,6 +3773,8 @@ public class ChatActivity extends BaseFragment implements
                          getMessagesController().getTopicsController().toggleViewForumAsMessages(-dialog_id, false);
                          TopicsFragment.prepareToSwitchAnimation(ChatActivity.this);
                      }
@@ -4048,10 +4200,12 @@ index a54b134..31ad658 100644
                  } else if (id == copy) {
                      SpannableStringBuilder str = new SpannableStringBuilder();
                      long previousUid = 0;
-@@ -3988,6 +4015,12 @@ public class ChatActivity extends BaseFragment implements
+@@ -3988,6 +4017,14 @@ public class ChatActivity extends BaseFragment implements
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/help", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
                  } else if (id == bot_settings) {
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/settings", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
++                } else if (id == voidgram_important_posts) {
++                    org.telegram.messenger.voidgram.VoidGramImportantPosts.showEditor(getParentActivity(), currentAccount, dialog_id);
 +                } else if (id == voidgram_ghost_chat) {
 +                    org.telegram.messenger.voidgram.VoidGramGhost.toggleException(currentAccount, dialog_id);
 +                    boolean ghost = !org.telegram.messenger.voidgram.VoidGramGhost.isException(currentAccount, dialog_id);
@@ -4061,17 +4215,20 @@ index a54b134..31ad658 100644
                  } else if (id == search) {
                      openSearchWithText(isSupportedTags() ? "" : null);
                  } else if (id == translate) {
-@@ -4398,6 +4431,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -4398,6 +4435,12 @@ public class ChatActivity extends BaseFragment implements
              if (searchItem != null) {
                  headerItem.lazilyAddSubItem(search, R.drawable.msg_search, LocaleController.getString(R.string.Search));
              }
++            if (currentChat != null && !org.telegram.messenger.voidgram.VoidGramDecoy.isActive()) {
++                headerItem.lazilyAddSubItem(voidgram_important_posts, R.drawable.msg_mute, org.telegram.messenger.voidgram.VoidGram.t("Важные посты", "Important posts"));
++            }
 +            if (org.telegram.messenger.voidgram.VoidGramGhost.isEnabled(currentAccount) && !DialogObject.isEncryptedDialog(dialog_id)) {
 +                headerItem.lazilyAddSubItem(voidgram_ghost_chat, R.drawable.msg_secret, org.telegram.messenger.voidgram.VoidGram.t("Призрак в этом чате", "Ghost in this chat"));
 +            }
              if (ChatObject.isBoostSupported(currentChat) && (getUserConfig().isPremium() || ChatObject.isBoosted(chatInfo) || ChatObject.hasAdminRights(currentChat))) {
                  RLottieDrawable drawable = new RLottieDrawable(R.raw.boosts, dp(24), dp(24));
                  headerItem.lazilyAddSubItem(boost_group, drawable, LocaleController.getString(ChatObject.isChannelAndNotMegaGroup(currentChat) ? R.string.BoostingBoostChannelMenu : R.string.BoostingBoostGroupMenu));
-@@ -10820,6 +10856,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -10820,6 +10863,9 @@ public class ChatActivity extends BaseFragment implements
                  actionModeViews.add(actionMode.addItemWithWidth(forward, R.drawable.msg_forward, dp(48), LocaleController.getString(R.string.Forward)));
              }
              actionModeViews.add(actionMode.addItemWithWidth(share, R.drawable.msg_shareout, dp(48), LocaleController.getString(R.string.ShareFile)));
@@ -4081,7 +4238,7 @@ index a54b134..31ad658 100644
              actionModeViews.add(actionMode.addItemWithWidth(delete, R.drawable.msg_delete, dp(48), LocaleController.getString(R.string.Delete)));
          } else {
              actionModeViews.add(actionMode.addItemWithWidth(edit, R.drawable.msg_edit, dp(48), LocaleController.getString(R.string.Edit)));
-@@ -21371,7 +21410,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -21371,7 +21417,8 @@ public class ChatActivity extends BaseFragment implements
          if (postponedScroll) {
              postponedScrollToLastMessageQueryIndex = 0;
          }
@@ -4091,7 +4248,7 @@ index a54b134..31ad658 100644
          layOutWidgetsForSideMenu(messArr);
  
          boolean universalNotify = false;
-@@ -22807,8 +22847,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -22807,8 +22854,9 @@ public class ChatActivity extends BaseFragment implements
          } else if (id == NotificationCenter.didReceiveNewMessages) {
              FileLog.d("ChatActivity didReceiveNewMessages start");
              long did = (Long) args[0];
@@ -4102,7 +4259,7 @@ index a54b134..31ad658 100644
              if (did == dialog_id) {
                  boolean scheduled = (Boolean) args[2];
                  int mode = (Integer) args[3];
-@@ -31957,6 +31998,17 @@ public class ChatActivity extends BaseFragment implements
+@@ -31957,6 +32005,17 @@ public class ChatActivity extends BaseFragment implements
                  icons.add(R.drawable.msg_calendar2);
              }
  
@@ -4120,7 +4277,7 @@ index a54b134..31ad658 100644
              if (options.isEmpty() && optionsView == null) {
                  return false;
              }
-@@ -34293,6 +34345,17 @@ public class ChatActivity extends BaseFragment implements
+@@ -34293,6 +34352,17 @@ public class ChatActivity extends BaseFragment implements
          }
          boolean preserveDim = false;
          switch (option) {
