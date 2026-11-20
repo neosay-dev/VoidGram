@@ -5358,6 +5358,387 @@ index 0000000..20f36d4
 +        return result;
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramTranscribe.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramTranscribe.java
+new file mode 100644
+index 0000000..50992be
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramTranscribe.java
+@@ -0,0 +1,375 @@
++package org.telegram.messenger.voidgram;
++
++import android.Manifest;
++import android.content.Intent;
++import android.content.pm.PackageManager;
++import android.media.AudioFormat;
++import android.media.MediaCodec;
++import android.media.MediaExtractor;
++import android.media.MediaFormat;
++import android.os.Build;
++import android.os.Bundle;
++import android.os.ParcelFileDescriptor;
++import android.speech.RecognitionListener;
++import android.speech.RecognizerIntent;
++import android.speech.SpeechRecognizer;
++import android.widget.Toast;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.ApplicationLoader;
++import org.telegram.messenger.FileLoader;
++import org.telegram.messenger.LocaleController;
++import org.telegram.messenger.MessageObject;
++import org.telegram.messenger.Utilities;
++import org.telegram.tgnet.RequestDelegate;
++import org.telegram.tgnet.TLObject;
++import org.telegram.tgnet.TLRPC;
++
++import java.io.ByteArrayOutputStream;
++import java.io.File;
++import java.io.FileOutputStream;
++import java.nio.ByteBuffer;
++import java.nio.ByteOrder;
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.Map;
++import java.util.WeakHashMap;
++
++/**
++ * →A without Premium, as on iOS: the voice or round message already on the device is decoded and
++ * read by the system speech recognizer (on the device when it can). Android 13+.
++ * The result goes back through Telegram's own transcription path, so the button and text look
++ * the same as a server transcription.
++ */
++public final class VoidGramTranscribe {
++    private VoidGramTranscribe() {
++    }
++
++    private static final int SAMPLE_RATE = 16000;
++    private static final Map<TLObject, MessageObject> pending = Collections.synchronizedMap(new WeakHashMap<>());
++
++    public static boolean isEnabled() {
++        return Build.VERSION.SDK_INT >= 33 && VoidGram.prefs().getBoolean("local_transcribe", true);
++    }
++
++    public static void setEnabled(boolean value) {
++        VoidGram.prefs().edit().putBoolean("local_transcribe", value).apply();
++    }
++
++    public static boolean isSupported() {
++        return Build.VERSION.SDK_INT >= 33 && SpeechRecognizer.isRecognitionAvailable(ApplicationLoader.applicationContext);
++    }
++
++    /** TranscribeButton: remembers which message a transcription request belongs to. */
++    public static void bind(TLObject request, MessageObject messageObject) {
++        if (isEnabled() && request != null && messageObject != null) {
++            pending.put(request, messageObject);
++        }
++    }
++
++    /** ConnectionsManager: answers a bound transcription request on the device. */
++    public static boolean intercept(TLObject object, RequestDelegate onComplete) {
++        if (!(object instanceof TLRPC.TL_messages_transcribeAudio) || onComplete == null) {
++            return false;
++        }
++        MessageObject messageObject = pending.remove(object);
++        if (messageObject == null || !isEnabled()) {
++            return false;
++        }
++        AndroidUtilities.runOnUIThread(() -> transcribe(messageObject, (text, error) -> {
++            if (error != null) {
++                Toast.makeText(ApplicationLoader.applicationContext, error, Toast.LENGTH_LONG).show();
++                TLRPC.TL_error tlError = new TLRPC.TL_error();
++                tlError.code = 400;
++                tlError.text = "VOIDGRAM_LOCAL_TRANSCRIBE";
++                onComplete.run(null, tlError);
++                return;
++            }
++            TLRPC.TL_messages_transcribedAudio result = new TLRPC.TL_messages_transcribedAudio();
++            result.pending = false;
++            result.text = text;
++            result.transcription_id = -Math.abs(Utilities.random.nextLong() >>> 1) - 1;
++            onComplete.run(result, null);
++        }));
++        return true;
++    }
++
++    public interface Result {
++        void run(String text, String error);
++    }
++
++    public static void transcribe(MessageObject messageObject, Result result) {
++        if (Build.VERSION.SDK_INT < 33) {
++            result.run(null, VoidGram.t("Распознавание на устройстве — с Android 13.", "On-device recognition needs Android 13."));
++            return;
++        }
++        if (!SpeechRecognizer.isRecognitionAvailable(ApplicationLoader.applicationContext)) {
++            result.run(null, VoidGram.t("На устройстве нет службы распознавания речи.", "There is no speech recognition service on this device."));
++            return;
++        }
++        if (ApplicationLoader.applicationContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
++            try {
++                org.telegram.ui.ActionBar.BaseFragment fragment = org.telegram.ui.LaunchActivity.getLastFragment();
++                if (fragment != null && fragment.getParentActivity() != null) {
++                    fragment.getParentActivity().requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 3);
++                }
++            } catch (Throwable ignore) {
++            }
++            result.run(null, VoidGram.t("Разрешите микрофон для распознавания речи и нажмите ещё раз.", "Allow the microphone for speech recognition and tap again."));
++            return;
++        }
++        File file = FileLoader.getInstance(messageObject.currentAccount).getPathToMessage(messageObject.messageOwner);
++        if (file == null || !file.exists()) {
++            result.run(null, VoidGram.t("Сначала загрузите сообщение.", "Download the message first."));
++            return;
++        }
++        Utilities.globalQueue.postRunnable(() -> {
++            byte[] pcm = decode(file);
++            AndroidUtilities.runOnUIThread(() -> {
++                if (pcm == null || pcm.length == 0) {
++                    result.run(null, VoidGram.t("Не удалось подготовить аудио.", "The audio could not be prepared."));
++                } else {
++                    recognize(pcm, result);
++                }
++            });
++        });
++    }
++
++    /** First audio track → 16 kHz mono 16-bit PCM. */
++    @androidx.annotation.RequiresApi(33)
++    private static byte[] decode(File file) {
++        MediaExtractor extractor = new MediaExtractor();
++        MediaCodec codec = null;
++        try {
++            extractor.setDataSource(file.getAbsolutePath());
++            int track = -1;
++            MediaFormat format = null;
++            for (int i = 0; i < extractor.getTrackCount(); i++) {
++                MediaFormat candidate = extractor.getTrackFormat(i);
++                String mime = candidate.getString(MediaFormat.KEY_MIME);
++                if (mime != null && mime.startsWith("audio/")) {
++                    track = i;
++                    format = candidate;
++                    break;
++                }
++            }
++            if (track < 0) {
++                return null;
++            }
++            extractor.selectTrack(track);
++            codec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME));
++            codec.configure(format, null, null, 0);
++            codec.start();
++            int sampleRate = format.containsKey(MediaFormat.KEY_SAMPLE_RATE) ? format.getInteger(MediaFormat.KEY_SAMPLE_RATE) : 48000;
++            int channels = format.containsKey(MediaFormat.KEY_CHANNEL_COUNT) ? format.getInteger(MediaFormat.KEY_CHANNEL_COUNT) : 1;
++            ByteArrayOutputStream out = new ByteArrayOutputStream();
++            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
++            boolean inputDone = false;
++            boolean outputDone = false;
++            double position = 0;
++            long limit = 20L * 60 * SAMPLE_RATE * 2;
++            while (!outputDone && out.size() < limit) {
++                if (!inputDone) {
++                    int inputIndex = codec.dequeueInputBuffer(10000);
++                    if (inputIndex >= 0) {
++                        ByteBuffer input = codec.getInputBuffer(inputIndex);
++                        int size = extractor.readSampleData(input, 0);
++                        if (size < 0) {
++                            codec.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
++                            inputDone = true;
++                        } else {
++                            codec.queueInputBuffer(inputIndex, 0, size, extractor.getSampleTime(), 0);
++                            extractor.advance();
++                        }
++                    }
++                }
++                int outputIndex = codec.dequeueOutputBuffer(info, 10000);
++                if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
++                    MediaFormat outputFormat = codec.getOutputFormat();
++                    if (outputFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
++                        sampleRate = outputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE);
++                    }
++                    if (outputFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
++                        channels = outputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT);
++                    }
++                } else if (outputIndex >= 0) {
++                    ByteBuffer output = codec.getOutputBuffer(outputIndex);
++                    if (output != null && info.size > 0) {
++                        output.position(info.offset);
++                        output.limit(info.offset + info.size);
++                        java.nio.ShortBuffer samples = output.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer();
++                        int frames = samples.remaining() / Math.max(1, channels);
++                        double step = sampleRate / (double) SAMPLE_RATE;
++                        // Mono mix, then nearest-sample resampling to 16 kHz.
++                        while (position < frames) {
++                            int frame = (int) position;
++                            int sum = 0;
++                            for (int c = 0; c < channels; c++) {
++                                sum += samples.get(frame * channels + c);
++                            }
++                            short value = (short) (sum / Math.max(1, channels));
++                            out.write(value & 0xff);
++                            out.write((value >> 8) & 0xff);
++                            position += step;
++                        }
++                        position -= frames;
++                    }
++                    codec.releaseOutputBuffer(outputIndex, false);
++                    if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
++                        outputDone = true;
++                    }
++                }
++            }
++            return out.toByteArray();
++        } catch (Throwable e) {
++            return null;
++        } finally {
++            try {
++                if (codec != null) {
++                    codec.stop();
++                    codec.release();
++                }
++            } catch (Throwable ignore) {
++            }
++            extractor.release();
++        }
++    }
++
++    private static String languageTag() {
++        try {
++            java.util.Locale locale = LocaleController.getInstance().getCurrentLocale();
++            if (locale != null) {
++                return locale.toLanguageTag();
++            }
++        } catch (Throwable ignore) {
++        }
++        return java.util.Locale.getDefault().toLanguageTag();
++    }
++
++    @androidx.annotation.RequiresApi(33)
++    private static void recognize(byte[] pcm, Result result) {
++        final SpeechRecognizer recognizer;
++        try {
++            if (Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(ApplicationLoader.applicationContext)) {
++                recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(ApplicationLoader.applicationContext);
++            } else {
++                recognizer = SpeechRecognizer.createSpeechRecognizer(ApplicationLoader.applicationContext);
++            }
++        } catch (Throwable e) {
++            result.run(null, VoidGram.t("Служба распознавания недоступна.", "The recognition service is not available."));
++            return;
++        }
++        final ParcelFileDescriptor[] pipe;
++        try {
++            pipe = ParcelFileDescriptor.createPipe();
++        } catch (Throwable e) {
++            recognizer.destroy();
++            result.run(null, VoidGram.t("Не удалось подготовить аудио.", "The audio could not be prepared."));
++            return;
++        }
++        final StringBuilder text = new StringBuilder();
++        final boolean[] done = new boolean[1];
++        final Runnable finish = () -> {
++            if (done[0]) {
++                return;
++            }
++            done[0] = true;
++            try {
++                recognizer.destroy();
++            } catch (Throwable ignore) {
++            }
++            try {
++                pipe[0].close();
++            } catch (Throwable ignore) {
++            }
++            result.run(text.toString().trim(), null);
++        };
++        recognizer.setRecognitionListener(new RecognitionListener() {
++            @Override public void onReadyForSpeech(Bundle params) { }
++            @Override public void onBeginningOfSpeech() { }
++            @Override public void onRmsChanged(float rmsdB) { }
++            @Override public void onBufferReceived(byte[] buffer) { }
++            @Override public void onEndOfSpeech() { }
++            @Override public void onPartialResults(Bundle partialResults) { }
++            @Override public void onEvent(int eventType, Bundle params) { }
++
++            private void append(Bundle bundle) {
++                ArrayList<String> list = bundle != null ? bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) : null;
++                if (list != null && !list.isEmpty() && list.get(0) != null && !list.get(0).trim().isEmpty()) {
++                    if (text.length() > 0) {
++                        text.append(' ');
++                    }
++                    text.append(list.get(0).trim());
++                }
++            }
++
++            @Override
++            public void onSegmentResults(Bundle segmentResults) {
++                append(segmentResults);
++            }
++
++            @Override
++            public void onEndOfSegmentedSession() {
++                finish.run();
++            }
++
++            @Override
++            public void onResults(Bundle results) {
++                append(results);
++                finish.run();
++            }
++
++            @Override
++            public void onError(int error) {
++                if (done[0]) {
++                    return;
++                }
++                if (text.length() > 0 || error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
++                    finish.run();
++                    return;
++                }
++                done[0] = true;
++                try {
++                    recognizer.destroy();
++                } catch (Throwable ignore) {
++                }
++                String reason = error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED || error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE
++                        ? VoidGram.t("Этот язык не поддерживается распознаванием на устройстве.", "This language is not supported by on-device recognition.")
++                        : error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS
++                        ? VoidGram.t("Разрешите микрофон для распознавания речи.", "Allow the microphone for speech recognition.")
++                        : VoidGram.t("Не удалось распознать (код ", "Recognition failed (code ") + error + ")";
++                result.run(null, reason);
++            }
++        });
++        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
++        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
++        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag());
++        intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
++        intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, pipe[0]);
++        intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1);
++        intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT);
++        intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, SAMPLE_RATE);
++        intent.putExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION, RecognizerIntent.EXTRA_AUDIO_SOURCE);
++        try {
++            recognizer.startListening(intent);
++        } catch (Throwable e) {
++            finish.run();
++            return;
++        }
++        new Thread(() -> {
++            try (FileOutputStream out = new ParcelFileDescriptor.AutoCloseOutputStream(pipe[1])) {
++                int offset = 0;
++                while (offset < pcm.length) {
++                    int count = Math.min(8192, pcm.length - offset);
++                    out.write(pcm, offset, count);
++                    offset += count;
++                }
++                // A second of silence lets the recognizer close the last segment.
++                out.write(new byte[SAMPLE_RATE * 2]);
++            } catch (Throwable ignore) {
++            }
++        }, "VoidGramTranscribe").start();
++        // Recognizers that never end a segmented session still return what they heard.
++        AndroidUtilities.runOnUIThread(finish, Math.max(30_000L, pcm.length / (SAMPLE_RATE * 2L) * 2000L + 15_000L));
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramTranslate.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramTranslate.java
 new file mode 100644
 index 0000000..5266ca5
@@ -5526,10 +5907,10 @@ index 0000000..5266ca5
 +    }
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java b/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java
-index ab54ee3..7c917b3 100644
+index ab54ee3..76fffa0 100644
 --- a/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java
 +++ b/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java
-@@ -413,6 +413,12 @@ public class ConnectionsManager extends BaseController {
+@@ -413,6 +413,16 @@ public class ConnectionsManager extends BaseController {
  
      public int sendRequest(final TLObject object, final RequestDelegate onComplete, final RequestDelegateTimestamp onCompleteTimestamp, final QuickAckDelegate onQuickAck, final WriteToSocketDelegate onWriteToSocket, final int flags, final int datacenterId, final int connectionType, final boolean immediate) {
          final int requestToken = lastRequestToken.getAndIncrement();
@@ -5537,12 +5918,16 @@ index ab54ee3..7c917b3 100644
 +        if (org.telegram.messenger.voidgram.VoidGramTranslate.intercept(object, onComplete, onCompleteTimestamp)) {
 +            return requestToken;
 +        }
++        // VoidGram: →A voice and round messages are transcribed on the device.
++        if (org.telegram.messenger.voidgram.VoidGramTranscribe.intercept(object, onComplete)) {
++            return requestToken;
++        }
 +        // VoidGram: with local Premium, custom emoji go out as tg://emoji links.
 +        org.telegram.messenger.voidgram.VoidGramPremium.rewriteOutgoing(currentAccount, object);
          Utilities.stageQueue.postRunnable(() -> {
              sendRequestInternal(object, onComplete, onCompleteTimestamp, onQuickAck, onWriteToSocket, flags, datacenterId, connectionType, immediate, requestToken);
          });
-@@ -712,6 +718,8 @@ public class ConnectionsManager extends BaseController {
+@@ -712,6 +722,8 @@ public class ConnectionsManager extends BaseController {
              packageId = "";
          }
  
@@ -5551,7 +5936,7 @@ index ab54ee3..7c917b3 100644
          native_init(currentAccount, version, layer, apiId, deviceModel, systemVersion, appVersion, langCode, systemLangCode, configPath, logPath, regId, cFingerprint, installer, packageId, timezoneOffset, userId, userPremium, enablePushConnection, ApplicationLoader.isNetworkOnline(), ApplicationLoader.getCurrentNetworkType(), SharedConfig.measureDevicePerformanceClass());
          checkConnection();
      }
-@@ -1026,6 +1034,8 @@ public class ConnectionsManager extends BaseController {
+@@ -1026,6 +1038,8 @@ public class ConnectionsManager extends BaseController {
      public static native int native_isTestBackend(int currentAccount);
      public static native void native_pauseNetwork(int currentAccount);
      public static native void native_setIpStrategy(int currentAccount, byte value);
@@ -5561,10 +5946,19 @@ index ab54ee3..7c917b3 100644
      public static native void native_moveDatacenter(int currentAccount, int datacenterId);
      public static native void native_setNetworkAvailable(int currentAccount, boolean value, int networkType, boolean slow);
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Cells/ChatMessageCell.java b/TMessagesProj/src/main/java/org/telegram/ui/Cells/ChatMessageCell.java
-index 5dc090f..42ae0c5 100644
+index 5dc090f..3f4b262 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/Cells/ChatMessageCell.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/Cells/ChatMessageCell.java
-@@ -15560,14 +15560,23 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
+@@ -11174,6 +11174,8 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
+             (
+                 UserConfig.getInstance(currentAccount).isPremium()
+                 ||
++                org.telegram.messenger.voidgram.VoidGramTranscribe.isEnabled()
++                ||
+                 TranscribeButton.isFreeTranscribeInChat(currentMessageObject)
+                 ||
+                 MessagesController.getInstance(currentAccount).transcribeAudioTrialWeeklyNumber > 0 &&
+@@ -15560,14 +15562,23 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
       * before a cell lays it out (RichWidgetBlock#estimateSafeArea).
       */
      public static String timeString(MessageObject current, MessageObject message, boolean edited, int editDate) {
@@ -5590,7 +5984,7 @@ index 5dc090f..42ae0c5 100644
          } else if (edited) {
              if (AppGlobalConfig.getInstance(current.currentAccount).messagePrimaryEditedDate.get()) {
                  if (editDate == 0 && current.isEditing()) {
-@@ -15575,7 +15584,7 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
+@@ -15575,7 +15586,7 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
                  }
                  return LocaleController.formatPmEditedDate(editDate);
              }
@@ -5599,7 +5993,7 @@ index 5dc090f..42ae0c5 100644
          } else if (current.isSaved && current.messageOwner.fwd_from != null && (current.messageOwner.fwd_from.date != 0 || current.messageOwner.fwd_from.saved_date != 0)
                  // A widget keeps its time alone in Saved Messages: the pill over its corner stays short.
                  && !(MessageObject.getMedia(current.messageOwner) instanceof TLRPC.TL_messageMediaWidget)) {
-@@ -15585,7 +15594,7 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
+@@ -15585,7 +15596,7 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
              }
              return LocaleController.formatSeenDate(date);
          }
@@ -6039,6 +6433,37 @@ index e8deeca..b09cc24 100644
              }
          }
      }
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Components/TranscribeButton.java b/TMessagesProj/src/main/java/org/telegram/ui/Components/TranscribeButton.java
+index 0849d5d..3f98506 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/Components/TranscribeButton.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/Components/TranscribeButton.java
+@@ -112,7 +112,7 @@ public class TranscribeButton {
+ 
+         this.isOpen = false;
+         this.shouldBeOpen = false;
+-        premium = parent.getMessageObject() != null && UserConfig.getInstance(parent.getMessageObject().currentAccount).isPremium();
++        premium = parent.getMessageObject() != null && (UserConfig.getInstance(parent.getMessageObject().currentAccount).isPremium() || org.telegram.messenger.voidgram.VoidGramTranscribe.isEnabled());
+ 
+         loadingFloat = new AnimatedFloat(parent, 250, CubicBezierInterpolator.EASE_OUT_QUINT);
+         animatedDrawLock = new AnimatedFloat(parent, 250, CubicBezierInterpolator.EASE_OUT_QUINT);
+@@ -698,6 +698,8 @@ public class TranscribeButton {
+                 if (!UserConfig.getInstance(account).isPremium()) {
+                     flags |= ConnectionsManager.RequestFlagDoNotWaitFloodWait;
+                 }
++                // VoidGram: on-device transcription answers this request.
++                org.telegram.messenger.voidgram.VoidGramTranscribe.bind(req, messageObject);
+                 ConnectionsManager.getInstance(account).sendRequest(req, (res, err) -> {
+                     String text;
+                     long id = 0;
+@@ -865,7 +867,7 @@ public class TranscribeButton {
+         }
+         ConnectionsManager cc = ConnectionsManager.getInstance(messageObject.currentAccount);
+         MessagesController mc = MessagesController.getInstance(messageObject.currentAccount);
+-        if (UserConfig.getInstance(messageObject.currentAccount).isPremium()) {
++        if (UserConfig.getInstance(messageObject.currentAccount).isPremium() || org.telegram.messenger.voidgram.VoidGramTranscribe.isEnabled()) {
+             return false;
+         }
+         return mc.transcribeAudioTrialCooldownUntil != 0 && cc.getCurrentTime() <= mc.transcribeAudioTrialCooldownUntil && mc.transcribeAudioTrialCurrentNumber <= 0;
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
 index 1dd2ffe..6cacdb9 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
@@ -7943,7 +8368,7 @@ index 0000000..70cdf0b
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
 new file mode 100644
-index 0000000..318f67e
+index 0000000..e833169
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
 @@ -0,0 +1,323 @@
@@ -8033,7 +8458,7 @@ index 0000000..318f67e
 +        items.add(UItem.asShadow(VoidGram.t("Значки и подписи с сервера VoidGram, рядом с именем у тех, у кого нет своего статуса. Видны только в VoidGram. Иконки приложения VoidGram — в Настройках → Оформление → Иконка.", "Badges and labels from the VoidGram server, next to the name of people without their own status. Visible only in VoidGram. VoidGram app icons are in Settings → Appearance → App icon.")));
 +
 +        items.add(UItem.asHeader(VoidGram.t("Другое", "Other")));
-+        items.add(UItem.asButton(ID_TOOLS, R.drawable.msg_settings, VoidGram.t("Инструменты", "Tools"), VoidGram.t("Last.fm, Premium, спойлеры", "Last.fm, Premium, spoilers")));
++        items.add(UItem.asButton(ID_TOOLS, R.drawable.msg_settings, VoidGram.t("Инструменты", "Tools"), VoidGram.t("→A, Last.fm, Premium", "→A, Last.fm, Premium")));
 +        items.add(UItem.asButton(ID_EXPORT, R.drawable.msg_shareout, VoidGram.t("Экспорт настроек VoidGram", "Export VoidGram settings")));
 +        items.add(UItem.asButton(ID_IMPORT, R.drawable.msg_download, VoidGram.t("Импорт настроек VoidGram", "Import VoidGram settings")));
 +        items.add(UItem.asButton(ID_AGREEMENT, R.drawable.msg2_policy, VoidGram.t("Пользовательское соглашение", "User agreement")));
@@ -8272,10 +8697,10 @@ index 0000000..318f67e
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java
 new file mode 100644
-index 0000000..97c70eb
+index 0000000..2a8dacd
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,156 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.content.Context;
@@ -8304,6 +8729,7 @@ index 0000000..97c70eb
 +    private static final int ID_PREMIUM = 2;
 +    private static final int ID_SPOILERS = 3;
 +    private static final int ID_NUMBERS = 4;
++    private static final int ID_TRANSCRIBE = 5;
 +
 +    @Override
 +    protected CharSequence getTitle() {
@@ -8315,6 +8741,12 @@ index 0000000..97c70eb
 +        items.add(UItem.asHeader(VoidGram.t("Музыка", "Music")));
 +        items.add(UItem.asButton(ID_LASTFM, R.drawable.msg_media, VoidGramLastFm.isConnected() ? VoidGramLastFm.username() : VoidGram.t("Подключить Last.fm", "Connect Last.fm"), VoidGramLastFm.isConnected() ? VoidGram.t("вкл.", "on") : ""));
 +        items.add(UItem.asShadow(VoidGram.t("Скробблинг треков из плеера через ваш API-аккаунт Last.fm (last.fm/api/account/create). Пароль нужен один раз и не сохраняется.", "Scrobbles player tracks through your own Last.fm API account (last.fm/api/account/create). The password is used once and not stored.")));
++
++        items.add(UItem.asHeader(VoidGram.t("Голосовые", "Voice messages")));
++        items.add(UItem.asCheck(ID_TRANSCRIBE, VoidGram.t("→A на устройстве, без Premium", "→A on the device, without Premium")).setChecked(org.telegram.messenger.voidgram.VoidGramTranscribe.isEnabled()));
++        items.add(UItem.asShadow(android.os.Build.VERSION.SDK_INT < 33
++                ? VoidGram.t("Нужен Android 13 или новее.", "Needs Android 13 or newer.")
++                : VoidGram.t("Голосовые и кружки распознаёт служба речи телефона, на устройстве, если она это умеет. Нужно разрешение на микрофон; запись с микрофона не ведётся.", "Voice and round messages are read by the phone's speech service, on the device when it can. The microphone permission is needed; nothing is recorded.")));
 +
 +        items.add(UItem.asHeader("Premium"));
 +        items.add(UItem.asCheck(ID_PREMIUM, VoidGram.t("Локальный Premium", "Local Premium")).setChecked(VoidGramPremium.isLocal()));
@@ -8354,6 +8786,12 @@ index 0000000..97c70eb
 +                VoidGramPremium.setLocal(!VoidGramPremium.isLocal());
 +                getNotificationCenter().postNotificationName(org.telegram.messenger.NotificationCenter.currentUserPremiumStatusChanged);
 +                update();
++                break;
++            case ID_TRANSCRIBE:
++                if (android.os.Build.VERSION.SDK_INT >= 33) {
++                    org.telegram.messenger.voidgram.VoidGramTranscribe.setEnabled(!org.telegram.messenger.voidgram.VoidGramTranscribe.isEnabled());
++                    update();
++                }
 +                break;
 +            case ID_SPOILERS:
 +                VoidGramPremium.setRevealSpoilers(!VoidGramPremium.revealSpoilers());
