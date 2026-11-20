@@ -583,10 +583,10 @@ index 9881370..262aa9c 100644
                  if (BuildVars.LOGS_ENABLED) {
                      FileLog.d("NotificationsController: process new messages, value is " + value + " ("+dialogId+", "+isChannel+", "+messageObject.isReactionPush+", "+messageObject.isStoryReactionPush+")");
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java b/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
-index 55452d3..4414524 100644
+index 55452d3..5b60ae1 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
-@@ -4439,6 +4439,18 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
+@@ -4439,6 +4439,20 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
      }
  
      public void sendMessage(SendMessageParams sendMessageParams) {
@@ -598,6 +598,8 @@ index 55452d3..4414524 100644
 +        org.telegram.messenger.voidgram.VoidGramChatNotice.beforeSend(currentAccount, sendMessageParams);
 +        // VoidGram: text shortcuts and {date}/{time}/{weekday}/{clipboard}.
 +        org.telegram.messenger.voidgram.VoidGramShortcuts.applyToOutgoing(sendMessageParams);
++        // VoidGram: group mentions (@team → @alice @bob).
++        org.telegram.messenger.voidgram.VoidGramGroupMentions.applyToOutgoing(sendMessageParams);
 +        // VoidGram: tracking parameters are removed from links.
 +        org.telegram.messenger.voidgram.VoidGramInterface.cleanOutgoing(sendMessageParams);
 +        // VoidGram Time Capsule: seal the text when the send menu asked for a capsule.
@@ -3280,6 +3282,244 @@ index 0000000..7774582
 +
 +    public static boolean hideTyping(int account, long dialogId) {
 +        return active(account, dialogId, TYPING);
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramGroupMentions.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramGroupMentions.java
+new file mode 100644
+index 0000000..be165b6
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramGroupMentions.java
+@@ -0,0 +1,232 @@
++package org.telegram.messenger.voidgram;
++
++import org.json.JSONArray;
++import org.json.JSONObject;
++import org.telegram.messenger.DialogObject;
++import org.telegram.messenger.SendMessagesHelper;
++
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.LinkedHashSet;
++import java.util.Locale;
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
++
++/**
++ * Group mentions, as on iOS: a command such as "@team" in an outgoing message becomes
++ * "@alice @bob @carol". Up to 5 groups of up to 7 usernames; inserted mentions are never read as
++ * commands again, and each command expands once a minute per chat.
++ */
++public final class VoidGramGroupMentions {
++    private VoidGramGroupMentions() {
++    }
++
++    public static final int MAX_GROUPS = 5;
++    public static final int MAX_USERNAMES = 7;
++
++    public static final class Group {
++        public final String command;
++        public final ArrayList<String> usernames;
++
++        public Group(String command, ArrayList<String> usernames) {
++            this.command = command;
++            this.usernames = usernames;
++        }
++    }
++
++    private static final HashMap<String, Long> cooldown = new HashMap<>();
++
++    public static boolean enabledPrivate() {
++        return VoidGram.prefs().getBoolean("mentions_private", true);
++    }
++
++    public static void setEnabledPrivate(boolean value) {
++        VoidGram.prefs().edit().putBoolean("mentions_private", value).apply();
++    }
++
++    public static boolean enabledGroups() {
++        return VoidGram.prefs().getBoolean("mentions_groups", true);
++    }
++
++    public static void setEnabledGroups(boolean value) {
++        VoidGram.prefs().edit().putBoolean("mentions_groups", value).apply();
++    }
++
++    public static boolean caseSensitive() {
++        return VoidGram.prefs().getBoolean("mentions_case", false);
++    }
++
++    public static void setCaseSensitive(boolean value) {
++        VoidGram.prefs().edit().putBoolean("mentions_case", value).apply();
++    }
++
++    /** Usernames from free text: letters, digits and _, up to 32 characters, without repeats. */
++    public static ArrayList<String> parseUsernames(String input) {
++        ArrayList<String> result = new ArrayList<>();
++        LinkedHashSet<String> seen = new LinkedHashSet<>();
++        if (input == null) {
++            return result;
++        }
++        for (String token : input.split("[\\s,;]+")) {
++            String value = token.replaceAll("^[@.,;]+|[@.,;]+$", "");
++            if (value.isEmpty() || value.length() > 32 || !value.matches("[A-Za-z0-9_]+")) {
++                continue;
++            }
++            if (seen.add(value.toLowerCase(Locale.ROOT)) && result.size() < MAX_USERNAMES) {
++                result.add(value);
++            }
++        }
++        return result;
++    }
++
++    public static ArrayList<Group> list() {
++        ArrayList<Group> result = new ArrayList<>();
++        try {
++            JSONArray array = new JSONArray(VoidGram.prefs().getString("mention_groups", "[]"));
++            for (int i = 0; i < array.length() && i < MAX_GROUPS; i++) {
++                JSONObject item = array.getJSONObject(i);
++                ArrayList<String> names = new ArrayList<>();
++                JSONArray users = item.getJSONArray("usernames");
++                for (int j = 0; j < users.length(); j++) {
++                    names.add(users.getString(j));
++                }
++                result.add(new Group(item.getString("command"), names));
++            }
++        } catch (Throwable ignore) {
++        }
++        return result;
++    }
++
++    private static void save(ArrayList<Group> groups) {
++        JSONArray array = new JSONArray();
++        try {
++            for (Group group : groups) {
++                JSONArray users = new JSONArray();
++                for (String name : group.usernames) {
++                    users.put(name);
++                }
++                array.put(new JSONObject().put("command", group.command).put("usernames", users));
++            }
++        } catch (Throwable ignore) {
++        }
++        VoidGram.prefs().edit().putString("mention_groups", array.toString()).apply();
++    }
++
++    /** Adds or replaces a group; false when the command or the list is not valid. */
++    public static boolean put(String oldCommand, String command, String usernames) {
++        command = command == null ? "" : command.trim();
++        ArrayList<String> names = parseUsernames(usernames);
++        if (command.isEmpty() || command.length() > 64 || command.matches(".*\\s.*") || names.isEmpty()) {
++            return false;
++        }
++        ArrayList<Group> groups = list();
++        for (int i = groups.size() - 1; i >= 0; i--) {
++            String existing = groups.get(i).command;
++            if (existing.equalsIgnoreCase(command) || oldCommand != null && existing.equals(oldCommand)) {
++                groups.remove(i);
++            }
++        }
++        if (groups.size() >= MAX_GROUPS) {
++            return false;
++        }
++        groups.add(new Group(command, names));
++        save(groups);
++        return true;
++    }
++
++    public static void remove(String command) {
++        ArrayList<Group> groups = list();
++        for (int i = groups.size() - 1; i >= 0; i--) {
++            if (groups.get(i).command.equals(command)) {
++                groups.remove(i);
++            }
++        }
++        save(groups);
++    }
++
++    private static boolean isWord(char c) {
++        return Character.isLetterOrDigit(c) || c == '_';
++    }
++
++    /** The text with every command replaced; the same text when nothing matched. */
++    public static String expanded(String text, long dialogId) {
++        ArrayList<Group> groups = list();
++        if (text == null || groups.isEmpty() || text.length() > 4096) {
++            return text;
++        }
++        groups.sort((a, b) -> b.command.length() - a.command.length());
++        StringBuilder pattern = new StringBuilder();
++        for (Group group : groups) {
++            if (pattern.length() > 0) {
++                pattern.append('|');
++            }
++            char first = group.command.charAt(0);
++            char last = group.command.charAt(group.command.length() - 1);
++            pattern.append(isWord(first) ? "(?<![\\w@])" : "(?<![\\w" + Pattern.quote(String.valueOf(first)) + "])");
++            pattern.append(Pattern.quote(group.command));
++            pattern.append(isWord(last) ? "(?!\\w)" : "(?![\\w" + Pattern.quote(String.valueOf(last)) + "])");
++        }
++        Pattern regex;
++        try {
++            regex = Pattern.compile(pattern.toString(), caseSensitive() ? 0 : Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
++        } catch (Throwable e) {
++            return text;
++        }
++        Matcher matcher = regex.matcher(text);
++        StringBuilder output = new StringBuilder();
++        int cursor = 0;
++        boolean changed = false;
++        long now = System.currentTimeMillis();
++        while (matcher.find()) {
++            String token = matcher.group();
++            Group match = null;
++            for (Group group : groups) {
++                if (caseSensitive() ? group.command.equals(token) : group.command.equalsIgnoreCase(token)) {
++                    match = group;
++                    break;
++                }
++            }
++            if (match == null) {
++                continue;
++            }
++            String key = dialogId + ":" + match.command.toLowerCase(Locale.ROOT);
++            Long previous = cooldown.get(key);
++            if (previous != null && now - previous < 60_000) {
++                continue;
++            }
++            cooldown.put(key, now);
++            output.append(text, cursor, matcher.start());
++            for (int i = 0; i < match.usernames.size(); i++) {
++                if (i > 0) {
++                    output.append(' ');
++                }
++                output.append('@').append(match.usernames.get(i));
++            }
++            cursor = matcher.end();
++            changed = true;
++        }
++        if (!changed) {
++            return text;
++        }
++        output.append(text.substring(cursor));
++        return output.length() <= 4096 ? output.toString() : text;
++    }
++
++    /** SendMessagesHelper: plain text only; formatting is dropped when the text changes. */
++    public static void applyToOutgoing(SendMessagesHelper.SendMessageParams params) {
++        if (params == null || params.message == null || params.document != null || params.photo != null || VoidGramDecoy.isActive()) {
++            return;
++        }
++        boolean user = params.peer > 0 && !DialogObject.isEncryptedDialog(params.peer);
++        if (user ? !enabledPrivate() : !enabledGroups()) {
++            return;
++        }
++        String result = expanded(params.message, params.peer);
++        if (result != null && !result.equals(params.message)) {
++            params.message = result;
++            if (params.entities != null) {
++                params.entities.clear();
++            }
++        }
 +    }
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramHiddenChats.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramHiddenChats.java
@@ -11490,10 +11730,10 @@ index 0000000..e06ee38
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramShortcutsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramShortcutsActivity.java
 new file mode 100644
-index 0000000..713b75f
+index 0000000..7c8e2fe
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramShortcutsActivity.java
-@@ -0,0 +1,120 @@
+@@ -0,0 +1,199 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.content.Context;
@@ -11519,6 +11759,12 @@ index 0000000..713b75f
 +    private static final int ID_VARIABLES = 1;
 +    private static final int ID_ADD = 2;
 +    private static final int ID_ITEM_BASE = 100;
++    private static final int ID_MENTION_PRIVATE = 3;
++    private static final int ID_MENTION_GROUPS = 4;
++    private static final int ID_MENTION_CASE = 5;
++    private static final int ID_MENTION_ADD = 6;
++    private static final int ID_MENTION_BASE = 500;
++    private ArrayList<org.telegram.messenger.voidgram.VoidGramGroupMentions.Group> mentions = new ArrayList<>();
 +
 +    private ArrayList<VoidGramShortcuts.Shortcut> items = new ArrayList<>();
 +
@@ -11540,6 +11786,25 @@ index 0000000..713b75f
 +        }
 +        list.add(UItem.asButton(ID_ADD, R.drawable.msg_add, VoidGram.t("Добавить сокращение", "Add a shortcut")));
 +        list.add(UItem.asShadow(VoidGram.t("Сообщение, равное сокращению (например, ;адр), заменяется текстом. Нажмите на сокращение, чтобы изменить или удалить его.", "A message equal to a shortcut (for example ;adr) is replaced with its text. Tap a shortcut to change or delete it.")));
++
++        mentions = org.telegram.messenger.voidgram.VoidGramGroupMentions.list();
++        list.add(UItem.asHeader(VoidGram.t("Групповые упоминания", "Group mentions")));
++        list.add(UItem.asCheck(ID_MENTION_PRIVATE, VoidGram.t("В личных чатах", "In private chats")).setChecked(org.telegram.messenger.voidgram.VoidGramGroupMentions.enabledPrivate()));
++        list.add(UItem.asCheck(ID_MENTION_GROUPS, VoidGram.t("В группах", "In groups")).setChecked(org.telegram.messenger.voidgram.VoidGramGroupMentions.enabledGroups()));
++        list.add(UItem.asCheck(ID_MENTION_CASE, VoidGram.t("Учитывать регистр", "Case sensitive")).setChecked(org.telegram.messenger.voidgram.VoidGramGroupMentions.caseSensitive()));
++        for (int i = 0; i < mentions.size(); i++) {
++            org.telegram.messenger.voidgram.VoidGramGroupMentions.Group group = mentions.get(i);
++            StringBuilder names = new StringBuilder();
++            for (String name : group.usernames) {
++                if (names.length() > 0) names.append(' ');
++                names.append('@').append(name);
++            }
++            list.add(UItem.asButton(ID_MENTION_BASE + i, group.command, names.toString()));
++        }
++        if (mentions.size() < org.telegram.messenger.voidgram.VoidGramGroupMentions.MAX_GROUPS) {
++            list.add(UItem.asButton(ID_MENTION_ADD, R.drawable.msg_add, VoidGram.t("Добавить группу", "Add a group")));
++        }
++        list.add(UItem.asShadow(VoidGram.t("Команда (например, @команда) в сообщении заменяется списком ников: до 5 групп по 7 человек, не чаще раза в минуту в одном чате.", "A command (for example @team) in a message becomes the list of usernames: up to 5 groups of 7 people, at most once a minute per chat.")));
 +    }
 +
 +    private void update() {
@@ -11597,8 +11862,62 @@ index 0000000..713b75f
 +        showDialog(builder.create());
 +    }
 +
++    private void editMention(org.telegram.messenger.voidgram.VoidGramGroupMentions.Group existing) {
++        Context context = getContext();
++        LinearLayout layout = new LinearLayout(context);
++        layout.setOrientation(LinearLayout.VERTICAL);
++        layout.setPadding(AndroidUtilities.dp(20), AndroidUtilities.dp(4), AndroidUtilities.dp(20), 0);
++        StringBuilder names = new StringBuilder();
++        if (existing != null) {
++            for (String name : existing.usernames) {
++                if (names.length() > 0) names.append(' ');
++                names.append('@').append(name);
++            }
++        }
++        EditText command = field(context, VoidGram.t("@команда", "@team"), existing != null ? existing.command : "", false);
++        EditText users = field(context, VoidGram.t("@ник1 @ник2 …", "@name1 @name2 …"), names.toString(), true);
++        layout.addView(command);
++        layout.addView(users);
++        AlertDialog.Builder builder = new AlertDialog.Builder(context);
++        builder.setTitle(VoidGram.t("Групповое упоминание", "Group mention"));
++        builder.setView(layout);
++        builder.setPositiveButton(VoidGram.t("Сохранить", "Save"), (d, w) -> {
++            if (!org.telegram.messenger.voidgram.VoidGramGroupMentions.put(existing != null ? existing.command : null, command.getText().toString(), users.getText().toString())) {
++                org.telegram.ui.Components.BulletinFactory.of(this).createErrorBulletin(VoidGram.t("Нужна команда без пробелов и хотя бы один ник", "A command without spaces and at least one username are needed")).show();
++            }
++            update();
++        });
++        if (existing != null) {
++            builder.setNeutralButton(VoidGram.t("Удалить", "Delete"), (d, w) -> {
++                org.telegram.messenger.voidgram.VoidGramGroupMentions.remove(existing.command);
++                update();
++            });
++        }
++        builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++        showDialog(builder.create());
++    }
++
 +    @Override
 +    protected void onClick(UItem item, View view, int position, float x, float y) {
++        if (item.id == ID_MENTION_PRIVATE) {
++            org.telegram.messenger.voidgram.VoidGramGroupMentions.setEnabledPrivate(!org.telegram.messenger.voidgram.VoidGramGroupMentions.enabledPrivate());
++            update();
++            return;
++        } else if (item.id == ID_MENTION_GROUPS) {
++            org.telegram.messenger.voidgram.VoidGramGroupMentions.setEnabledGroups(!org.telegram.messenger.voidgram.VoidGramGroupMentions.enabledGroups());
++            update();
++            return;
++        } else if (item.id == ID_MENTION_CASE) {
++            org.telegram.messenger.voidgram.VoidGramGroupMentions.setCaseSensitive(!org.telegram.messenger.voidgram.VoidGramGroupMentions.caseSensitive());
++            update();
++            return;
++        } else if (item.id == ID_MENTION_ADD) {
++            editMention(null);
++            return;
++        } else if (item.id >= ID_MENTION_BASE && item.id - ID_MENTION_BASE < mentions.size()) {
++            editMention(mentions.get(item.id - ID_MENTION_BASE));
++            return;
++        }
 +        if (item.id == ID_VARIABLES) {
 +            VoidGramShortcuts.setVariablesEnabled(!VoidGramShortcuts.variablesEnabled());
 +            update();
