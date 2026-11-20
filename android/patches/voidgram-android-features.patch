@@ -1,0 +1,2700 @@
+diff --git a/TMessagesProj/jni/TgNetWrapper.cpp b/TMessagesProj/jni/TgNetWrapper.cpp
+index cc9f5d8..8d50c31 100644
+--- a/TMessagesProj/jni/TgNetWrapper.cpp
++++ b/TMessagesProj/jni/TgNetWrapper.cpp
+@@ -274,6 +274,10 @@ void moveDatacenter(JNIEnv *env, jclass c, jint instanceNum, jint datacenterId)
+     ConnectionsManager::getInstance(instanceNum).moveToDatacenter(datacenterId);
+ }
+ 
++void setVoidGramDpi(JNIEnv *env, jclass c, jint method, jint splitPosition, jint splitCount, jint delayMs, jboolean viaProxy) {
++    voidgramSetDpi(method, splitPosition, splitCount, delayMs, viaProxy);
++}
++
+ void setIpStrategy(JNIEnv *env, jclass c, jint instanceNum, jbyte value) {
+     ConnectionsManager::getInstance(instanceNum).setIpStrategy((uint8_t) value);
+ }
+@@ -546,6 +550,7 @@ static JNINativeMethod ConnectionsManagerMethods[] = {
+         {"native_updateDcSettings", "(I)V", (void *) updateDcSettings},
+         {"native_moveDatacenter", "(II)V", (void *) moveDatacenter},
+         {"native_setIpStrategy", "(IB)V", (void *) setIpStrategy},
++        {"native_setVoidGramDpi", "(IIIIZ)V", (void *) setVoidGramDpi},
+         {"native_setNetworkAvailable", "(IZIZ)V", (void *) setNetworkAvailable},
+         {"native_setPushConnectionEnabled", "(IZ)V", (void *) setPushConnectionEnabled},
+         {"native_setJava", "(Z)V", (void *) setJava},
+diff --git a/TMessagesProj/jni/tgnet/ConnectionSocket.cpp b/TMessagesProj/jni/tgnet/ConnectionSocket.cpp
+index 3fa7ba6..bb8ea52 100644
+--- a/TMessagesProj/jni/tgnet/ConnectionSocket.cpp
++++ b/TMessagesProj/jni/tgnet/ConnectionSocket.cpp
+@@ -32,6 +32,87 @@
+ #include "Connection.h"
+ #include "TLSHello.h"
+ #include <random>
++#include <atomic>
++#include <netinet/in.h>
++
++// MARK: VoidGram DPI bypass
++
++static std::atomic<int32_t> voidgramDpiMethod(0);
++static std::atomic<int32_t> voidgramDpiSplitPosition(2);
++static std::atomic<int32_t> voidgramDpiSplitCount(1);
++static std::atomic<int32_t> voidgramDpiDelayMs(0);
++static std::atomic<bool> voidgramDpiViaProxy(true);
++
++void voidgramSetDpi(int32_t method, int32_t splitPosition, int32_t splitCount, int32_t delayMs, bool viaProxy) {
++    voidgramDpiMethod = std::max(0, std::min(4, method));
++    voidgramDpiSplitPosition = std::max(1, std::min(256, splitPosition));
++    voidgramDpiSplitCount = std::max(1, std::min(16, splitCount));
++    voidgramDpiDelayMs = std::max(0, std::min(100, delayMs));
++    voidgramDpiViaProxy = viaProxy;
++}
++
++static void voidgramSetTtl(int fd, int ttl) {
++    setsockopt(fd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
++    setsockopt(fd, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &ttl, sizeof(ttl));
++}
++
++/**
++ * Sends the first payload in parts so that DPI which does not reassemble TCP misses the signature.
++ * Returns the bytes accepted by the kernel (the caller discards them), or -1 on a socket error.
++ */
++ssize_t ConnectionSocket::voidgramDpiSend(const uint8_t *data, size_t length) {
++    const int32_t method = voidgramDpiMethod;
++    const bool disorder = method == 2 || method == 4;
++    const bool oob = method == 3 || method == 4;
++    const size_t position = (size_t) voidgramDpiSplitPosition.load();
++    const int32_t count = voidgramDpiSplitCount;
++    const int32_t delay = voidgramDpiDelayMs;
++    size_t offset = 0;
++    int defaultTtl = 64;
++    socklen_t ttlLength = sizeof(defaultTtl);
++    if (disorder && getsockopt(socketFd, IPPROTO_IP, IP_TTL, &defaultTtl, &ttlLength) != 0) {
++        ttlLength = sizeof(defaultTtl);
++        if (getsockopt(socketFd, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &defaultTtl, &ttlLength) != 0 || defaultTtl <= 0) {
++            defaultTtl = 64;
++        }
++    }
++    for (int32_t part = 0; part < count && offset + 1 < length; part++) {
++        size_t chunk = std::min(position, length - 1 - offset);
++        if (disorder && part == 0) {
++            voidgramSetTtl(socketFd, 1);
++        }
++        ssize_t sent = send(socketFd, data + offset, chunk, 0);
++        if (disorder && part == 0) {
++            voidgramSetTtl(socketFd, defaultTtl);
++        }
++        if (sent < 0) {
++            if (errno == EAGAIN || errno == EWOULDBLOCK) {
++                return (ssize_t) offset;
++            }
++            return -1;
++        }
++        offset += (size_t) sent;
++        if ((size_t) sent < chunk) {
++            return (ssize_t) offset;
++        }
++        if (oob) {
++            // One urgent byte: the server's kernel keeps it out of the stream, a naive DPI does not.
++            uint8_t junk = 0;
++            send(socketFd, &junk, 1, MSG_OOB);
++        }
++        if (delay > 0) {
++            usleep((useconds_t) delay * 1000);
++        }
++    }
++    ssize_t sent = send(socketFd, data + offset, length - offset, 0);
++    if (sent < 0) {
++        if (errno == EAGAIN || errno == EWOULDBLOCK) {
++            return (ssize_t) offset;
++        }
++        return offset > 0 ? (ssize_t) offset : -1;
++    }
++    return (ssize_t) (offset + (size_t) sent);
++}
+ 
+ #ifndef EPOLLRDHUP
+ #define EPOLLRDHUP 0x2000
+@@ -272,6 +353,7 @@ void ConnectionSocket::closeSocket(int32_t reason, int32_t error) {
+     proxyAuthState = 0;
+     tlsState = 0;
+     onConnectedSent = false;
++    voidgramDpiPending = true;
+     outgoingByteStream->clean();
+     if (tlsBuffer != nullptr) {
+         tlsBuffer->reuse();
+@@ -526,7 +608,19 @@ void ConnectionSocket::onEvent(uint32_t events) {
+                         memcpy(tempBuffer->bytes + 11, tempBuffer->bytes + 64 * 1024, 32);
+                         bytesRead = 0;
+ 
+-                        if (send(socketFd, tempBuffer->bytes, size, 0) < 0) {
++                        ssize_t helloSent;
++                        if (voidgramDpiPending && voidgramDpiMethod != 0 && voidgramDpiViaProxy) {
++                            voidgramDpiPending = false;
++                            helloSent = voidgramDpiSend(tempBuffer->bytes, size);
++                            if (helloSent >= 0 && (size_t) helloSent < size) {
++                                // The rest goes out as soon as the socket takes it.
++                                ssize_t rest = send(socketFd, tempBuffer->bytes + helloSent, size - (size_t) helloSent, 0);
++                                helloSent = rest < 0 ? -1 : helloSent + rest;
++                            }
++                        } else {
++                            helloSent = send(socketFd, tempBuffer->bytes, size, 0);
++                        }
++                        if (helloSent < 0) {
+                             if (LOGS_ENABLED) DEBUG_E("connection(%p) send failed", this);
+                             closeSocket(1, -1);
+                             return;
+@@ -636,7 +730,9 @@ void ConnectionSocket::onEvent(uint32_t events) {
+                             adjustWriteOp();
+                         }
+                     } else {
+-                        if ((sentLength = send(socketFd, buffer->bytes(), remaining, 0)) < 0) {
++                        bool voidgramDpi = voidgramDpiPending && voidgramDpiMethod != 0 && (currentSecret.empty() || voidgramDpiViaProxy);
++                        voidgramDpiPending = false;
++                        if ((sentLength = voidgramDpi ? voidgramDpiSend(buffer->bytes(), remaining) : send(socketFd, buffer->bytes(), remaining, 0)) < 0) {
+                             if (LOGS_ENABLED) DEBUG_D("connection(%p) send failed", this);
+                             closeSocket(1, -1);
+                             return;
+diff --git a/TMessagesProj/jni/tgnet/ConnectionSocket.h b/TMessagesProj/jni/tgnet/ConnectionSocket.h
+index 15ffee8..afc4c51 100644
+--- a/TMessagesProj/jni/tgnet/ConnectionSocket.h
++++ b/TMessagesProj/jni/tgnet/ConnectionSocket.h
+@@ -12,6 +12,7 @@
+ #include <sys/epoll.h>
+ #include <netinet/in.h>
+ #include <string>
++#include <sys/types.h>
+ 
+ class NativeByteBuffer;
+ class ConnectionsManager;
+@@ -19,6 +20,14 @@ class ByteStream;
+ class EventObject;
+ class ByteArray;
+ 
++/**
++ * VoidGram DPI bypass settings, shared by every connection (set from Java, VoidGramDpi).
++ * method: 0 off, 1 split, 2 disorder (first part sent with TTL 1, the kernel resends it later),
++ * 3 split + OOB byte, 4 disorder + OOB byte. splitPosition: bytes per part; splitCount: parts
++ * before the rest; delayMs: pause between parts; viaProxy: also through MTProto/SOCKS proxies.
++ */
++void voidgramSetDpi(int32_t method, int32_t splitPosition, int32_t splitCount, int32_t delayMs, bool viaProxy);
++
+ class ConnectionSocket {
+ 
+ public:
+@@ -82,6 +91,10 @@ private:
+ 
+     uint8_t proxyAuthState;
+ 
++    /** VoidGram DPI bypass: the first payload of this connection still has to go out split. */
++    bool voidgramDpiPending = true;
++    ssize_t voidgramDpiSend(const uint8_t *data, size_t length);
++
+     int32_t checkSocketError(int32_t *error);
+     void closeSocket(int32_t reason, int32_t error);
+     void openConnectionInternal(bool ipv6);
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/LiteMode.java b/TMessagesProj/src/main/java/org/telegram/messenger/LiteMode.java
+index 37619e6..cf72f60 100644
+--- a/TMessagesProj/src/main/java/org/telegram/messenger/LiteMode.java
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/LiteMode.java
+@@ -109,6 +109,14 @@ public class LiteMode {
+             loadPreference();
+         }
+         if (!ignorePowerSaving) {
++            // VoidGram: this device's power saving profile (phone, tablet, laptop), unless it defers to Telegram.
++            final Boolean voidgramSaving = org.telegram.messenger.voidgram.VoidGramPowerSaving.isSavingNow(getBatteryLevel());
++            if (voidgramSaving != null) {
++                if (voidgramSaving != lastPowerSaverApplied) {
++                    onPowerSaverApplied(lastPowerSaverApplied = voidgramSaving);
++                }
++                return voidgramSaving ? (value & ~org.telegram.messenger.voidgram.VoidGramPowerSaving.limitsMask()) : value;
++            }
+             if (powerSaverLevel > 0 && isBatteryLow(getBatteryLevel())) {
+                 if (!lastPowerSaverApplied) {
+                     onPowerSaverApplied(lastPowerSaverApplied = true);
+@@ -174,6 +182,7 @@ public class LiteMode {
+         if (intent == null) {
+             return;
+         }
++        org.telegram.messenger.voidgram.VoidGramPowerSaving.plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0;
+         final int level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+         final int scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+         if (level >= 0 && scale > 0) {
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/MessageObject.java b/TMessagesProj/src/main/java/org/telegram/messenger/MessageObject.java
+index 373e423..9fb14ba 100644
+--- a/TMessagesProj/src/main/java/org/telegram/messenger/MessageObject.java
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/MessageObject.java
+@@ -12099,6 +12099,10 @@ public class MessageObject {
+         if (message == null) {
+             return false;
+         }
++        // VoidGram: the account's own privacy notice offers no Delete.
++        if (org.telegram.messenger.voidgram.VoidGramChatNotice.isProtected(message)) {
++            return false;
++        }
+         if (ChatObject.isChannelAndNotMegaGroup(chat) && message.action instanceof TLRPC.TL_messageActionChatJoinedByRequest) {
+             return false;
+         }
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java b/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java
+index ec76835..d21ea33 100644
+--- a/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java
+@@ -9346,6 +9346,14 @@ public class MessagesController extends BaseController implements NotificationCe
+     }
+ 
+     public void deleteMessages(ArrayList<Integer> messages, ArrayList<Long> randoms, TLRPC.EncryptedChat encryptedChat, long dialogId, boolean forAll, int mode, boolean cacheOnly, long taskId, TLObject taskRequest, int topicId, boolean movedToScheduled, int movedToScheduledMessageId) {
++        // VoidGram: the own privacy notice is never deleted from this app, whatever path asked for it.
++        if (messages != null && taskId == 0 && !cacheOnly && !movedToScheduled && !messages.isEmpty()) {
++            org.telegram.messenger.voidgram.VoidGramChatNotice.filterDeletion(currentAccount, dialogId, messages);
++            if (messages.isEmpty()) {
++                AndroidUtilities.runOnUIThread(() -> org.telegram.ui.Components.BulletinFactory.global().createSimpleBulletin(R.raw.error, org.telegram.messenger.voidgram.VoidGramChatNotice.refusalText()).show());
++                return;
++            }
++        }
+         final boolean scheduled = mode == ChatActivity.MODE_SCHEDULED;
+         final boolean quickReplies = mode == ChatActivity.MODE_QUICK_REPLIES;
+         final boolean welcomeMessages = mode == ChatActivity.MODE_WELCOME_MESSAGES;
+@@ -9601,6 +9609,9 @@ public class MessagesController extends BaseController implements NotificationCe
+                 }
+                 ArrayList<Integer> ids = new ArrayList<>();
+                 getMessagesStorage().updatePinnedMessages(chat != null ? -chat.id : user.id, null, false, 0, 0, false, null);
++                if (user != null) {
++                    org.telegram.messenger.voidgram.VoidGramChatNotice.afterUnpinAll(currentAccount, user.id);
++                }
+             }
+         });
+     }
+@@ -9609,6 +9620,11 @@ public class MessagesController extends BaseController implements NotificationCe
+         if (chat == null && user == null) {
+             return;
+         }
++        // VoidGram: the own privacy notice stays pinned.
++        if (unpin && org.telegram.messenger.voidgram.VoidGramChatNotice.refusesUnpin(currentAccount, chat != null ? -chat.id : user.id, id)) {
++            AndroidUtilities.runOnUIThread(() -> org.telegram.ui.Components.BulletinFactory.global().createSimpleBulletin(R.raw.error, org.telegram.messenger.voidgram.VoidGramChatNotice.refusalText()).show());
++            return;
++        }
+         TLRPC.TL_messages_updatePinnedMessage req = new TLRPC.TL_messages_updatePinnedMessage();
+         req.peer = getInputPeer(chat != null ? -chat.id : user.id);
+         req.id = id;
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java b/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
+index 55452d3..1255973 100644
+--- a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
+@@ -4439,6 +4439,8 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
+     }
+ 
+     public void sendMessage(SendMessageParams sendMessageParams) {
++        // VoidGram: the privacy notice goes before the first own message in a chat.
++        org.telegram.messenger.voidgram.VoidGramChatNotice.beforeSend(currentAccount, sendMessageParams);
+         final SendMessageChatArguments sendMessageChatArguments = sendMessageParams.sendMessageChatArguments != null ?
+                 sendMessageParams.sendMessageChatArguments : SendMessageChatArguments.EMPTY;
+         String message = sendMessageParams.message;
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGram.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGram.java
+new file mode 100644
+index 0000000..c64e6f9
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGram.java
+@@ -0,0 +1,36 @@
++package org.telegram.messenger.voidgram;
++
++import android.content.Context;
++import android.content.SharedPreferences;
++
++import org.telegram.messenger.ApplicationLoader;
++import org.telegram.messenger.LocaleController;
++
++/** Shared helpers of the VoidGram additions: preferences and the interface language. */
++public final class VoidGram {
++    private VoidGram() {
++    }
++
++    public static SharedPreferences prefs() {
++        return ApplicationLoader.applicationContext.getSharedPreferences("voidgram", Context.MODE_PRIVATE);
++    }
++
++    /** Russian texts for Russian, Ukrainian, Belarusian and Kazakh interfaces; English otherwise. */
++    public static boolean russian() {
++        String language = null;
++        try {
++            if (LocaleController.getInstance().getCurrentLocale() != null) {
++                language = LocaleController.getInstance().getCurrentLocale().getLanguage();
++            }
++        } catch (Throwable ignore) {
++        }
++        if (language == null) {
++            language = java.util.Locale.getDefault().getLanguage();
++        }
++        return "ru".equals(language) || "uk".equals(language) || "be".equals(language) || "kk".equals(language);
++    }
++
++    public static String t(String ru, String en) {
++        return russian() ? ru : en;
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramAgreement.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramAgreement.java
+new file mode 100644
+index 0000000..6f850fc
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramAgreement.java
+@@ -0,0 +1,190 @@
++package org.telegram.messenger.voidgram;
++
++import android.app.Activity;
++import android.app.Dialog;
++import android.graphics.Color;
++import android.graphics.drawable.GradientDrawable;
++import android.os.Build;
++import android.view.Gravity;
++import android.view.View;
++import android.view.ViewGroup;
++import android.view.Window;
++import android.view.WindowManager;
++import android.widget.FrameLayout;
++import android.widget.LinearLayout;
++import android.widget.ProgressBar;
++import android.widget.ScrollView;
++import android.widget.TextView;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.ui.ActionBar.AlertDialog;
++import org.telegram.ui.ActionBar.Theme;
++
++/**
++ * The VoidGram user agreement, shown over everything before signing in (and once to people who were
++ * signed in when it appeared). "Accept" works only after the text has been scrolled to its very end.
++ */
++public final class VoidGramAgreement {
++    /** Bump when the text changes in substance: everyone accepts it again. */
++    public static final int VERSION = 1;
++    private static final String KEY = "license_accepted_version";
++    private static Dialog shown;
++
++    private VoidGramAgreement() {
++    }
++
++    public static boolean isAccepted() {
++        return VoidGram.prefs().getInt(KEY, 0) >= VERSION;
++    }
++
++    public static String text() {
++        return VoidGram.russian() ? TEXT_RU : TEXT_EN;
++    }
++
++    public static void showIfNeeded(Activity activity) {
++        if (isAccepted() || activity == null || activity.isFinishing() || (shown != null && shown.isShowing())) {
++            return;
++        }
++        final boolean ru = VoidGram.russian();
++        final int background = Theme.getColor(Theme.key_windowBackgroundWhite);
++        final int textColor = Theme.getColor(Theme.key_windowBackgroundWhiteBlackText);
++        final int grayColor = Theme.getColor(Theme.key_windowBackgroundWhiteGrayText);
++        final int accent = Theme.getColor(Theme.key_featuredStickers_addButton);
++
++        final Dialog dialog = new Dialog(activity, android.R.style.Theme_DeviceDefault_NoActionBar);
++        dialog.setCancelable(false);
++
++        LinearLayout root = new LinearLayout(activity);
++        root.setOrientation(LinearLayout.VERTICAL);
++        root.setBackgroundColor(background);
++        root.setPadding(AndroidUtilities.dp(16), AndroidUtilities.dp(16) + AndroidUtilities.statusBarHeight, AndroidUtilities.dp(16), AndroidUtilities.dp(12));
++
++        TextView title = new TextView(activity);
++        title.setText(ru ? "Пользовательское соглашение" : "User Agreement");
++        title.setTextColor(textColor);
++        title.setTextSize(22);
++        title.setTypeface(AndroidUtilities.bold());
++        title.setGravity(Gravity.CENTER);
++        root.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
++
++        final ScrollView scroll = new ScrollView(activity);
++        GradientDrawable box = new GradientDrawable();
++        box.setColor(Theme.getColor(Theme.key_windowBackgroundGray));
++        box.setCornerRadius(AndroidUtilities.dp(14));
++        scroll.setBackground(box);
++        TextView body = new TextView(activity);
++        body.setText(text());
++        body.setTextColor(textColor);
++        body.setTextSize(15);
++        body.setLineSpacing(AndroidUtilities.dp(2), 1f);
++        body.setPadding(AndroidUtilities.dp(14), AndroidUtilities.dp(14), AndroidUtilities.dp(14), AndroidUtilities.dp(22));
++        scroll.addView(body, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
++        LinearLayout.LayoutParams scrollParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
++        scrollParams.topMargin = AndroidUtilities.dp(14);
++        root.addView(scroll, scrollParams);
++
++        final ProgressBar progress = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal);
++        progress.setMax(1000);
++        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, AndroidUtilities.dp(4));
++        progressParams.topMargin = AndroidUtilities.dp(10);
++        root.addView(progress, progressParams);
++
++        final TextView hint = new TextView(activity);
++        hint.setText(ru ? "Долистайте до самого конца, чтобы принять" : "Scroll to the very end to accept");
++        hint.setTextColor(grayColor);
++        hint.setTextSize(13);
++        hint.setGravity(Gravity.CENTER);
++        LinearLayout.LayoutParams hintParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
++        hintParams.topMargin = AndroidUtilities.dp(8);
++        root.addView(hint, hintParams);
++
++        final TextView accept = new TextView(activity);
++        accept.setText(ru ? "Принимаю" : "Accept");
++        accept.setTextColor(Color.WHITE);
++        accept.setTextSize(16);
++        accept.setTypeface(AndroidUtilities.bold());
++        accept.setGravity(Gravity.CENTER);
++        final GradientDrawable acceptBackground = new GradientDrawable();
++        acceptBackground.setCornerRadius(AndroidUtilities.dp(12));
++        acceptBackground.setColor(0xFF9E9E9E);
++        accept.setBackground(acceptBackground);
++        accept.setEnabled(false);
++        LinearLayout.LayoutParams acceptParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, AndroidUtilities.dp(50));
++        acceptParams.topMargin = AndroidUtilities.dp(12);
++        root.addView(accept, acceptParams);
++
++        TextView decline = new TextView(activity);
++        decline.setText(ru ? "Не принимаю" : "Decline");
++        decline.setTextColor(grayColor);
++        decline.setTextSize(14);
++        decline.setGravity(Gravity.CENTER);
++        LinearLayout.LayoutParams declineParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, AndroidUtilities.dp(40));
++        declineParams.topMargin = AndroidUtilities.dp(4);
++        root.addView(decline, declineParams);
++
++        final boolean[] reachedEnd = new boolean[1];
++        final Runnable check = () -> {
++            View child = scroll.getChildAt(0);
++            if (child == null || scroll.getHeight() == 0) {
++                return;
++            }
++            int max = Math.max(1, child.getHeight() - scroll.getHeight());
++            progress.setProgress(Math.min(1000, scroll.getScrollY() * 1000 / max));
++            // "The very end": the last line is fully visible (2 dp tolerance).
++            if (!reachedEnd[0] && scroll.getScrollY() + scroll.getHeight() >= child.getHeight() - AndroidUtilities.dp(2)) {
++                reachedEnd[0] = true;
++                progress.setProgress(1000);
++                accept.setEnabled(true);
++                acceptBackground.setColor(accent);
++                hint.setText(ru ? "Спасибо, что дочитали" : "Thank you for reading to the end");
++                try {
++                    scroll.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP);
++                } catch (Throwable ignore) {
++                }
++            }
++        };
++        scroll.setOnScrollChangeListener((v, x, y, oldX, oldY) -> check.run());
++        // The whole text may fit at once on a large screen: then there is nothing to scroll.
++        scroll.getViewTreeObserver().addOnGlobalLayoutListener(check::run);
++
++        accept.setOnClickListener(v -> {
++            if (!reachedEnd[0]) {
++                return;
++            }
++            VoidGram.prefs().edit().putInt(KEY, VERSION).apply();
++            try {
++                dialog.dismiss();
++            } catch (Throwable ignore) {
++            }
++            shown = null;
++        });
++        decline.setOnClickListener(v -> {
++            AlertDialog.Builder builder = new AlertDialog.Builder(activity);
++            builder.setTitle(ru ? "Без согласия нельзя" : "Agreement required");
++            builder.setMessage(ru ? "Пользоваться VoidGram можно только после принятия соглашения. Если вы не согласны, удалите приложение." : "VoidGram can be used only after accepting the agreement. If you do not agree, delete the app.");
++            builder.setPositiveButton("OK", null);
++            builder.show();
++        });
++
++        dialog.setContentView(root);
++        Window window = dialog.getWindow();
++        if (window != null) {
++            window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
++            window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(background));
++            if (Build.VERSION.SDK_INT >= 21) {
++                window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
++                window.setStatusBarColor(background);
++                window.setNavigationBarColor(background);
++            }
++        }
++        try {
++            dialog.show();
++            shown = dialog;
++        } catch (Throwable ignore) {
++        }
++    }
++
++    private static final String TEXT_RU = "Пользовательское соглашение VoidGram\n\nПожалуйста, внимательно прочитайте это соглашение до конца. Кнопка «Принимаю» станет доступна только после того, как вы долистаете текст до самого низа. Нажимая «Принимаю», вы подтверждаете, что прочитали, поняли и полностью согласны со всеми условиями ниже. Если вы не согласны — не пользуйтесь VoidGram и удалите приложение.\n\n1. Неофициальный клиент\nVoidGram — неофициальный клиент Telegram. Он не связан с Telegram FZ-LLC, Telegram Messenger Inc. и их партнёрами, не одобрен и не поддерживается ими. Названия и товарные знаки Telegram принадлежат их владельцам.\n\n2. «Как есть», без гарантий\nVoidGram предоставляется «как есть» и «как доступно», без каких-либо гарантий — явных или подразумеваемых, включая гарантии работоспособности, безопасности, точности, совместимости, пригодности для определённой цели и отсутствия ошибок. Приложение может работать нестабильно, терять данные или перестать работать в любой момент.\n\n3. Отказ от ответственности\nРазработчики, участники проекта и распространители VoidGram не несут НИКАКОЙ ответственности за любой прямой, косвенный, случайный, особый или последующий ущерб, связанный с использованием или невозможностью использования приложения. В том числе, но не только, за:\n• блокировку, ограничение, заморозку или удаление вашего аккаунта Telegram;\n• потерю, повреждение, утечку или раскрытие переписки, медиа, контактов и любых других данных;\n• действия других пользователей, ботов, плагинов и третьих лиц;\n• финансовые потери, включая звёзды, подарки, NFT и подписки;\n• последствия нарушения правил Telegram, законов вашей страны или прав третьих лиц.\nВся ответственность за использование VoidGram лежит только на вас.\n\n4. Правила Telegram\nНекоторые функции VoidGram (например, режим призрака, сохранение удалённых и изменённых сообщений, сохранение одноразовых медиа) могут противоречить Условиям использования Telegram API и Условиям обслуживания Telegram. Включая такие функции, вы делаете это на свой страх и риск и понимаете, что Telegram может ограничить ваш аккаунт.\n\n5. Конфиденциальность переписки\nVoidGram может сохранять на устройстве удалённые и изменённые сообщения, одноразовые фото, видео и голосовые сообщения, а также позволяет делать снимки экрана там, где обычный Telegram их запрещает. Поэтому переписку с пользователем VoidGram нельзя считать защищённой — ни в обычных, ни в секретных чатах, ни через одноразовые сообщения.\n\n6. Автоматическое предупреждение собеседников\nЧтобы ваши собеседники знали об этом, VoidGram автоматически отправляет от вашего имени предупреждающее сообщение:\n• в каждый личный чат — один раз, и закрепляет его. Вы не можете удалить или открепить это сообщение в VoidGram; удалить его может только ваш собеседник;\n• в каждую группу, где вы пишете, — один раз, без закрепления.\nСообщение отправляется перед вашим первым сообщением в этом чате. Принимая соглашение, вы соглашаетесь на эту отправку.\n\n7. Плагины и сторонний код\nПлагины, темы и скрипты пишут третьи лица. Разработчики VoidGram их не проверяют полностью и не отвечают за их работу, безопасность и последствия использования. Устанавливайте только то, чему доверяете.\n\n8. Данные\nНастройки, история и архивы VoidGram хранятся локально на вашем устройстве. Для значков и некоторых функций приложение обращается к серверу VoidGram. Разработчики не обязаны хранить, восстанавливать или передавать ваши данные.\n\n9. Законы\nВы обязуетесь использовать VoidGram только в рамках законов вашей страны. Запрещено использовать приложение для слежки, преследования, шантажа, распространения чужих личных данных и любых других незаконных действий.\n\n10. Изменения\nУсловия могут меняться. При существенных изменениях VoidGram снова попросит принять соглашение. Продолжая пользоваться приложением, вы принимаете действующую редакцию.\n\n11. Возраст\nПользуясь VoidGram, вы подтверждаете, что достигли возраста, с которого в вашей стране разрешено самостоятельно принимать такие условия, либо получили согласие родителей или законных представителей.\n\nВы дочитали до конца. Если вы согласны со всеми условиями — нажмите «Принимаю».";
++
++    private static final String TEXT_EN = "VoidGram User Agreement\n\nPlease read this agreement carefully to the end. The \"Accept\" button becomes available only after you scroll the text all the way down. By tapping \"Accept\" you confirm that you have read, understood and fully agree to every term below. If you do not agree, do not use VoidGram and delete the app.\n\n1. Unofficial client\nVoidGram is an unofficial Telegram client. It is not affiliated with, endorsed or supported by Telegram FZ-LLC, Telegram Messenger Inc. or their partners. Telegram names and trademarks belong to their owners.\n\n2. \"As is\", no warranty\nVoidGram is provided \"as is\" and \"as available\", without any warranty, express or implied, including warranties of operation, security, accuracy, compatibility, fitness for a particular purpose and freedom from errors. The app may be unstable, lose data or stop working at any time.\n\n3. No liability\nThe developers, contributors and distributors of VoidGram accept NO liability for any direct, indirect, incidental, special or consequential damage related to using or being unable to use the app, including but not limited to:\n• a ban, limit, freeze or deletion of your Telegram account;\n• loss, corruption, leak or disclosure of messages, media, contacts or any other data;\n• actions of other users, bots, plugins and third parties;\n• financial losses, including Stars, gifts, NFTs and subscriptions;\n• the consequences of breaking Telegram's rules, the laws of your country or the rights of others.\nYou alone are responsible for how you use VoidGram.\n\n4. Telegram's rules\nSome VoidGram features (for example Ghost Mode, keeping deleted and edited messages, keeping view-once media) may conflict with the Telegram API Terms of Service and Telegram's Terms of Service. You turn them on at your own risk and understand that Telegram may restrict your account.\n\n5. Privacy of conversations\nVoidGram can keep deleted and edited messages and view-once photos, videos and voice messages on the device, and allows screenshots where ordinary Telegram forbids them. A conversation with a VoidGram user therefore cannot be considered protected: not in ordinary chats, not in secret chats and not with view-once messages.\n\n6. Automatic notice to the people you talk to\nSo that the people you talk to know this, VoidGram automatically sends a warning message on your behalf:\n• to every private chat, once, and pins it. You cannot delete or unpin it in VoidGram; only the other person can delete it;\n• to every group you write in, once, without pinning.\nThe message is sent before your first message in that chat. By accepting this agreement you agree to it being sent.\n\n7. Plugins and third-party code\nPlugins, themes and scripts are written by third parties. The VoidGram developers do not fully review them and are not responsible for how they work, their safety or the consequences of using them. Install only what you trust.\n\n8. Data\nVoidGram settings, history and archives are stored locally on your device. For badges and some features the app contacts the VoidGram server. The developers are not obliged to store, restore or hand over your data.\n\n9. Law\nYou agree to use VoidGram only within the laws of your country. Using the app for surveillance, stalking, blackmail, spreading other people's personal data or any other unlawful activity is forbidden.\n\n10. Changes\nThese terms may change. After a substantial change VoidGram will ask you to accept the agreement again. By continuing to use the app you accept the current version.\n\n11. Age\nBy using VoidGram you confirm that you are old enough in your country to accept such terms yourself, or that you have the consent of your parents or legal guardians.\n\nYou have reached the end. If you agree to all of the terms, tap \"Accept\".";
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChatNotice.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChatNotice.java
+new file mode 100644
+index 0000000..ab39d04
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChatNotice.java
+@@ -0,0 +1,208 @@
++package org.telegram.messenger.voidgram;
++
++import android.content.SharedPreferences;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.ChatObject;
++import org.telegram.messenger.DialogObject;
++import org.telegram.messenger.MessageObject;
++import org.telegram.messenger.MessagesController;
++import org.telegram.messenger.NotificationCenter;
++import org.telegram.messenger.SendMessagesHelper;
++import org.telegram.messenger.UserConfig;
++import org.telegram.messenger.UserObject;
++import org.telegram.tgnet.TLRPC;
++
++import java.util.ArrayList;
++import java.util.HashSet;
++import java.util.Set;
++
++/**
++ * The VoidGram privacy notice, as on iOS: before a person's first own message in a private chat or a
++ * group, VoidGram sends this text on their behalf (private chats: pinned for both sides, silently).
++ * The sender cannot delete or unpin it in VoidGram; only the other side can delete it.
++ */
++public final class VoidGramChatNotice implements NotificationCenter.NotificationCenterDelegate {
++    public static final String TEXT_RU = "⚠️ Я использую VoidGram. Наша переписка не защищена, поэтому мы (разработчики VoidGram) настоятельно не советуем отправлять этому пользователю какие-либо личные данные, интимные фотографии и так далее. Секретные чаты и одноразовые сообщения не помогут.";
++    public static final String TEXT_EN = "⚠️ I use VoidGram. Our conversation is not protected, so we (the VoidGram developers) strongly advise against sending this user any personal data, intimate photos and so on. Secret chats and view-once messages will not help.";
++
++    private static final VoidGramChatNotice[] instances = new VoidGramChatNotice[UserConfig.MAX_ACCOUNT_COUNT];
++    private static final Set<String> repinCheckedThisSession = new HashSet<>();
++    private static boolean sending;
++
++    private final int account;
++
++    private VoidGramChatNotice(int account) {
++        this.account = account;
++    }
++
++    private static synchronized VoidGramChatNotice get(int account) {
++        if (instances[account] == null) {
++            instances[account] = new VoidGramChatNotice(account);
++            final VoidGramChatNotice instance = instances[account];
++            AndroidUtilities.runOnUIThread(() -> NotificationCenter.getInstance(account).addObserver(instance, NotificationCenter.messageReceivedByServer));
++        }
++        return instances[account];
++    }
++
++    public static boolean isNoticeText(CharSequence text) {
++        if (text == null) {
++            return false;
++        }
++        String trimmed = text.toString().trim();
++        return TEXT_RU.equals(trimmed) || TEXT_EN.equals(trimmed);
++    }
++
++    /** The account's own notice: it may not be deleted or unpinned from this app. */
++    public static boolean isProtected(TLRPC.Message message) {
++        return message != null && message.out && (message.media == null || message.media instanceof TLRPC.TL_messageMediaEmpty) && isNoticeText(message.message);
++    }
++
++    public static boolean isProtected(MessageObject messageObject) {
++        return messageObject != null && isProtected(messageObject.messageOwner);
++    }
++
++    private SharedPreferences store() {
++        return VoidGram.prefs();
++    }
++
++    private String sentKey(long dialogId) {
++        return "notice_sent_" + account + "_" + dialogId;
++    }
++
++    private String pinnedKey(long dialogId) {
++        return "notice_pinned_" + account + "_" + dialogId;
++    }
++
++    public static int pinnedNoticeId(int account, long dialogId) {
++        return VoidGram.prefs().getInt("notice_pinned_" + account + "_" + dialogId, 0);
++    }
++
++    /** Called before the user's own message is queued; queues the notice first when the chat has none yet. */
++    public static void beforeSend(int account, SendMessagesHelper.SendMessageParams params) {
++        if (sending || params == null || params.scheduleDate != 0 || params.quick_reply_shortcut != null || params.quick_reply_shortcut_id != 0) {
++            return;
++        }
++        if (params.retryMessageObject != null || isNoticeText(params.message)) {
++            return;
++        }
++        final long peer = params.peer;
++        final MessagesController controller = MessagesController.getInstance(account);
++        if (peer == 0 || DialogObject.isEncryptedDialog(peer) || peer == UserConfig.getInstance(account).getClientUserId()) {
++            return;
++        }
++        boolean privateChat;
++        if (DialogObject.isUserDialog(peer)) {
++            TLRPC.User user = controller.getUser(peer);
++            if (user == null || UserObject.isBot(user) || UserObject.isDeleted(user) || user.support || user.id == 777000 || user.id == 42777 || user.id == 489000 || user.id == 333000) {
++                return;
++            }
++            privateChat = true;
++        } else if (DialogObject.isChatDialog(peer)) {
++            TLRPC.Chat chat = controller.getChat(-peer);
++            if (chat == null || ChatObject.isChannelAndNotMegaGroup(chat)) {
++                return;
++            }
++            privateChat = false;
++        } else {
++            return;
++        }
++        VoidGramChatNotice instance = get(account);
++        SharedPreferences store = instance.store();
++        if (store.getBoolean(instance.sentKey(peer), false)) {
++            if (privateChat) {
++                ensurePinned(account, peer);
++            }
++            return;
++        }
++        store.edit().putBoolean(instance.sentKey(peer), true).apply();
++        String text = VoidGram.russian() ? TEXT_RU : TEXT_EN;
++        SendMessagesHelper.SendMessageParams notice = SendMessagesHelper.SendMessageParams.of(text, peer, null, params.replyToTopMsg, null, false, null, null, null, true, 0, 0, null, false);
++        sending = true;
++        try {
++            SendMessagesHelper.getInstance(account).sendMessage(notice);
++        } finally {
++            sending = false;
++        }
++    }
++
++    @Override
++    public void didReceivedNotification(int id, int account, Object... args) {
++        if (id != NotificationCenter.messageReceivedByServer || args.length < 4) {
++            return;
++        }
++        if (!(args[2] instanceof TLRPC.Message)) {
++            return;
++        }
++        TLRPC.Message message = (TLRPC.Message) args[2];
++        long dialogId = (Long) args[3];
++        int newId = (Integer) args[1];
++        if (!isProtected(message) || !DialogObject.isUserDialog(dialogId)) {
++            return;
++        }
++        if (store().getInt(pinnedKey(dialogId), 0) != 0) {
++            return;
++        }
++        store().edit().putInt(pinnedKey(dialogId), newId).apply();
++        pin(this.account, dialogId, newId);
++    }
++
++    private static void pin(int account, long dialogId, int messageId) {
++        TLRPC.User user = MessagesController.getInstance(account).getUser(dialogId);
++        if (user != null && messageId > 0) {
++            MessagesController.getInstance(account).pinMessage(null, user, messageId, false, false, false);
++        }
++    }
++
++    /** Puts the notice back on top once a session, in case its pin was removed (another app, "Unpin all"). */
++    public static void ensurePinned(int account, long dialogId) {
++        int id = pinnedNoticeId(account, dialogId);
++        if (id == 0 || !repinCheckedThisSession.add(account + "_" + dialogId)) {
++            return;
++        }
++        pin(account, dialogId, id);
++    }
++
++    /** Re-pins after "Unpin all" in a private chat. */
++    public static void afterUnpinAll(int account, long dialogId) {
++        int id = pinnedNoticeId(account, dialogId);
++        if (id != 0) {
++            AndroidUtilities.runOnUIThread(() -> pin(account, dialogId, id), 1000);
++        }
++    }
++
++    /** True when unpinning `messageId` in `dialogId` must be refused. */
++    public static boolean refusesUnpin(int account, long dialogId, int messageId) {
++        if (messageId != 0 && pinnedNoticeId(account, dialogId) == messageId) {
++            return true;
++        }
++        MessageObject object = MessagesController.getInstance(account).dialogMessagesByIds.get(messageId);
++        return object != null && object.getDialogId() == dialogId && isProtected(object);
++    }
++
++    /** Drops the notice from a deletion request. */
++    public static void filterDeletion(int account, long dialogId, ArrayList<Integer> messages) {
++        if (messages == null || messages.isEmpty()) {
++            return;
++        }
++        int pinned = dialogId != 0 ? pinnedNoticeId(account, dialogId) : 0;
++        for (int i = messages.size() - 1; i >= 0; i--) {
++            Integer id = messages.get(i);
++            if (id == null) {
++                continue;
++            }
++            if (pinned != 0 && id == pinned) {
++                messages.remove(i);
++                continue;
++            }
++            MessageObject object = MessagesController.getInstance(account).dialogMessagesByIds.get(id);
++            if (object != null && (dialogId == 0 || object.getDialogId() == dialogId) && isProtected(object)) {
++                messages.remove(i);
++            }
++        }
++    }
++
++    public static String refusalText() {
++        return VoidGram.t("Предупреждение VoidGram нельзя удалить или открепить. Удалить его может только собеседник.", "The VoidGram notice cannot be deleted or unpinned. Only the other person can delete it.");
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramDpi.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramDpi.java
+new file mode 100644
+index 0000000..cb30503
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramDpi.java
+@@ -0,0 +1,160 @@
++package org.telegram.messenger.voidgram;
++
++import android.content.SharedPreferences;
++
++import org.telegram.messenger.FileLog;
++import org.telegram.tgnet.ConnectionsManager;
++
++/**
++ * VoidGram → Bypass blocking: DPI tricks on the first packet of every connection to Telegram (and,
++ * optionally, to a proxy), as ByeDPI does, without root. Presets for countries plus full manual
++ * settings. Where Telegram's addresses are blocked outright (China, Iran), a proxy is still needed:
++ * the tricks then hide the proxy connection itself.
++ */
++public final class VoidGramDpi {
++    public static final int METHOD_OFF = 0;
++    public static final int METHOD_SPLIT = 1;
++    public static final int METHOD_DISORDER = 2;
++    public static final int METHOD_SPLIT_OOB = 3;
++    public static final int METHOD_DISORDER_OOB = 4;
++
++    public static final String PRESET_RUSSIA = "ru";
++    public static final String PRESET_IRAN = "ir";
++    public static final String PRESET_CHINA = "cn";
++    public static final String PRESET_TURKMENISTAN = "tm";
++    public static final String PRESET_CUSTOM = "custom";
++    public static final String[] PRESETS = {PRESET_RUSSIA, PRESET_IRAN, PRESET_CHINA, PRESET_TURKMENISTAN, PRESET_CUSTOM};
++
++    private VoidGramDpi() {
++    }
++
++    private static SharedPreferences prefs() {
++        return VoidGram.prefs();
++    }
++
++    public static boolean isEnabled() {
++        return prefs().getBoolean("dpi_enabled", false);
++    }
++
++    public static String preset() {
++        return prefs().getString("dpi_preset", PRESET_RUSSIA);
++    }
++
++    public static int method() {
++        return prefs().getInt("dpi_method", METHOD_DISORDER_OOB);
++    }
++
++    public static int splitPosition() {
++        return prefs().getInt("dpi_split_position", 1);
++    }
++
++    public static int splitCount() {
++        return prefs().getInt("dpi_split_count", 1);
++    }
++
++    public static int delayMs() {
++        return prefs().getInt("dpi_delay", 0);
++    }
++
++    public static boolean viaProxy() {
++        return prefs().getBoolean("dpi_via_proxy", true);
++    }
++
++    public static void setEnabled(boolean value) {
++        prefs().edit().putBoolean("dpi_enabled", value).apply();
++        apply();
++    }
++
++    /** A preset fills the manual settings; changing any of them switches to "custom". */
++    public static void setPreset(String preset) {
++        SharedPreferences.Editor editor = prefs().edit().putString("dpi_preset", preset);
++        switch (preset) {
++            case PRESET_RUSSIA:
++                editor.putInt("dpi_method", METHOD_DISORDER_OOB).putInt("dpi_split_position", 1).putInt("dpi_split_count", 1).putInt("dpi_delay", 0);
++                break;
++            case PRESET_IRAN:
++                editor.putInt("dpi_method", METHOD_SPLIT).putInt("dpi_split_position", 3).putInt("dpi_split_count", 4).putInt("dpi_delay", 10);
++                break;
++            case PRESET_CHINA:
++                editor.putInt("dpi_method", METHOD_DISORDER).putInt("dpi_split_position", 1).putInt("dpi_split_count", 2).putInt("dpi_delay", 5);
++                break;
++            case PRESET_TURKMENISTAN:
++                editor.putInt("dpi_method", METHOD_SPLIT_OOB).putInt("dpi_split_position", 2).putInt("dpi_split_count", 2).putInt("dpi_delay", 0);
++                break;
++            default:
++                break;
++        }
++        editor.apply();
++        apply();
++    }
++
++    private static void setCustom(String key, int value) {
++        prefs().edit().putInt(key, value).putString("dpi_preset", PRESET_CUSTOM).apply();
++        apply();
++    }
++
++    public static void setMethod(int value) {
++        setCustom("dpi_method", value);
++    }
++
++    public static void setSplitPosition(int value) {
++        setCustom("dpi_split_position", Math.max(1, Math.min(256, value)));
++    }
++
++    public static void setSplitCount(int value) {
++        setCustom("dpi_split_count", Math.max(1, Math.min(16, value)));
++    }
++
++    public static void setDelayMs(int value) {
++        setCustom("dpi_delay", Math.max(0, Math.min(100, value)));
++    }
++
++    public static void setViaProxy(boolean value) {
++        prefs().edit().putBoolean("dpi_via_proxy", value).apply();
++        apply();
++    }
++
++    public static void reset() {
++        prefs().edit().remove("dpi_preset").remove("dpi_method").remove("dpi_split_position").remove("dpi_split_count").remove("dpi_delay").remove("dpi_via_proxy").apply();
++        apply();
++    }
++
++    /** Hands the settings to the native network layer; they apply to every new connection. */
++    public static void apply() {
++        try {
++            ConnectionsManager.native_setVoidGramDpi(isEnabled() ? method() : METHOD_OFF, splitPosition(), splitCount(), delayMs(), viaProxy());
++        } catch (Throwable e) {
++            FileLog.e(e);
++        }
++    }
++
++    public static String presetTitle(String preset) {
++        switch (preset) {
++            case PRESET_RUSSIA: return VoidGram.t("Россия", "Russia");
++            case PRESET_IRAN: return VoidGram.t("Иран", "Iran");
++            case PRESET_CHINA: return VoidGram.t("Китай", "China");
++            case PRESET_TURKMENISTAN: return VoidGram.t("Туркменистан, Беларусь и др.", "Turkmenistan, Belarus and others");
++            default: return VoidGram.t("Свои настройки", "Custom");
++        }
++    }
++
++    public static String presetInfo(String preset) {
++        switch (preset) {
++            case PRESET_RUSSIA: return VoidGram.t("Против замедления и блокировки по сигнатуре: первая часть уходит «вне очереди», плюс OOB-байт.", "Against throttling and signature blocking: the first part goes out of order, plus an OOB byte.");
++            case PRESET_IRAN: return VoidGram.t("Мелкое дробление первого пакета с паузами. Адреса Telegram в Иране закрыты — включите прокси (MTProto с fake-TLS).", "Fine splitting of the first packet with pauses. Telegram's addresses are blocked in Iran: use a proxy (MTProto with fake-TLS).");
++            case PRESET_CHINA: return VoidGram.t("Великий файрвол блокирует адреса Telegram целиком: без прокси не обойтись. Приёмы скрывают само подключение к прокси.", "The Great Firewall blocks Telegram's addresses outright: a proxy is required. The tricks hide the proxy connection itself.");
++            case PRESET_TURKMENISTAN: return VoidGram.t("Дробление с OOB-байтом. Если не помогает — попробуйте другой способ или прокси.", "Splitting with an OOB byte. If it does not help, try another method or a proxy.");
++            default: return VoidGram.t("Подберите способ и параметры сами.", "Pick the method and parameters yourself.");
++        }
++    }
++
++    public static String methodTitle(int method) {
++        switch (method) {
++            case METHOD_SPLIT: return VoidGram.t("Разбиение (split)", "Split");
++            case METHOD_DISORDER: return VoidGram.t("Перестановка (disorder)", "Disorder");
++            case METHOD_SPLIT_OOB: return VoidGram.t("Разбиение + OOB", "Split + OOB");
++            case METHOD_DISORDER_OOB: return VoidGram.t("Перестановка + OOB", "Disorder + OOB");
++            default: return VoidGram.t("Выключено", "Off");
++        }
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLyrics.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLyrics.java
+new file mode 100644
+index 0000000..a733836
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramLyrics.java
+@@ -0,0 +1,371 @@
++package org.telegram.messenger.voidgram;
++
++import android.content.Context;
++import android.content.SharedPreferences;
++import android.net.Uri;
++import android.text.TextUtils;
++
++import org.json.JSONArray;
++import org.json.JSONObject;
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.ApplicationLoader;
++import org.telegram.messenger.FileLog;
++import org.telegram.messenger.MessageObject;
++import org.telegram.messenger.Utilities;
++
++import java.io.ByteArrayOutputStream;
++import java.io.InputStream;
++import java.net.HttpURLConnection;
++import java.net.URL;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.Locale;
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
++
++/**
++ * Lyrics for the music player, as on iOS: the user's own text for a song (typed or corrected, LRC
++ * time stamps keep it in sync) wins; otherwise LRCLIB is asked (only title, artist and length are
++ * sent). The current line also feeds the mini player.
++ */
++public final class VoidGramLyrics {
++    public static final class Line {
++        public final double time;
++        public final String text;
++
++        Line(double time, String text) {
++            this.time = time;
++            this.text = text;
++        }
++    }
++
++    public static final class Lyrics {
++        public final ArrayList<Line> lines;
++        public final String plain;
++        public final boolean custom;
++
++        Lyrics(ArrayList<Line> lines, String plain, boolean custom) {
++            this.lines = lines;
++            this.plain = plain;
++            this.custom = custom;
++        }
++
++        public boolean isSynced() {
++            return lines != null && !lines.isEmpty();
++        }
++
++        public boolean isEmpty() {
++            return !isSynced() && TextUtils.isEmpty(plain);
++        }
++    }
++
++    private static final Lyrics NOT_FOUND = new Lyrics(null, null, false);
++    private static final HashMap<String, Lyrics> cache = new HashMap<>();
++    private static final HashSet<String> loading = new HashSet<>();
++    private static final ArrayList<Runnable> listeners = new ArrayList<>();
++    private static final Pattern TIME = Pattern.compile("\\[(\\d{1,3}):(\\d{1,2})(?:[.:,](\\d{1,3}))?]");
++
++    private VoidGramLyrics() {
++    }
++
++    private static SharedPreferences store() {
++        return ApplicationLoader.applicationContext.getSharedPreferences("voidgram_lyrics", Context.MODE_PRIVATE);
++    }
++
++    public static String title(MessageObject messageObject) {
++        String value = messageObject != null ? messageObject.getMusicTitle() : null;
++        return value != null ? value.trim() : "";
++    }
++
++    public static String artist(MessageObject messageObject) {
++        String value = messageObject != null ? messageObject.getMusicAuthor() : null;
++        return value != null ? value.trim() : "";
++    }
++
++    public static String key(MessageObject messageObject) {
++        return (title(messageObject) + "\u0000" + artist(messageObject)).toLowerCase(Locale.ROOT);
++    }
++
++    // MARK: custom text
++
++    public static String customSource(MessageObject messageObject) {
++        return store().getString("custom_" + Utilities.MD5(key(messageObject)), null);
++    }
++
++    public static boolean hasCustom(MessageObject messageObject) {
++        return customSource(messageObject) != null;
++    }
++
++    /** Saves the user's text for this song; an empty text goes back to the found one. */
++    public static void saveCustom(MessageObject messageObject, String text) {
++        String key = key(messageObject);
++        if (text == null || text.trim().isEmpty()) {
++            store().edit().remove("custom_" + Utilities.MD5(key)).apply();
++            cache.remove(key);
++            request(messageObject);
++        } else {
++            store().edit().putString("custom_" + Utilities.MD5(key), text.trim()).apply();
++            cache.put(key, parse(text.trim(), true));
++        }
++        notifyChanged();
++    }
++
++    /** Editable text for lyrics on screen: timed lines become LRC so the timing survives an edit. */
++    public static String editableText(MessageObject messageObject) {
++        String custom = customSource(messageObject);
++        if (custom != null) {
++            return custom;
++        }
++        Lyrics lyrics = get(messageObject);
++        if (lyrics == null || lyrics.isEmpty()) {
++            return "";
++        }
++        if (!lyrics.isSynced()) {
++            return lyrics.plain;
++        }
++        StringBuilder builder = new StringBuilder();
++        for (Line line : lyrics.lines) {
++            int minutes = (int) (line.time / 60);
++            double seconds = line.time - minutes * 60;
++            builder.append(String.format(Locale.US, "[%02d:%05.2f] ", minutes, seconds)).append(line.text).append('\n');
++        }
++        return builder.toString().trim();
++    }
++
++    public static Lyrics parse(String source, boolean custom) {
++        ArrayList<Line> lines = new ArrayList<>();
++        for (String raw : source.split("\n")) {
++            Matcher matcher = TIME.matcher(raw);
++            ArrayList<Double> times = new ArrayList<>();
++            int end = 0;
++            while (matcher.find() && matcher.start() == end) {
++                double time = Integer.parseInt(matcher.group(1)) * 60 + Integer.parseInt(matcher.group(2));
++                if (matcher.group(3) != null) {
++                    String fraction = matcher.group(3);
++                    time += Integer.parseInt(fraction) / Math.pow(10, fraction.length());
++                }
++                times.add(time);
++                end = matcher.end();
++            }
++            if (!times.isEmpty()) {
++                String text = raw.substring(end).trim();
++                for (double time : times) {
++                    lines.add(new Line(time, text));
++                }
++            }
++        }
++        if (!lines.isEmpty()) {
++            java.util.Collections.sort(lines, (a, b) -> Double.compare(a.time, b.time));
++            return new Lyrics(lines, null, custom);
++        }
++        return new Lyrics(null, source, custom);
++    }
++
++    // MARK: lookup
++
++    /** Lyrics already known for the track, or null while unknown (call request). */
++    public static Lyrics get(MessageObject messageObject) {
++        if (messageObject == null) {
++            return null;
++        }
++        String key = key(messageObject);
++        Lyrics cached = cache.get(key);
++        if (cached != null) {
++            return cached;
++        }
++        String custom = customSource(messageObject);
++        if (custom != null) {
++            Lyrics lyrics = parse(custom, true);
++            cache.put(key, lyrics);
++            return lyrics;
++        }
++        return null;
++    }
++
++    public static boolean isLoading(MessageObject messageObject) {
++        return messageObject != null && loading.contains(key(messageObject));
++    }
++
++    /** Starts a lookup unless the lyrics are known or being looked up. UI thread. */
++    public static void request(MessageObject messageObject) {
++        if (messageObject == null || !messageObject.isMusic() || get(messageObject) != null) {
++            return;
++        }
++        final String key = key(messageObject);
++        final String title = title(messageObject);
++        final String artist = artist(messageObject);
++        final int duration = (int) Math.round(messageObject.getDuration());
++        if (title.isEmpty() || !loading.add(key)) {
++            return;
++        }
++        Utilities.globalQueue.postRunnable(() -> {
++            Lyrics result = fetch(title, artist, duration);
++            AndroidUtilities.runOnUIThread(() -> {
++                loading.remove(key);
++                if (!cache.containsKey(key)) {
++                    cache.put(key, result != null ? result : NOT_FOUND);
++                }
++                notifyChanged();
++            });
++        });
++    }
++
++    private static Lyrics fetch(String title, String artist, int duration) {
++        try {
++            if (!artist.isEmpty()) {
++                Uri.Builder get = Uri.parse("https://lrclib.net/api/get").buildUpon()
++                        .appendQueryParameter("track_name", title)
++                        .appendQueryParameter("artist_name", artist);
++                if (duration > 0) {
++                    get.appendQueryParameter("duration", String.valueOf(duration));
++                }
++                String body = load(get.build().toString());
++                if (body != null) {
++                    Lyrics lyrics = fromRecord(new JSONObject(body), duration);
++                    if (lyrics != null) {
++                        return lyrics;
++                    }
++                }
++            }
++            Uri.Builder search = Uri.parse("https://lrclib.net/api/search").buildUpon().appendQueryParameter("track_name", title);
++            if (!artist.isEmpty()) {
++                search.appendQueryParameter("artist_name", artist);
++            }
++            String body = load(search.build().toString());
++            if (body != null) {
++                JSONArray array = new JSONArray(body);
++                Lyrics plainFallback = null;
++                for (int i = 0; i < Math.min(array.length(), 10); i++) {
++                    Lyrics lyrics = fromRecord(array.getJSONObject(i), duration);
++                    if (lyrics != null && lyrics.isSynced()) {
++                        return lyrics;
++                    }
++                    if (lyrics != null && plainFallback == null) {
++                        plainFallback = lyrics;
++                    }
++                }
++                return plainFallback;
++            }
++        } catch (Throwable e) {
++            FileLog.e(e);
++        }
++        return null;
++    }
++
++    private static Lyrics fromRecord(JSONObject record, int duration) {
++        String synced = record.optString("syncedLyrics", "");
++        String plain = record.optString("plainLyrics", "");
++        double recordDuration = record.optDouble("duration", 0);
++        boolean sameRecording = duration <= 0 || recordDuration <= 0 || Math.abs(recordDuration - duration) <= 3;
++        if (!TextUtils.isEmpty(synced) && !"null".equals(synced) && sameRecording) {
++            Lyrics lyrics = parse(synced, false);
++            if (lyrics.isSynced()) {
++                return lyrics;
++            }
++        }
++        if (!TextUtils.isEmpty(plain) && !"null".equals(plain)) {
++            return new Lyrics(null, plain, false);
++        }
++        return null;
++    }
++
++    private static String load(String url) {
++        HttpURLConnection connection = null;
++        try {
++            connection = (HttpURLConnection) new URL(url).openConnection();
++            connection.setConnectTimeout(8000);
++            connection.setReadTimeout(8000);
++            connection.setRequestProperty("User-Agent", "VoidGram Android (https://github.com/neosay-dev/VoidGram)");
++            if (connection.getResponseCode() != 200) {
++                return null;
++            }
++            InputStream input = connection.getInputStream();
++            ByteArrayOutputStream output = new ByteArrayOutputStream();
++            byte[] buffer = new byte[16384];
++            int read;
++            while ((read = input.read(buffer)) > 0 && output.size() < 4 * 1024 * 1024) {
++                output.write(buffer, 0, read);
++            }
++            return output.toString("UTF-8");
++        } catch (Throwable e) {
++            return null;
++        } finally {
++            if (connection != null) {
++                connection.disconnect();
++            }
++        }
++    }
++
++    // MARK: playback
++
++    /** Index of the line being sung at `seconds`, or -1. */
++    public static int lineIndex(Lyrics lyrics, double seconds) {
++        if (lyrics == null || !lyrics.isSynced()) {
++            return -1;
++        }
++        int low = 0, high = lyrics.lines.size();
++        while (low < high) {
++            int middle = (low + high) >>> 1;
++            if (lyrics.lines.get(middle).time <= seconds) {
++                low = middle + 1;
++            } else {
++                high = middle;
++            }
++        }
++        return low - 1;
++    }
++
++    public static double position(MessageObject messageObject) {
++        if (messageObject == null) {
++            return 0;
++        }
++        return messageObject.audioProgress * messageObject.getDuration();
++    }
++
++    // MARK: mini player
++
++    private static final String MINI_KEY = "mini_lyrics";
++
++    public static boolean isMiniEnabled() {
++        return VoidGram.prefs().getBoolean(MINI_KEY, true);
++    }
++
++    public static void setMiniEnabled(boolean value) {
++        VoidGram.prefs().edit().putBoolean(MINI_KEY, value).apply();
++        notifyChanged();
++    }
++
++    /** The line for the mini player, or null (off, no timed lyrics, before the first line, a gap). */
++    public static String miniLine(MessageObject messageObject) {
++        if (!isMiniEnabled() || messageObject == null || !messageObject.isMusic()) {
++            return null;
++        }
++        request(messageObject);
++        Lyrics lyrics = get(messageObject);
++        int index = lineIndex(lyrics, position(messageObject));
++        if (index < 0) {
++            return null;
++        }
++        String text = lyrics.lines.get(index).text.trim();
++        return text.isEmpty() ? null : text;
++    }
++
++    // MARK: listeners
++
++    public static void addListener(Runnable listener) {
++        if (!listeners.contains(listener)) {
++            listeners.add(listener);
++        }
++    }
++
++    public static void removeListener(Runnable listener) {
++        listeners.remove(listener);
++    }
++
++    private static void notifyChanged() {
++        for (Runnable listener : new ArrayList<>(listeners)) {
++            listener.run();
++        }
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramNightLook.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramNightLook.java
+new file mode 100644
+index 0000000..1e6ea0f
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramNightLook.java
+@@ -0,0 +1,123 @@
++package org.telegram.messenger.voidgram;
++
++import android.graphics.Color;
++
++import java.util.Calendar;
++
++/**
++ * The music player's night look, as on iOS: a darker, optionally warm player that glares less at
++ * night. Scheduled (hours may cross midnight), always, or off completely.
++ */
++public final class VoidGramNightLook {
++    public static final int MODE_SCHEDULED = 0;
++    public static final int MODE_ALWAYS = 1;
++    public static final int MODE_OFF = 2;
++
++    public static final int STRENGTH_SOFT = 0;
++    public static final int STRENGTH_MEDIUM = 1;
++    public static final int STRENGTH_STRONG = 2;
++
++    private VoidGramNightLook() {
++    }
++
++    public static int mode() {
++        return VoidGram.prefs().getInt("night_mode", MODE_SCHEDULED);
++    }
++
++    public static void setMode(int mode) {
++        VoidGram.prefs().edit().putInt("night_mode", mode).apply();
++    }
++
++    public static int startHour() {
++        return Math.max(0, Math.min(23, VoidGram.prefs().getInt("night_start", 22)));
++    }
++
++    public static void setStartHour(int hour) {
++        VoidGram.prefs().edit().putInt("night_start", Math.max(0, Math.min(23, hour))).apply();
++    }
++
++    public static int endHour() {
++        return Math.max(0, Math.min(23, VoidGram.prefs().getInt("night_end", 7)));
++    }
++
++    public static void setEndHour(int hour) {
++        VoidGram.prefs().edit().putInt("night_end", Math.max(0, Math.min(23, hour))).apply();
++    }
++
++    public static int strength() {
++        return VoidGram.prefs().getInt("night_strength", STRENGTH_MEDIUM);
++    }
++
++    public static void setStrength(int value) {
++        VoidGram.prefs().edit().putInt("night_strength", value).apply();
++    }
++
++    public static boolean isWarm() {
++        return VoidGram.prefs().getBoolean("night_warm", true);
++    }
++
++    public static void setWarm(boolean value) {
++        VoidGram.prefs().edit().putBoolean("night_warm", value).apply();
++    }
++
++    public static void reset() {
++        VoidGram.prefs().edit().remove("night_start").remove("night_end").remove("night_strength").remove("night_warm").apply();
++    }
++
++    /** Equal hours mean the whole day; the window may cross midnight. */
++    public static boolean isNightHour(int hour) {
++        int start = startHour(), end = endHour();
++        if (start == end) {
++            return true;
++        } else if (start < end) {
++            return hour >= start && hour < end;
++        } else {
++            return hour >= start || hour < end;
++        }
++    }
++
++    public static boolean isActiveNow() {
++        switch (mode()) {
++            case MODE_ALWAYS:
++                return true;
++            case MODE_OFF:
++                return false;
++            default:
++                return isNightHour(Calendar.getInstance().get(Calendar.HOUR_OF_DAY));
++        }
++    }
++
++    /** The overlay colour for the player, transparent when the night look is not active. */
++    public static int overlayColor() {
++        if (!isActiveNow()) {
++            return Color.TRANSPARENT;
++        }
++        int alpha;
++        switch (strength()) {
++            case STRENGTH_SOFT: alpha = 0x40; break;
++            case STRENGTH_STRONG: alpha = 0x99; break;
++            default: alpha = 0x6B;
++        }
++        return isWarm() ? Color.argb(alpha, 0x29, 0x14, 0x05) : Color.argb(alpha, 0x00, 0x02, 0x08);
++    }
++
++    public static String hourText(int hour) {
++        return String.format(java.util.Locale.US, "%02d:00", hour);
++    }
++
++    public static String modeTitle(int mode) {
++        switch (mode) {
++            case MODE_ALWAYS: return VoidGram.t("Всегда", "Always");
++            case MODE_OFF: return VoidGram.t("Выключен полностью", "Off completely");
++            default: return VoidGram.t("По расписанию ", "Scheduled ") + hourText(startHour()) + "–" + hourText(endHour());
++        }
++    }
++
++    public static String strengthTitle(int strength) {
++        switch (strength) {
++            case STRENGTH_SOFT: return VoidGram.t("Слабо", "Soft");
++            case STRENGTH_STRONG: return VoidGram.t("Сильно", "Strong");
++            default: return VoidGram.t("Средне", "Medium");
++        }
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPowerSaving.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPowerSaving.java
+new file mode 100644
+index 0000000..1c47394
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPowerSaving.java
+@@ -0,0 +1,238 @@
++package org.telegram.messenger.voidgram;
++
++import android.content.Context;
++import android.content.SharedPreferences;
++import android.content.pm.PackageManager;
++import android.os.PowerManager;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.ApplicationLoader;
++import org.telegram.messenger.LiteMode;
++
++import java.util.HashSet;
++import java.util.Set;
++
++/**
++ * VoidGram power saving, as on iOS: one profile per kind of device (phone, tablet, laptop — a
++ * Chromebook or an Android desktop), each choosing when saving turns on and what it turns off. A
++ * profile left on "Telegram" keeps Telegram's own Power Saving screen in charge.
++ */
++public final class VoidGramPowerSaving {
++    public static final int KIND_PHONE = 0;
++    public static final int KIND_TABLET = 1;
++    public static final int KIND_LAPTOP = 2;
++
++    public static final int MODE_TELEGRAM = 0;
++    public static final int MODE_OFF = 1;
++    public static final int MODE_BATTERY = 2;
++    public static final int MODE_ALWAYS = 3;
++
++    public static final String[] LIMITS = {"autoplayVideo", "autoplayGif", "stickers", "emoji", "blur", "animations", "background"};
++
++    /** Last battery state from LiteMode's receiver. */
++    public static volatile boolean plugged;
++
++    private VoidGramPowerSaving() {
++    }
++
++    public static int currentKind() {
++        try {
++            PackageManager pm = ApplicationLoader.applicationContext.getPackageManager();
++            if (pm.hasSystemFeature("org.chromium.arc.device_management") || pm.hasSystemFeature("android.hardware.type.pc")) {
++                return KIND_LAPTOP;
++            }
++        } catch (Throwable ignore) {
++        }
++        return AndroidUtilities.isTablet() ? KIND_TABLET : KIND_PHONE;
++    }
++
++    public static String kindTitle(int kind) {
++        switch (kind) {
++            case KIND_TABLET: return VoidGram.t("Планшет", "Tablet");
++            case KIND_LAPTOP: return VoidGram.t("Ноутбук (Chromebook, ПК)", "Laptop (Chromebook, PC)");
++            default: return VoidGram.t("Телефон", "Phone");
++        }
++    }
++
++    public static String modeTitle(int mode) {
++        switch (mode) {
++            case MODE_OFF: return VoidGram.t("Никогда", "Never");
++            case MODE_BATTERY: return VoidGram.t("При низком заряде", "When battery is low");
++            case MODE_ALWAYS: return VoidGram.t("Всегда", "Always");
++            default: return VoidGram.t("Как в Telegram", "Telegram's setting");
++        }
++    }
++
++    public static String limitTitle(String limit) {
++        switch (limit) {
++            case "autoplayVideo": return VoidGram.t("Автовоспроизведение видео", "Autoplay videos");
++            case "autoplayGif": return VoidGram.t("Автовоспроизведение GIF", "Autoplay GIFs");
++            case "stickers": return VoidGram.t("Анимация стикеров", "Animated stickers");
++            case "emoji": return VoidGram.t("Анимация эмодзи", "Animated emoji");
++            case "blur": return VoidGram.t("Размытие и стекло", "Blur and glass");
++            case "animations": return VoidGram.t("Анимации интерфейса", "Interface animations");
++            default: return VoidGram.t("Фон чатов", "Chat backgrounds");
++        }
++    }
++
++    private static int limitFlags(String limit) {
++        switch (limit) {
++            case "autoplayVideo": return LiteMode.FLAG_AUTOPLAY_VIDEOS;
++            case "autoplayGif": return LiteMode.FLAG_AUTOPLAY_GIFS;
++            case "stickers": return LiteMode.FLAGS_ANIMATED_STICKERS;
++            case "emoji": return LiteMode.FLAGS_ANIMATED_EMOJI;
++            case "blur": return LiteMode.FLAG_CHAT_BLUR | LiteMode.FLAG_LIQUID_GLASS;
++            case "animations": return LiteMode.FLAG_CALLS_ANIMATIONS | LiteMode.FLAG_PARTICLES | LiteMode.FLAG_CHAT_SCALE | LiteMode.FLAG_CHAT_THANOS | LiteMode.FLAG_CHAT_SPOILER;
++            default: return LiteMode.FLAG_CHAT_BACKGROUND;
++        }
++    }
++
++    private static String key(int kind, String name) {
++        return "power_" + kind + "_" + name;
++    }
++
++    public static int mode(int kind) {
++        return VoidGram.prefs().getInt(key(kind, "mode"), MODE_TELEGRAM);
++    }
++
++    public static int threshold(int kind) {
++        return Math.max(5, Math.min(95, VoidGram.prefs().getInt(key(kind, "threshold"), kind == KIND_TABLET ? 15 : 20)));
++    }
++
++    public static boolean followSystem(int kind) {
++        return VoidGram.prefs().getBoolean(key(kind, "system"), true);
++    }
++
++    public static boolean onBattery(int kind) {
++        return VoidGram.prefs().getBoolean(key(kind, "battery"), kind == KIND_LAPTOP);
++    }
++
++    public static Set<String> limits(int kind) {
++        Set<String> defaults = new HashSet<>();
++        for (String limit : LIMITS) {
++            if (kind == KIND_PHONE || !"background".equals(limit) && !"stickers".equals(limit)) {
++                defaults.add(limit);
++            }
++        }
++        return new HashSet<>(VoidGram.prefs().getStringSet(key(kind, "limits"), defaults));
++    }
++
++    public static void setMode(int kind, int mode) {
++        VoidGram.prefs().edit().putInt(key(kind, "mode"), mode).apply();
++        changed();
++    }
++
++    public static void setThreshold(int kind, int value) {
++        VoidGram.prefs().edit().putInt(key(kind, "threshold"), Math.max(5, Math.min(95, value))).apply();
++        changed();
++    }
++
++    public static void setFollowSystem(int kind, boolean value) {
++        VoidGram.prefs().edit().putBoolean(key(kind, "system"), value).apply();
++        changed();
++    }
++
++    public static void setOnBattery(int kind, boolean value) {
++        VoidGram.prefs().edit().putBoolean(key(kind, "battery"), value).apply();
++        changed();
++    }
++
++    public static void setLimit(int kind, String limit, boolean limited) {
++        Set<String> set = limits(kind);
++        if (limited) {
++            set.add(limit);
++        } else {
++            set.remove(limit);
++        }
++        VoidGram.prefs().edit().putStringSet(key(kind, "limits"), set).apply();
++        changed();
++    }
++
++    public static void reset(int kind) {
++        SharedPreferences.Editor editor = VoidGram.prefs().edit();
++        for (String name : new String[]{"mode", "threshold", "system", "battery", "limits"}) {
++            editor.remove(key(kind, name));
++        }
++        editor.apply();
++        changed();
++    }
++
++    private static void changed() {
++        snapshotValid = false;
++        systemCheckedAt = 0;
++        AndroidUtilities.runOnUIThread(() -> LiteMode.getValue(false));
++    }
++
++    private static boolean systemSaver() {
++        try {
++            PowerManager pm = (PowerManager) ApplicationLoader.applicationContext.getSystemService(Context.POWER_SERVICE);
++            return pm != null && pm.isPowerSaveMode();
++        } catch (Throwable ignore) {
++            return false;
++        }
++    }
++
++    // LiteMode asks on every frame: the profile is read once and refreshed when it changes, the
++    // system saver state at most every few seconds.
++    private static volatile boolean snapshotValid;
++    private static int snapKind = -1, snapMode, snapThreshold, snapMask;
++    private static boolean snapSystem, snapBattery;
++    private static volatile long systemCheckedAt;
++    private static volatile boolean systemSaverOn;
++
++    private static void snapshot() {
++        if (snapshotValid) {
++            return;
++        }
++        if (snapKind < 0) {
++            snapKind = currentKind();
++        }
++        snapMode = mode(snapKind);
++        snapThreshold = threshold(snapKind);
++        snapSystem = followSystem(snapKind);
++        snapBattery = onBattery(snapKind);
++        int mask = 0;
++        for (String limit : limits(snapKind)) {
++            mask |= limitFlags(limit);
++        }
++        snapMask = mask;
++        snapshotValid = true;
++    }
++
++    private static boolean systemSaverCached() {
++        long now = android.os.SystemClock.elapsedRealtime();
++        if (now - systemCheckedAt > 5000) {
++            systemCheckedAt = now;
++            systemSaverOn = systemSaver();
++        }
++        return systemSaverOn;
++    }
++
++    /** Whether this device's profile saves power now; null when Telegram's own setting decides. */
++    public static Boolean isSavingNow(int batteryLevel) {
++        snapshot();
++        if (snapMode == MODE_TELEGRAM) {
++            return null;
++        }
++        if (snapSystem && systemSaverCached()) {
++            return true;
++        }
++        if (snapBattery && !plugged) {
++            return true;
++        }
++        switch (snapMode) {
++            case MODE_ALWAYS:
++                return true;
++            case MODE_BATTERY:
++                return !plugged && batteryLevel >= 0 && batteryLevel <= snapThreshold;
++            default:
++                return false;
++        }
++    }
++
++    /** LiteMode flags this device's profile turns off while saving. */
++    public static int limitsMask() {
++        snapshot();
++        return snapMask;
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java b/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java
+index ab54ee3..995933f 100644
+--- a/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java
++++ b/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java
+@@ -712,6 +712,8 @@ public class ConnectionsManager extends BaseController {
+             packageId = "";
+         }
+ 
++        // VoidGram: DPI bypass settings go to the native layer before the first connection.
++        org.telegram.messenger.voidgram.VoidGramDpi.apply();
+         native_init(currentAccount, version, layer, apiId, deviceModel, systemVersion, appVersion, langCode, systemLangCode, configPath, logPath, regId, cFingerprint, installer, packageId, timezoneOffset, userId, userPremium, enablePushConnection, ApplicationLoader.isNetworkOnline(), ApplicationLoader.getCurrentNetworkType(), SharedConfig.measureDevicePerformanceClass());
+         checkConnection();
+     }
+@@ -1026,6 +1028,8 @@ public class ConnectionsManager extends BaseController {
+     public static native int native_isTestBackend(int currentAccount);
+     public static native void native_pauseNetwork(int currentAccount);
+     public static native void native_setIpStrategy(int currentAccount, byte value);
++    /** VoidGram DPI bypass (see VoidGramDpi). */
++    public static native void native_setVoidGramDpi(int method, int splitPosition, int splitCount, int delayMs, boolean viaProxy);
+     public static native void native_updateDcSettings(int currentAccount);
+     public static native void native_moveDatacenter(int currentAccount, int datacenterId);
+     public static native void native_setNetworkAvailable(int currentAccount, boolean value, int networkType, boolean slow);
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
+index a54b134..a067e9d 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
+@@ -2835,6 +2835,10 @@ public class ChatActivity extends BaseFragment implements
+         }
+ 
+         dialog_id_Long = dialog_id;
++        // VoidGram: put the privacy notice back on top if its pin was removed.
++        if (DialogObject.isUserDialog(dialog_id)) {
++            org.telegram.messenger.voidgram.VoidGramChatNotice.ensurePinned(currentAccount, dialog_id);
++        }
+ 
+         transitionAnimationGlobalIndex = NotificationCenter.getGlobalInstance().setAnimationInProgress(transitionAnimationGlobalIndex, new int[0]);
+ 
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Components/AudioPlayerAlert.java b/TMessagesProj/src/main/java/org/telegram/ui/Components/AudioPlayerAlert.java
+index 3fa7042..81f56a7 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/Components/AudioPlayerAlert.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/Components/AudioPlayerAlert.java
+@@ -148,6 +148,8 @@ public class AudioPlayerAlert extends BottomSheet implements NotificationCenter.
+     private TextView emptySubtitleTextView;
+ 
+     private FrameLayout playerLayout;
++    /** VoidGram night look over the player controls (no touches). */
++    private View voidgramNight;
+     private ButtonWithCounterView saveToProfileButton;
+     private ButtonWithCounterView unsaveFromProfileButton;
+     private ItemTouchHelper itemTouchHelper;
+@@ -1452,6 +1454,11 @@ public class AudioPlayerAlert extends BottomSheet implements NotificationCenter.
+         }
+ 
+         containerView.addView(playerLayout, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 179 + (!isMyList() && !noforwards ? 52 : 0), Gravity.LEFT | Gravity.BOTTOM));
++        voidgramNight = new View(context);
++        voidgramNight.setClickable(false);
++        voidgramNight.setFocusable(false);
++        voidgramNight.setBackgroundColor(org.telegram.messenger.voidgram.VoidGramNightLook.overlayColor());
++        playerLayout.addView(voidgramNight, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+         containerView.addView(playerShadow, new FrameLayout.LayoutParams(LayoutHelper.MATCH_PARENT, AndroidUtilities.getShadowHeight(), Gravity.LEFT | Gravity.BOTTOM));
+         FrameLayout.LayoutParams layoutParams = (FrameLayout.LayoutParams) playerLayout.getLayoutParams();
+         layoutParams.height = dp(179 + (!isMyList() && !noforwards ? 52 : 0));
+@@ -2174,6 +2181,10 @@ public class AudioPlayerAlert extends BottomSheet implements NotificationCenter.
+     }
+ 
+     private void updateProgress(MessageObject messageObject, boolean animated) {
++        if (voidgramNight != null) {
++            voidgramNight.setBackgroundColor(org.telegram.messenger.voidgram.VoidGramNightLook.overlayColor());
++            voidgramNight.bringToFront();
++        }
+         if (seekBarView != null) {
+             int newTime;
+             if (seekBarView.isDragging()) {
+@@ -2858,6 +2869,32 @@ public class AudioPlayerAlert extends BottomSheet implements NotificationCenter.
+             o.dismiss();
+             onSubItemClick(4);
+         });
++        // VoidGram: lyrics (found, written or corrected), night look and the mini player line.
++        o.addGap();
++        o.add(R.drawable.msg_text_outlined, org.telegram.messenger.voidgram.VoidGram.t("Текст песни", "Lyrics"), () -> {
++            o.dismiss();
++            org.telegram.ui.voidgram.VoidGramLyricsScreen.show(parentActivity);
++        });
++        final boolean voidgramHasText = org.telegram.messenger.voidgram.VoidGramLyrics.get(messageObject) != null && !org.telegram.messenger.voidgram.VoidGramLyrics.get(messageObject).isEmpty();
++        o.add(R.drawable.msg_edit, voidgramHasText ? org.telegram.messenger.voidgram.VoidGram.t("Изменить текст песни", "Edit lyrics") : org.telegram.messenger.voidgram.VoidGram.t("Написать свой текст", "Write your own lyrics"), () -> {
++            o.dismiss();
++            org.telegram.ui.voidgram.VoidGramLyricsScreen.showEditor(parentActivity, messageObject, null);
++        });
++        if (org.telegram.messenger.voidgram.VoidGramLyrics.hasCustom(messageObject)) {
++            o.add(R.drawable.msg_reset, org.telegram.messenger.voidgram.VoidGram.t("Вернуть найденный текст", "Restore found lyrics"), true, () -> {
++                o.dismiss();
++                org.telegram.messenger.voidgram.VoidGramLyrics.saveCustom(messageObject, null);
++            });
++        }
++        o.add(R.drawable.msg_theme, org.telegram.messenger.voidgram.VoidGram.t("Ночной режим плеера", "Player night look"), org.telegram.messenger.voidgram.VoidGramNightLook.modeTitle(org.telegram.messenger.voidgram.VoidGramNightLook.mode()), () -> {
++            o.dismiss();
++            dismiss();
++            parentActivity.presentFragment(new org.telegram.ui.voidgram.VoidGramNightLookActivity());
++        });
++        o.add(R.drawable.msg_customize, org.telegram.messenger.voidgram.VoidGram.t("Строка песни в мини-плеере", "Lyrics line in the mini player") + (org.telegram.messenger.voidgram.VoidGramLyrics.isMiniEnabled() ? " ✓" : ""), () -> {
++            o.dismiss();
++            org.telegram.messenger.voidgram.VoidGramLyrics.setMiniEnabled(!org.telegram.messenger.voidgram.VoidGramLyrics.isMiniEnabled());
++        });
+         if (castAvailable) {
+             castItem = o.add();
+             castItem.setTextAndIcon(getString(R.string.VideoPlayerChromecast), R.drawable.menu_video_chromecast);
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Components/FragmentContextView.java b/TMessagesProj/src/main/java/org/telegram/ui/Components/FragmentContextView.java
+index e8deeca..b09cc24 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/Components/FragmentContextView.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/Components/FragmentContextView.java
+@@ -132,6 +132,9 @@ public class FragmentContextView extends FrameLayout implements NotificationCent
+     private ImageView playButton;
+     private PlayPauseDrawable playPauseDrawable;
+     private AudioPlayerAlert.ClippingTextViewSwitcher titleTextView;
++    /** VoidGram mini lyrics: the track title as built, and the lyrics line now shown in its place. */
++    private CharSequence voidgramBaseTitle;
++    private String voidgramShownLine;
+     private AudioPlayerAlert.ClippingTextViewSwitcher subtitleTextView;
+     private AnimatorSet animatorSet;
+     private BaseFragment fragment;
+@@ -1623,10 +1626,31 @@ public class FragmentContextView extends FrameLayout implements NotificationCent
+         } else if (id == NotificationCenter.messagePlayingProgressDidChanged) {
+             if (currentStyle == STYLE_AUDIO_PLAYER) {
+                 invalidate();
++                voidgramUpdateLyricLine();
+             }
+         }
+     }
+ 
++    /** VoidGram: while a track with timed lyrics plays, the line being sung replaces the title. */
++    private void voidgramUpdateLyricLine() {
++        MessageObject messageObject = MediaController.getInstance().getPlayingMessageObject();
++        if (titleTextView == null || voidgramBaseTitle == null || messageObject == null || !messageObject.isMusic()) {
++            return;
++        }
++        String line = org.telegram.messenger.voidgram.VoidGramLyrics.miniLine(messageObject);
++        if (TextUtils.equals(line, voidgramShownLine)) {
++            return;
++        }
++        voidgramShownLine = line;
++        if (line == null) {
++            titleTextView.setText(voidgramBaseTitle, false);
++        } else {
++            SpannableStringBuilder builder = new SpannableStringBuilder("♪ " + line);
++            builder.setSpan(new TypefaceSpan(AndroidUtilities.bold(), 0, getThemedColor(Theme.key_inappPlayerPerformer)), 0, builder.length(), Spanned.SPAN_INCLUSIVE_INCLUSIVE);
++            titleTextView.setText(builder, true);
++        }
++    }
++
+     float speakerAmplitude;
+     float micAmplitude;
+ 
+@@ -2032,6 +2056,8 @@ public class FragmentContextView extends FrameLayout implements NotificationCent
+                 TypefaceSpan span = new TypefaceSpan(AndroidUtilities.bold(), 0, getThemedColor(Theme.key_inappPlayerPerformer));
+                 stringBuilder.setSpan(span, 0, messageObject.getMusicAuthor().length(), Spanned.SPAN_INCLUSIVE_INCLUSIVE);
+                 titleTextView.setText(stringBuilder, !create && wasVisible && isMusic);
++                voidgramBaseTitle = isMusic ? stringBuilder : null;
++                voidgramShownLine = null;
+             }
+         }
+     }
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
+index 1dd2ffe..71d988a 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
+@@ -458,6 +458,8 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
+         if (Build.VERSION.SDK_INT >= 24) {
+             AndroidUtilities.isInMultiwindow = isInMultiWindowMode();
+         }
++        // VoidGram: the user agreement comes before signing in (and once after updating).
++        AndroidUtilities.runOnUIThread(() -> org.telegram.messenger.voidgram.VoidGramAgreement.showIfNeeded(this), 400);
+         Theme.createCommonChatResources();
+         Theme.createDialogsResources(this);
+         if (SharedConfig.passcodeHash.length() != 0 && SharedConfig.appLocked) {
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
+index e2b917b..050a7c7 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
+@@ -795,6 +795,9 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
+             items.add(UItem.asShadow(null));
+         }
+ 
++        // VoidGram: its own section on top.
++        items.add(SettingCell.Factory.of(90, IconBackgroundColors.PURPLE.top, IconBackgroundColors.PURPLE.bottom, R.drawable.settings_privacy, "VoidGram", org.telegram.messenger.voidgram.VoidGram.t("Обход блокировок, энергосбережение, плеер", "Bypass blocking, power saving, player")));
++        items.add(UItem.asShadow(null));
+         items.add(SettingCell.Factory.of(1, IconBackgroundColors.BLUE.top, IconBackgroundColors.BLUE.bottom, R.drawable.settings_account, getString(R.string.SettingsAccount), getString(R.string.SettingsAccountInfo)));
+         items.add(SettingCell.Factory.of(2, IconBackgroundColors.ORANGE.top, IconBackgroundColors.ORANGE.bottom, R.drawable.settings_chat, getString(R.string.SettingsChat), getString(R.string.SettingsChatInfo)));
+         items.add(SettingCell.Factory.of(3, IconBackgroundColors.GREEN.top, IconBackgroundColors.GREEN.bottom, R.drawable.settings_privacy, getString(R.string.SettingsPrivacySecurity), getString(R.string.SettingsPrivacySecurityInfo)));
+@@ -917,6 +920,9 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
+             return;
+         }
+         switch (item.id) {
++            case 90:
++                presentSettingFragment(new org.telegram.ui.voidgram.VoidGramSettingsActivity());
++                break;
+             case 1:
+                 presentSettingFragment(new UserInfoActivity());
+                 break;
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramDpiActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramDpiActivity.java
+new file mode 100644
+index 0000000..44df62b
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramDpiActivity.java
+@@ -0,0 +1,115 @@
++package org.telegram.ui.voidgram;
++
++import android.view.View;
++
++import org.telegram.messenger.SharedConfig;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramDpi;
++import org.telegram.tgnet.ConnectionsManager;
++import org.telegram.ui.Components.BulletinFactory;
++import org.telegram.ui.Components.UItem;
++import org.telegram.ui.Components.UniversalAdapter;
++import org.telegram.ui.Components.UniversalFragment;
++import org.telegram.ui.ProxyListActivity;
++
++import java.util.ArrayList;
++
++/** VoidGram → Bypass blocking: DPI tricks with country presets and full manual settings. */
++public class VoidGramDpiActivity extends UniversalFragment {
++    private static final int ID_ENABLED = 1;
++    private static final int ID_PRESET_BASE = 10;
++    private static final int ID_METHOD_BASE = 20;
++    private static final int ID_VIA_PROXY = 30;
++    private static final int ID_PROXY = 31;
++    private static final int ID_RECONNECT = 32;
++    private static final int ID_RESET = 33;
++
++    @Override
++    protected CharSequence getTitle() {
++        return VoidGram.t("Обход блокировок", "Bypass blocking");
++    }
++
++    private void refresh() {
++        if (listView != null && listView.adapter != null) {
++            listView.adapter.update(true);
++        }
++    }
++
++    @Override
++    protected void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
++        boolean enabled = VoidGramDpi.isEnabled();
++        items.add(UItem.asHeader(VoidGram.t("Обход DPI", "DPI bypass")));
++        items.add(UItem.asCheck(ID_ENABLED, VoidGram.t("Обходить блокировки", "Bypass blocking")).setChecked(enabled));
++        items.add(UItem.asShadow(VoidGram.t("Первый пакет каждого соединения с Telegram уходит так, чтобы система фильтрации (DPI) его не распознала. Root не нужен. Применяется к новым соединениям; кнопка «Переподключиться» применяет сразу.", "The first packet of every connection to Telegram is sent so that the filtering system (DPI) does not recognise it. No root needed. Applies to new connections; \"Reconnect now\" applies it at once.")));
++        if (!enabled) {
++            items.add(UItem.asButton(ID_PROXY, VoidGram.t("Прокси (MTProto, SOCKS5)", "Proxy (MTProto, SOCKS5)")));
++            items.add(UItem.asShadow(null));
++            return;
++        }
++
++        String preset = VoidGramDpi.preset();
++        items.add(UItem.asHeader(VoidGram.t("Страна", "Country")));
++        for (int i = 0; i < VoidGramDpi.PRESETS.length; i++) {
++            items.add(UItem.asRadio(ID_PRESET_BASE + i, VoidGramDpi.presetTitle(VoidGramDpi.PRESETS[i])).setChecked(VoidGramDpi.PRESETS[i].equals(preset)));
++        }
++        items.add(UItem.asShadow(VoidGramDpi.presetInfo(preset)));
++
++        int method = VoidGramDpi.method();
++        items.add(UItem.asHeader(VoidGram.t("Способ", "Method")));
++        for (int m = VoidGramDpi.METHOD_SPLIT; m <= VoidGramDpi.METHOD_DISORDER_OOB; m++) {
++            items.add(UItem.asRadio(ID_METHOD_BASE + m, VoidGramDpi.methodTitle(m)).setChecked(m == method));
++        }
++        items.add(UItem.asShadow(VoidGram.t("Разбиение режет первый пакет на части. Перестановка отправляет первую часть так, что она приходит позже остальных. OOB добавляет срочный байт, который сервер отбрасывает, а фильтр — нет.", "Split cuts the first packet into parts. Disorder sends the first part so that it arrives after the rest. OOB adds an urgent byte the server drops and the filter does not.")));
++
++        items.add(UItem.asHeader(VoidGram.t("Размер части, байт", "Part size, bytes")));
++        items.add(UItem.asIntSlideView(1, 1, Math.min(64, VoidGramDpi.splitPosition()), 64, value -> value + VoidGram.t(" Б", " B"), value -> VoidGramDpi.setSplitPosition(value)));
++        items.add(UItem.asHeader(VoidGram.t("Количество частей", "Number of parts")));
++        items.add(UItem.asIntSlideView(1, 1, VoidGramDpi.splitCount(), 16, value -> String.valueOf(value), value -> VoidGramDpi.setSplitCount(value)));
++        items.add(UItem.asHeader(VoidGram.t("Пауза между частями, мс", "Pause between parts, ms")));
++        items.add(UItem.asIntSlideView(1, 0, VoidGramDpi.delayMs(), 100, value -> value + VoidGram.t(" мс", " ms"), value -> VoidGramDpi.setDelayMs(value)));
++        items.add(UItem.asShadow(VoidGram.t("Любое изменение переключает страну на «Свои настройки».", "Any change switches the country to \"Custom\".")));
++
++        items.add(UItem.asCheck(ID_VIA_PROXY, VoidGram.t("Применять и к прокси", "Also for proxies")).setChecked(VoidGramDpi.viaProxy()));
++        items.add(UItem.asButton(ID_PROXY, VoidGram.t("Прокси (MTProto, SOCKS5)", "Proxy (MTProto, SOCKS5)")));
++        items.add(UItem.asShadow(VoidGram.t("Где адреса Telegram закрыты целиком (Китай, Иран), нужен прокси — лучше MTProto с fake-TLS. Тогда приёмы прячут само подключение к прокси.", "Where Telegram's addresses are blocked outright (China, Iran), a proxy is needed — best MTProto with fake-TLS. The tricks then hide the proxy connection itself.")));
++        items.add(UItem.asButton(ID_RECONNECT, VoidGram.t("Переподключиться сейчас", "Reconnect now")).accent());
++        items.add(UItem.asButton(ID_RESET, VoidGram.t("Сбросить настройки обхода", "Reset bypass settings")).red());
++        items.add(UItem.asShadow(null));
++    }
++
++    private void reconnect() {
++        ConnectionsManager.setProxySettings(SharedConfig.isProxyEnabled(), SharedConfig.currentProxy != null ? SharedConfig.currentProxy.settings : null);
++        BulletinFactory.of(this).createSimpleBulletin(org.telegram.messenger.R.raw.done, VoidGram.t("Соединения перезапущены", "Connections restarted")).show();
++    }
++
++    @Override
++    protected void onClick(UItem item, View view, int position, float x, float y) {
++        int id = item.id;
++        if (id == ID_ENABLED) {
++            VoidGramDpi.setEnabled(!VoidGramDpi.isEnabled());
++            reconnect();
++        } else if (id >= ID_PRESET_BASE && id < ID_PRESET_BASE + VoidGramDpi.PRESETS.length) {
++            VoidGramDpi.setPreset(VoidGramDpi.PRESETS[id - ID_PRESET_BASE]);
++        } else if (id >= ID_METHOD_BASE && id <= ID_METHOD_BASE + VoidGramDpi.METHOD_DISORDER_OOB) {
++            VoidGramDpi.setMethod(id - ID_METHOD_BASE);
++        } else if (id == ID_VIA_PROXY) {
++            VoidGramDpi.setViaProxy(!VoidGramDpi.viaProxy());
++        } else if (id == ID_PROXY) {
++            presentFragment(new ProxyListActivity());
++            return;
++        } else if (id == ID_RECONNECT) {
++            reconnect();
++            return;
++        } else if (id == ID_RESET) {
++            VoidGramDpi.reset();
++        } else {
++            return;
++        }
++        refresh();
++    }
++
++    @Override
++    protected boolean onLongClick(UItem item, View view, int position, float x, float y) {
++        return false;
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramLyricsScreen.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramLyricsScreen.java
+new file mode 100644
+index 0000000..a7b718c
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramLyricsScreen.java
+@@ -0,0 +1,293 @@
++package org.telegram.ui.voidgram;
++
++import android.app.Activity;
++import android.app.Dialog;
++import android.graphics.Color;
++import android.graphics.drawable.ColorDrawable;
++import android.graphics.drawable.GradientDrawable;
++import android.os.SystemClock;
++import android.text.InputType;
++import android.util.TypedValue;
++import android.view.Gravity;
++import android.view.View;
++import android.view.ViewGroup;
++import android.view.Window;
++import android.view.WindowManager;
++import android.widget.EditText;
++import android.widget.FrameLayout;
++import android.widget.LinearLayout;
++import android.widget.ScrollView;
++import android.widget.TextView;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.MediaController;
++import org.telegram.messenger.MessageObject;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramLyrics;
++import org.telegram.messenger.voidgram.VoidGramNightLook;
++
++import java.util.ArrayList;
++
++/** Full-screen lyrics for the playing track: the current line lights up, a tap on a line seeks there. */
++public final class VoidGramLyricsScreen {
++    private VoidGramLyricsScreen() {
++    }
++
++    private static TextView button(Activity activity, String text) {
++        TextView view = new TextView(activity);
++        view.setText(text);
++        view.setTextColor(0xFFFFFFFF);
++        view.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
++        view.setTypeface(AndroidUtilities.bold());
++        view.setGravity(Gravity.CENTER);
++        view.setPadding(AndroidUtilities.dp(14), 0, AndroidUtilities.dp(14), 0);
++        GradientDrawable background = new GradientDrawable();
++        background.setColor(0x26FFFFFF);
++        background.setCornerRadius(AndroidUtilities.dp(16));
++        view.setBackground(background);
++        return view;
++    }
++
++    private static void fullscreen(Dialog dialog, int color) {
++        Window window = dialog.getWindow();
++        if (window != null) {
++            window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
++            window.setBackgroundDrawable(new ColorDrawable(color));
++            window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
++            window.setStatusBarColor(color);
++            window.setNavigationBarColor(color);
++        }
++    }
++
++    public static void show(Activity activity) {
++        final MessageObject track = MediaController.getInstance().getPlayingMessageObject();
++        if (activity == null || track == null || !track.isMusic()) {
++            return;
++        }
++        VoidGramLyrics.request(track);
++        final int background = 0xFF0E0E12;
++        final Dialog dialog = new Dialog(activity, android.R.style.Theme_DeviceDefault_NoActionBar);
++
++        FrameLayout frame = new FrameLayout(activity);
++        frame.setBackgroundColor(background);
++        LinearLayout root = new LinearLayout(activity);
++        root.setOrientation(LinearLayout.VERTICAL);
++        root.setPadding(AndroidUtilities.dp(20), AndroidUtilities.dp(14) + AndroidUtilities.statusBarHeight, AndroidUtilities.dp(20), AndroidUtilities.dp(14));
++        frame.addView(root, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
++        // Night look over everything (it takes no touches).
++        final View night = new View(activity);
++        night.setClickable(false);
++        frame.addView(night, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
++
++        LinearLayout header = new LinearLayout(activity);
++        header.setOrientation(LinearLayout.HORIZONTAL);
++        header.setGravity(Gravity.CENTER_VERTICAL);
++        LinearLayout titles = new LinearLayout(activity);
++        titles.setOrientation(LinearLayout.VERTICAL);
++        TextView title = new TextView(activity);
++        title.setText(VoidGramLyrics.title(track));
++        title.setTextColor(0xFFFFFFFF);
++        title.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 18);
++        title.setTypeface(AndroidUtilities.bold());
++        title.setSingleLine(true);
++        TextView artist = new TextView(activity);
++        artist.setText(VoidGramLyrics.artist(track));
++        artist.setTextColor(0x99FFFFFF);
++        artist.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
++        artist.setSingleLine(true);
++        titles.addView(title);
++        titles.addView(artist);
++        header.addView(titles, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
++        TextView edit = button(activity, VoidGram.t("Изменить", "Edit"));
++        header.addView(edit, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, AndroidUtilities.dp(32)));
++        TextView close = button(activity, "✕");
++        LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(AndroidUtilities.dp(32), AndroidUtilities.dp(32));
++        closeParams.leftMargin = AndroidUtilities.dp(8);
++        header.addView(close, closeParams);
++        root.addView(header);
++
++        final ScrollView scroll = new ScrollView(activity);
++        scroll.setVerticalScrollBarEnabled(false);
++        final LinearLayout list = new LinearLayout(activity);
++        list.setOrientation(LinearLayout.VERTICAL);
++        list.setPadding(0, AndroidUtilities.dp(120), 0, AndroidUtilities.dp(240));
++        scroll.addView(list);
++        LinearLayout.LayoutParams scrollParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
++        scrollParams.topMargin = AndroidUtilities.dp(12);
++        root.addView(scroll, scrollParams);
++
++        final ArrayList<TextView> lineViews = new ArrayList<>();
++        final VoidGramLyrics.Lyrics[] shown = new VoidGramLyrics.Lyrics[1];
++        final int[] current = {-2};
++        final long[] userScrollUntil = {0};
++        scroll.setOnTouchListener((v, event) -> {
++            userScrollUntil[0] = SystemClock.elapsedRealtime() + 3000;
++            return false;
++        });
++
++        final Runnable rebuild = () -> {
++            VoidGramLyrics.Lyrics lyrics = VoidGramLyrics.get(track);
++            if (lyrics == shown[0] && !lineViews.isEmpty()) {
++                return;
++            }
++            shown[0] = lyrics;
++            list.removeAllViews();
++            lineViews.clear();
++            current[0] = -2;
++            if (lyrics == null || lyrics.isEmpty()) {
++                TextView status = new TextView(activity);
++                boolean looking = lyrics == null && VoidGramLyrics.isLoading(track);
++                status.setText(looking ? VoidGram.t("Ищем слова…", "Looking for lyrics…") : VoidGram.t("Слова для этого трека не найдены\n\nНажмите, чтобы добавить свой текст", "No lyrics found for this track\n\nTap to add your own text"));
++                status.setTextColor(0x99FFFFFF);
++                status.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 17);
++                status.setGravity(Gravity.CENTER);
++                if (!looking) {
++                    status.setOnClickListener(v -> edit.performClick());
++                }
++                list.addView(status, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
++                return;
++            }
++            if (lyrics.isSynced()) {
++                for (int i = 0; i < lyrics.lines.size(); i++) {
++                    final VoidGramLyrics.Line line = lyrics.lines.get(i);
++                    TextView view = new TextView(activity);
++                    view.setText(line.text.isEmpty() ? "♪" : line.text);
++                    view.setTextColor(0x52FFFFFF);
++                    view.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 26);
++                    view.setTypeface(AndroidUtilities.bold());
++                    view.setPadding(0, AndroidUtilities.dp(8), 0, AndroidUtilities.dp(8));
++                    view.setOnClickListener(v -> {
++                        MessageObject playing = MediaController.getInstance().getPlayingMessageObject();
++                        if (playing != null && playing.getDuration() > 0) {
++                            MediaController.getInstance().seekToProgress(playing, (float) Math.max(0, Math.min(1, line.time / playing.getDuration())));
++                            userScrollUntil[0] = 0;
++                        }
++                    });
++                    list.addView(view, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
++                    lineViews.add(view);
++                }
++            } else {
++                TextView view = new TextView(activity);
++                view.setText(lyrics.plain);
++                view.setTextColor(0xD9FFFFFF);
++                view.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 22);
++                view.setTypeface(AndroidUtilities.bold());
++                view.setLineSpacing(AndroidUtilities.dp(6), 1f);
++                list.addView(view, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
++            }
++        };
++
++        final Runnable[] tick = new Runnable[1];
++        tick[0] = () -> {
++            if (!dialog.isShowing()) {
++                return;
++            }
++            night.setBackgroundColor(VoidGramNightLook.overlayColor());
++            rebuild.run();
++            MessageObject playing = MediaController.getInstance().getPlayingMessageObject();
++            VoidGramLyrics.Lyrics lyrics = shown[0];
++            if (playing != null && lyrics != null && lyrics.isSynced() && VoidGramLyrics.key(playing).equals(VoidGramLyrics.key(track))) {
++                int index = VoidGramLyrics.lineIndex(lyrics, VoidGramLyrics.position(playing));
++                if (index != current[0] && index < lineViews.size()) {
++                    if (current[0] >= 0 && current[0] < lineViews.size()) {
++                        lineViews.get(current[0]).setTextColor(0x52FFFFFF);
++                    }
++                    current[0] = index;
++                    if (index >= 0) {
++                        TextView view = lineViews.get(index);
++                        view.setTextColor(0xFFFFFFFF);
++                        if (SystemClock.elapsedRealtime() > userScrollUntil[0]) {
++                            scroll.smoothScrollTo(0, Math.max(0, view.getTop() - scroll.getHeight() / 3));
++                        }
++                    }
++                }
++            }
++            AndroidUtilities.runOnUIThread(tick[0], 200);
++        };
++        final Runnable listener = rebuild;
++        VoidGramLyrics.addListener(listener);
++
++        edit.setOnClickListener(v -> showEditor(activity, track, () -> {
++            shown[0] = null;
++            rebuild.run();
++        }));
++        close.setOnClickListener(v -> dialog.dismiss());
++        dialog.setOnDismissListener(d -> {
++            VoidGramLyrics.removeListener(listener);
++            AndroidUtilities.cancelRunOnUIThread(tick[0]);
++        });
++
++        dialog.setContentView(frame);
++        fullscreen(dialog, background);
++        dialog.show();
++        tick[0].run();
++    }
++
++    /** A full-screen editor for this song's text; `done` runs after saving. */
++    public static void showEditor(Activity activity, MessageObject track, Runnable done) {
++        if (activity == null || track == null) {
++            return;
++        }
++        final int background = 0xFF141418;
++        final Dialog dialog = new Dialog(activity, android.R.style.Theme_DeviceDefault_NoActionBar);
++        LinearLayout root = new LinearLayout(activity);
++        root.setOrientation(LinearLayout.VERTICAL);
++        root.setBackgroundColor(background);
++        root.setPadding(AndroidUtilities.dp(16), AndroidUtilities.dp(14) + AndroidUtilities.statusBarHeight, AndroidUtilities.dp(16), AndroidUtilities.dp(14));
++
++        LinearLayout header = new LinearLayout(activity);
++        header.setGravity(Gravity.CENTER_VERTICAL);
++        TextView cancel = button(activity, VoidGram.t("Отмена", "Cancel"));
++        TextView title = new TextView(activity);
++        title.setText(VoidGramLyrics.title(track));
++        title.setTextColor(Color.WHITE);
++        title.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
++        title.setTypeface(AndroidUtilities.bold());
++        title.setGravity(Gravity.CENTER);
++        title.setSingleLine(true);
++        TextView save = button(activity, VoidGram.t("Сохранить", "Save"));
++        header.addView(cancel, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, AndroidUtilities.dp(32)));
++        header.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
++        header.addView(save, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, AndroidUtilities.dp(32)));
++        root.addView(header);
++
++        TextView hint = new TextView(activity);
++        hint.setText(VoidGram.t("Каждая строка — отдельная строка песни. Чтобы текст шёл синхронно, оставьте или добавьте время в начале строки: [01:23.45] Текст строки. Пустой текст вернёт найденный.", "One line per line of the song. To keep the text in sync, keep or add a time at the start of a line: [01:23.45] Line text. An empty text restores the found one."));
++        hint.setTextColor(0x99FFFFFF);
++        hint.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
++        LinearLayout.LayoutParams hintParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
++        hintParams.topMargin = AndroidUtilities.dp(12);
++        root.addView(hint, hintParams);
++
++        final EditText field = new EditText(activity);
++        field.setText(VoidGramLyrics.editableText(track));
++        field.setTextColor(Color.WHITE);
++        field.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
++        field.setGravity(Gravity.TOP | Gravity.START);
++        field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
++        field.setPadding(AndroidUtilities.dp(12), AndroidUtilities.dp(12), AndroidUtilities.dp(12), AndroidUtilities.dp(12));
++        GradientDrawable box = new GradientDrawable();
++        box.setColor(0x14FFFFFF);
++        box.setCornerRadius(AndroidUtilities.dp(12));
++        field.setBackground(box);
++        LinearLayout.LayoutParams fieldParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
++        fieldParams.topMargin = AndroidUtilities.dp(12);
++        root.addView(field, fieldParams);
++
++        cancel.setOnClickListener(v -> dialog.dismiss());
++        save.setOnClickListener(v -> {
++            VoidGramLyrics.saveCustom(track, field.getText().toString());
++            dialog.dismiss();
++            if (done != null) {
++                done.run();
++            }
++        });
++        dialog.setContentView(root);
++        fullscreen(dialog, background);
++        Window window = dialog.getWindow();
++        if (window != null) {
++            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
++        }
++        dialog.show();
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramNightLookActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramNightLookActivity.java
+new file mode 100644
+index 0000000..1c86390
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramNightLookActivity.java
+@@ -0,0 +1,95 @@
++package org.telegram.ui.voidgram;
++
++import android.view.View;
++
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramNightLook;
++import org.telegram.ui.Components.UItem;
++import org.telegram.ui.Components.UniversalAdapter;
++import org.telegram.ui.Components.UniversalFragment;
++
++import java.util.ArrayList;
++
++/** VoidGram → Player night look: master switch, schedule, strength, tint. */
++public class VoidGramNightLookActivity extends UniversalFragment {
++    private static final int ID_ENABLED = 1;
++    private static final int ID_ALWAYS = 2;
++    private static final int ID_WARM = 3;
++    private static final int ID_STRENGTH_BASE = 10;
++    private static final int ID_RESET = 20;
++
++    @Override
++    protected CharSequence getTitle() {
++        return VoidGram.t("Ночной режим плеера", "Player night look");
++    }
++
++    private void refresh() {
++        if (listView != null && listView.adapter != null) {
++            listView.adapter.update(true);
++        }
++    }
++
++    @Override
++    protected void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
++        int mode = VoidGramNightLook.mode();
++        boolean enabled = mode != VoidGramNightLook.MODE_OFF;
++        items.add(UItem.asHeader(VoidGram.t("Ночной режим плеера", "Player night look")));
++        items.add(UItem.asCheck(ID_ENABLED, VoidGram.t("Ночной режим", "Night look")).setChecked(enabled));
++        if (enabled) {
++            items.add(UItem.asCheck(ID_ALWAYS, VoidGram.t("Всегда, без расписания", "Always, no schedule")).setChecked(mode == VoidGramNightLook.MODE_ALWAYS));
++        }
++        String status;
++        if (!enabled) {
++            status = VoidGram.t("Ночной режим выключен полностью: плеер всегда выглядит как днём.", "The night look is off completely: the player always looks as in the daytime.");
++        } else {
++            status = VoidGramNightLook.isActiveNow() ? VoidGram.t("Сейчас ночной режим включён.", "The night look is on now.") : VoidGram.t("Сейчас ночной режим не действует.", "The night look is not active now.");
++        }
++        items.add(UItem.asShadow(status));
++        if (!enabled) {
++            return;
++        }
++        if (mode == VoidGramNightLook.MODE_SCHEDULED) {
++            items.add(UItem.asHeader(VoidGram.t("Начало", "Starts")));
++            items.add(UItem.asIntSlideView(1, 0, VoidGramNightLook.startHour(), 23, VoidGramNightLook::hourText, value -> {
++                VoidGramNightLook.setStartHour(value);
++            }));
++            items.add(UItem.asHeader(VoidGram.t("Конец", "Ends")));
++            items.add(UItem.asIntSlideView(1, 0, VoidGramNightLook.endHour(), 23, VoidGramNightLook::hourText, value -> {
++                VoidGramNightLook.setEndHour(value);
++            }));
++            items.add(UItem.asShadow(VoidGram.t("Время по часам устройства. Окно может переходить через полночь (22:00–07:00). Одинаковые часы — весь день.", "Device clock time. The window may cross midnight (22:00–07:00). Equal hours mean the whole day.")));
++        }
++        items.add(UItem.asHeader(VoidGram.t("Сила затемнения", "Dimming")));
++        for (int strength = VoidGramNightLook.STRENGTH_SOFT; strength <= VoidGramNightLook.STRENGTH_STRONG; strength++) {
++            items.add(UItem.asRadio(ID_STRENGTH_BASE + strength, VoidGramNightLook.strengthTitle(strength)).setChecked(VoidGramNightLook.strength() == strength));
++        }
++        items.add(UItem.asShadow(null));
++        items.add(UItem.asCheck(ID_WARM, VoidGram.t("Тёплый оттенок", "Warm tint")).setChecked(VoidGramNightLook.isWarm()));
++        items.add(UItem.asShadow(VoidGram.t("Выключите для нейтрального тёмного.", "Off for a neutral dark one.")));
++        items.add(UItem.asButton(ID_RESET, VoidGram.t("Сбросить вид и время", "Reset look and schedule")).red());
++        items.add(UItem.asShadow(null));
++    }
++
++    @Override
++    protected void onClick(UItem item, View view, int position, float x, float y) {
++        if (item.id == ID_ENABLED) {
++            VoidGramNightLook.setMode(VoidGramNightLook.mode() == VoidGramNightLook.MODE_OFF ? VoidGramNightLook.MODE_SCHEDULED : VoidGramNightLook.MODE_OFF);
++        } else if (item.id == ID_ALWAYS) {
++            VoidGramNightLook.setMode(VoidGramNightLook.mode() == VoidGramNightLook.MODE_ALWAYS ? VoidGramNightLook.MODE_SCHEDULED : VoidGramNightLook.MODE_ALWAYS);
++        } else if (item.id == ID_WARM) {
++            VoidGramNightLook.setWarm(!VoidGramNightLook.isWarm());
++        } else if (item.id >= ID_STRENGTH_BASE && item.id <= ID_STRENGTH_BASE + VoidGramNightLook.STRENGTH_STRONG) {
++            VoidGramNightLook.setStrength(item.id - ID_STRENGTH_BASE);
++        } else if (item.id == ID_RESET) {
++            VoidGramNightLook.reset();
++        } else {
++            return;
++        }
++        refresh();
++    }
++
++    @Override
++    protected boolean onLongClick(UItem item, View view, int position, float x, float y) {
++        return false;
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramPowerSavingActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramPowerSavingActivity.java
+new file mode 100644
+index 0000000..61aac10
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramPowerSavingActivity.java
+@@ -0,0 +1,119 @@
++package org.telegram.ui.voidgram;
++
++import android.view.View;
++
++import org.telegram.messenger.LiteMode;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramPowerSaving;
++import org.telegram.ui.Components.UItem;
++import org.telegram.ui.Components.UniversalAdapter;
++import org.telegram.ui.Components.UniversalFragment;
++
++import java.util.ArrayList;
++import java.util.Set;
++
++/** VoidGram → Power saving: a profile for a phone, a tablet and a laptop. */
++public class VoidGramPowerSavingActivity extends UniversalFragment {
++    private static final int ID_KIND_BASE = 1;
++    private static final int ID_MODE_BASE = 10;
++    private static final int ID_SYSTEM = 20;
++    private static final int ID_BATTERY = 21;
++    private static final int ID_LIMIT_BASE = 30;
++    private static final int ID_RESET = 50;
++
++    private int kind = VoidGramPowerSaving.currentKind();
++
++    @Override
++    protected CharSequence getTitle() {
++        return VoidGram.t("Энергосбережение", "Power saving");
++    }
++
++    private void refresh() {
++        if (listView != null && listView.adapter != null) {
++            listView.adapter.update(true);
++        }
++    }
++
++    @Override
++    protected void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
++        int current = VoidGramPowerSaving.currentKind();
++        items.add(UItem.asHeader(VoidGram.t("Профиль устройства", "Device profile")));
++        for (int k = VoidGramPowerSaving.KIND_PHONE; k <= VoidGramPowerSaving.KIND_LAPTOP; k++) {
++            String title = VoidGramPowerSaving.kindTitle(k) + (k == current ? VoidGram.t(" (это)", " (this)") : "");
++            items.add(UItem.asRadio(ID_KIND_BASE + k, title).setChecked(k == kind));
++        }
++        String status;
++        if (kind != current) {
++            status = VoidGram.t("Этот профиль сработает на другом типе устройства..", "This profile applies on another kind of device.");
++        } else {
++            Boolean saving = VoidGramPowerSaving.isSavingNow(LiteMode.getBatteryLevel());
++            if (saving == null) {
++                status = VoidGram.t("Сейчас решают настройки Telegram (Энергосбережение в Настройках).", "Telegram's own Power Saving settings decide now.");
++            } else {
++                status = saving ? VoidGram.t("Сейчас экономия включена.", "Saving power now.") : VoidGram.t("Сейчас экономия выключена.", "Not saving power now.");
++            }
++            int level = LiteMode.getBatteryLevel();
++            if (level >= 0) {
++                status += VoidGram.t(" Заряд: ", " Battery: ") + level + "%" + (VoidGramPowerSaving.plugged ? VoidGram.t(", заряжается.", ", charging.") : ".");
++            }
++        }
++        items.add(UItem.asShadow(status));
++
++        int mode = VoidGramPowerSaving.mode(kind);
++        items.add(UItem.asHeader(VoidGram.t("Когда экономить", "When to save power")));
++        for (int m = VoidGramPowerSaving.MODE_TELEGRAM; m <= VoidGramPowerSaving.MODE_ALWAYS; m++) {
++            items.add(UItem.asRadio(ID_MODE_BASE + m, VoidGramPowerSaving.modeTitle(m)).setChecked(m == mode));
++        }
++        items.add(UItem.asShadow(VoidGram.t("«Как в Telegram» оставляет обычный экран энергосбережения. Остальные режимы заменяют его на этом устройстве.", "\"Telegram's setting\" keeps Telegram's own Power Saving screen. The other modes replace it on this device.")));
++        if (mode == VoidGramPowerSaving.MODE_TELEGRAM) {
++            items.add(UItem.asButton(ID_RESET, VoidGram.t("Сбросить профиль", "Reset profile")).red());
++            items.add(UItem.asShadow(null));
++            return;
++        }
++        if (mode == VoidGramPowerSaving.MODE_BATTERY) {
++            items.add(UItem.asHeader(VoidGram.t("Порог заряда", "Battery level")));
++            final int profileKind = kind;
++            items.add(UItem.asIntSlideView(1, 5, VoidGramPowerSaving.threshold(kind), 95, value -> value + "%", value -> VoidGramPowerSaving.setThreshold(profileKind, value)));
++        }
++        items.add(UItem.asCheck(ID_SYSTEM, VoidGram.t("При системной экономии энергии", "With system battery saver")).setChecked(VoidGramPowerSaving.followSystem(kind)));
++        items.add(UItem.asCheck(ID_BATTERY, VoidGram.t("Всегда без зарядки", "Whenever not charging")).setChecked(VoidGramPowerSaving.onBattery(kind)));
++        items.add(UItem.asShadow(VoidGram.t("«Всегда без зарядки» удобно для ноутбука: экономия включается, как только вы отключаете питание.", "\"Whenever not charging\" suits a laptop: saving starts as soon as you unplug it.")));
++
++        items.add(UItem.asHeader(VoidGram.t("Что оставить во время экономии", "Keep while saving power")));
++        Set<String> limits = VoidGramPowerSaving.limits(kind);
++        for (int i = 0; i < VoidGramPowerSaving.LIMITS.length; i++) {
++            String limit = VoidGramPowerSaving.LIMITS[i];
++            items.add(UItem.asCheck(ID_LIMIT_BASE + i, VoidGramPowerSaving.limitTitle(limit)).setChecked(!limits.contains(limit)));
++        }
++        items.add(UItem.asShadow(null));
++        items.add(UItem.asButton(ID_RESET, VoidGram.t("Сбросить профиль", "Reset profile")).red());
++        items.add(UItem.asShadow(null));
++    }
++
++    @Override
++    protected void onClick(UItem item, View view, int position, float x, float y) {
++        int id = item.id;
++        if (id >= ID_KIND_BASE && id <= ID_KIND_BASE + VoidGramPowerSaving.KIND_LAPTOP) {
++            kind = id - ID_KIND_BASE;
++        } else if (id >= ID_MODE_BASE && id <= ID_MODE_BASE + VoidGramPowerSaving.MODE_ALWAYS) {
++            VoidGramPowerSaving.setMode(kind, id - ID_MODE_BASE);
++        } else if (id == ID_SYSTEM) {
++            VoidGramPowerSaving.setFollowSystem(kind, !VoidGramPowerSaving.followSystem(kind));
++        } else if (id == ID_BATTERY) {
++            VoidGramPowerSaving.setOnBattery(kind, !VoidGramPowerSaving.onBattery(kind));
++        } else if (id >= ID_LIMIT_BASE && id < ID_LIMIT_BASE + VoidGramPowerSaving.LIMITS.length) {
++            String limit = VoidGramPowerSaving.LIMITS[id - ID_LIMIT_BASE];
++            VoidGramPowerSaving.setLimit(kind, limit, !VoidGramPowerSaving.limits(kind).contains(limit));
++        } else if (id == ID_RESET) {
++            VoidGramPowerSaving.reset(kind);
++        } else {
++            return;
++        }
++        refresh();
++    }
++
++    @Override
++    protected boolean onLongClick(UItem item, View view, int position, float x, float y) {
++        return false;
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
+new file mode 100644
+index 0000000..9623cd7
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
+@@ -0,0 +1,193 @@
++package org.telegram.ui.voidgram;
++
++import android.content.Context;
++import android.graphics.drawable.GradientDrawable;
++import android.media.MediaPlayer;
++import android.util.TypedValue;
++import android.view.Gravity;
++import android.view.View;
++import android.widget.FrameLayout;
++import android.widget.TextView;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.R;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramAgreement;
++import org.telegram.messenger.voidgram.VoidGramDpi;
++import org.telegram.messenger.voidgram.VoidGramLyrics;
++import org.telegram.messenger.voidgram.VoidGramNightLook;
++import org.telegram.messenger.voidgram.VoidGramPowerSaving;
++import org.telegram.ui.ActionBar.AlertDialog;
++import org.telegram.ui.ActionBar.Theme;
++import org.telegram.ui.Components.LayoutHelper;
++import org.telegram.ui.Components.UItem;
++import org.telegram.ui.Components.UniversalAdapter;
++import org.telegram.ui.Components.UniversalFragment;
++
++import java.util.ArrayList;
++
++/** Settings → VoidGram. */
++public class VoidGramSettingsActivity extends UniversalFragment {
++    private static final int ID_DPI = 1;
++    private static final int ID_POWER = 2;
++    private static final int ID_NIGHT = 3;
++    private static final int ID_MINI = 4;
++    private static final int ID_AGREEMENT = 5;
++
++    private FrameLayout musicRow;
++    private TextView musicButton;
++    private MediaPlayer music;
++
++    @Override
++    protected CharSequence getTitle() {
++        return "VoidGram";
++    }
++
++    @Override
++    protected void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
++        items.add(UItem.asHeader(VoidGram.t("Сеть", "Network")));
++        items.add(UItem.asButton(ID_DPI, R.drawable.msg2_secret, VoidGram.t("Обход блокировок", "Bypass blocking"), VoidGramDpi.isEnabled() ? VoidGramDpi.presetTitle(VoidGramDpi.preset()) : VoidGram.t("Выкл.", "Off")));
++        items.add(UItem.asShadow(VoidGram.t("Обход DPI для России, Ирана, Китая и других стран, с полной настройкой.", "DPI bypass for Russia, Iran, China and other countries, fully configurable.")));
++
++        items.add(UItem.asHeader(VoidGram.t("Устройство", "Device")));
++        int kind = VoidGramPowerSaving.currentKind();
++        items.add(UItem.asButton(ID_POWER, R.drawable.msg2_battery, VoidGram.t("Энергосбережение", "Power saving"), VoidGramPowerSaving.modeTitle(VoidGramPowerSaving.mode(kind))));
++        items.add(UItem.asShadow(VoidGram.t("Профили для телефона, планшета и ноутбука.", "Profiles for a phone, a tablet and a laptop.")));
++
++        items.add(UItem.asHeader(VoidGram.t("Музыка", "Music")));
++        items.add(UItem.asButton(ID_NIGHT, R.drawable.msg_theme, VoidGram.t("Ночной режим плеера", "Player night look"), VoidGramNightLook.modeTitle(VoidGramNightLook.mode())));
++        items.add(UItem.asCheck(ID_MINI, VoidGram.t("Строка песни в мини-плеере", "Lyrics line in the mini player")).setChecked(VoidGramLyrics.isMiniEnabled()));
++        items.add(UItem.asShadow(VoidGram.t("Текст песни, свой текст и его правка — в меню плеера (⋮).", "Lyrics, your own text and edits are in the player menu (⋮).")));
++
++        items.add(UItem.asHeader(VoidGram.t("Другое", "Other")));
++        items.add(UItem.asButton(ID_AGREEMENT, R.drawable.msg2_policy, VoidGram.t("Пользовательское соглашение", "User agreement")));
++        items.add(UItem.asShadow(null));
++        items.add(UItem.asCustom(musicRow()));
++    }
++
++    /** Easter egg: a small, faint button that plays @natsuk1n_dev's music. */
++    private View musicRow() {
++        if (musicRow != null) {
++            AndroidUtilities.removeFromParent(musicRow);
++            return musicRow;
++        }
++        Context context = getContext();
++        musicRow = new FrameLayout(context);
++        musicButton = new TextView(context);
++        musicButton.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
++        musicButton.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
++        musicButton.setPadding(AndroidUtilities.dp(10), AndroidUtilities.dp(5), AndroidUtilities.dp(10), AndroidUtilities.dp(5));
++        GradientDrawable background = new GradientDrawable();
++        background.setCornerRadius(AndroidUtilities.dp(12));
++        background.setColor(0x1A808080);
++        musicButton.setBackground(background);
++        musicButton.setOnClickListener(v -> toggleMusic());
++        musicRow.addView(musicButton, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER, 0, 12, 0, 20));
++        updateMusicButton();
++        return musicRow;
++    }
++
++    private boolean isPlaying() {
++        try {
++            return music != null && music.isPlaying();
++        } catch (Throwable e) {
++            return false;
++        }
++    }
++
++    private void updateMusicButton() {
++        if (musicButton == null) {
++            return;
++        }
++        musicButton.setText((isPlaying() ? "■ " : "♪ ") + VoidGram.t("музыка @natsuk1n_dev-а", "@natsuk1n_dev's music"));
++        musicButton.setAlpha(isPlaying() ? 0.75f : 0.35f);
++    }
++
++    private void toggleMusic() {
++        if (isPlaying()) {
++            stopMusic();
++            return;
++        }
++        try {
++            if (music == null) {
++                music = MediaPlayer.create(getContext(), R.raw.voidgram_natsukin_music);
++                if (music == null) {
++                    return;
++                }
++                music.setOnCompletionListener(player -> updateMusicButton());
++            }
++            music.seekTo(0);
++            music.start();
++            musicButton.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP);
++        } catch (Throwable ignore) {
++        }
++        updateMusicButton();
++    }
++
++    private void stopMusic() {
++        if (music != null) {
++            try {
++                music.stop();
++                music.release();
++            } catch (Throwable ignore) {
++            }
++            music = null;
++        }
++        updateMusicButton();
++    }
++
++    @Override
++    public void onResume() {
++        super.onResume();
++        if (listView != null && listView.adapter != null) {
++            listView.adapter.update(false);
++        }
++    }
++
++    @Override
++    public void onPause() {
++        super.onPause();
++        stopMusic();
++    }
++
++    @Override
++    public void onFragmentDestroy() {
++        stopMusic();
++        super.onFragmentDestroy();
++    }
++
++    @Override
++    protected void onClick(UItem item, View view, int position, float x, float y) {
++        switch (item.id) {
++            case ID_DPI:
++                presentFragment(new VoidGramDpiActivity());
++                break;
++            case ID_POWER:
++                presentFragment(new VoidGramPowerSavingActivity());
++                break;
++            case ID_NIGHT:
++                presentFragment(new VoidGramNightLookActivity());
++                break;
++            case ID_MINI:
++                VoidGramLyrics.setMiniEnabled(!VoidGramLyrics.isMiniEnabled());
++                if (listView != null && listView.adapter != null) {
++                    listView.adapter.update(true);
++                }
++                break;
++            case ID_AGREEMENT:
++                AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
++                builder.setTitle(VoidGram.t("Пользовательское соглашение", "User agreement"));
++                builder.setMessage(VoidGramAgreement.text());
++                builder.setPositiveButton("OK", null);
++                showDialog(builder.create());
++                break;
++            default:
++                break;
++        }
++    }
++
++    @Override
++    protected boolean onLongClick(UItem item, View view, int position, float x, float y) {
++        return false;
++    }
++}
