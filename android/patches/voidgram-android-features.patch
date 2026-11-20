@@ -278,10 +278,19 @@ index 373e423..9fb14ba 100644
              return false;
          }
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java b/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java
-index ec76835..fa13c4c 100644
+index ec76835..8ee5a63 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java
-@@ -9346,6 +9346,14 @@ public class MessagesController extends BaseController implements NotificationCe
+@@ -6832,6 +6832,8 @@ public class MessagesController extends BaseController implements NotificationCe
+         if (user == null) {
+             return false;
+         }
++        // VoidGram: a badge from the VoidGram registry in the status place of a user who has none.
++        org.telegram.messenger.voidgram.VoidGramBadges.decorate(user);
+         fromCache = fromCache && user.id / 1000 != 333 && user.id != 777000;
+         TLRPC.User oldUser = users.get(user.id);
+         if (oldUser == user && !force) {
+@@ -9346,6 +9348,14 @@ public class MessagesController extends BaseController implements NotificationCe
      }
  
      public void deleteMessages(ArrayList<Integer> messages, ArrayList<Long> randoms, TLRPC.EncryptedChat encryptedChat, long dialogId, boolean forAll, int mode, boolean cacheOnly, long taskId, TLObject taskRequest, int topicId, boolean movedToScheduled, int movedToScheduledMessageId) {
@@ -296,7 +305,7 @@ index ec76835..fa13c4c 100644
          final boolean scheduled = mode == ChatActivity.MODE_SCHEDULED;
          final boolean quickReplies = mode == ChatActivity.MODE_QUICK_REPLIES;
          final boolean welcomeMessages = mode == ChatActivity.MODE_WELCOME_MESSAGES;
-@@ -9601,6 +9609,9 @@ public class MessagesController extends BaseController implements NotificationCe
+@@ -9601,6 +9611,9 @@ public class MessagesController extends BaseController implements NotificationCe
                  }
                  ArrayList<Integer> ids = new ArrayList<>();
                  getMessagesStorage().updatePinnedMessages(chat != null ? -chat.id : user.id, null, false, 0, 0, false, null);
@@ -306,7 +315,7 @@ index ec76835..fa13c4c 100644
              }
          });
      }
-@@ -9609,6 +9620,11 @@ public class MessagesController extends BaseController implements NotificationCe
+@@ -9609,6 +9622,11 @@ public class MessagesController extends BaseController implements NotificationCe
          if (chat == null && user == null) {
              return;
          }
@@ -318,7 +327,7 @@ index ec76835..fa13c4c 100644
          TLRPC.TL_messages_updatePinnedMessage req = new TLRPC.TL_messages_updatePinnedMessage();
          req.peer = getInputPeer(chat != null ? -chat.id : user.id);
          req.id = id;
-@@ -10553,7 +10569,7 @@ public class MessagesController extends BaseController implements NotificationCe
+@@ -10553,7 +10571,7 @@ public class MessagesController extends BaseController implements NotificationCe
          checkReadTasks();
  
          if (getUserConfig().isClientActivated()) {
@@ -327,7 +336,7 @@ index ec76835..fa13c4c 100644
                  if (ApplicationLoader.mainInterfacePausedStageQueueTime != 0 && Math.abs(ApplicationLoader.mainInterfacePausedStageQueueTime - System.currentTimeMillis()) > 1000) {
                      if (statusSettingState != 1 && (lastStatusUpdateTime == 0 || Math.abs(System.currentTimeMillis() - lastStatusUpdateTime) >= 55000 || offlineSent)) {
                          statusSettingState = 1;
-@@ -11415,6 +11431,10 @@ public class MessagesController extends BaseController implements NotificationCe
+@@ -11415,6 +11433,10 @@ public class MessagesController extends BaseController implements NotificationCe
          if (action < 0 || action >= sendingTypings.length || dialogId == 0) {
              return false;
          }
@@ -338,7 +347,7 @@ index ec76835..fa13c4c 100644
          final long selfId = UserConfig.getInstance(UserConfig.selectedAccount).getClientUserId();
          if (dialogId == selfId) {
              return false;
-@@ -14593,6 +14613,10 @@ public class MessagesController extends BaseController implements NotificationCe
+@@ -14593,6 +14615,10 @@ public class MessagesController extends BaseController implements NotificationCe
      }
  
      private void completeReadTask(ReadTask task) {
@@ -349,7 +358,7 @@ index ec76835..fa13c4c 100644
          if (task.replyId != 0 && task.monoForumPeerId == 0) {
              TLRPC.TL_messages_readDiscussion req = new TLRPC.TL_messages_readDiscussion();
              req.msg_id = (int) task.replyId;
-@@ -19933,6 +19957,8 @@ public class MessagesController extends BaseController implements NotificationCe
+@@ -19933,6 +19959,8 @@ public class MessagesController extends BaseController implements NotificationCe
                  for (int a = 0, size2 = messageObjects.size(); a < size2; a++) {
                      messagesRes.messages.add(messageObjects.get(a).messageOwner);
                  }
@@ -358,7 +367,7 @@ index ec76835..fa13c4c 100644
                  getMessagesStorage().putMessages(messagesRes, editingMessages.keyAt(b), -2, 0, false, 0, 0);
              }
              LongSparseArray<ArrayList<MessageObject>> editingMessagesFinal = editingMessages;
-@@ -21117,6 +21143,8 @@ public class MessagesController extends BaseController implements NotificationCe
+@@ -21117,6 +21145,8 @@ public class MessagesController extends BaseController implements NotificationCe
          LongSparseIntArray markAsReadMessagesOutboxFinal = markAsReadMessagesOutbox;
          LongSparseArray<ArrayList<Integer>> markContentAsReadMessagesFinal = markContentAsReadMessages;
          SparseIntArray markAsReadEncryptedFinal = markAsReadEncrypted;
@@ -367,7 +376,7 @@ index ec76835..fa13c4c 100644
          LongSparseArray<ArrayList<Integer>> deletedMessagesFinal = deletedMessages;
          LongSparseArray<ArrayList<Integer>> deletedQuickRepliesMessagesFinal = deletedQuickReplyMessages;
          LongSparseArray<ArrayList<Integer>> scheduledDeletedMessagesFinal = scheduledDeletedMessages;
-@@ -21727,6 +21755,10 @@ public class MessagesController extends BaseController implements NotificationCe
+@@ -21727,6 +21757,10 @@ public class MessagesController extends BaseController implements NotificationCe
      }
  
      public SponsoredMessagesInfo getSponsoredMessages(long dialogId) {
@@ -628,6 +637,254 @@ index 0000000..6f850fc
 +    private static final String TEXT_RU = "Пользовательское соглашение VoidGram\n\nПожалуйста, внимательно прочитайте это соглашение до конца. Кнопка «Принимаю» станет доступна только после того, как вы долистаете текст до самого низа. Нажимая «Принимаю», вы подтверждаете, что прочитали, поняли и полностью согласны со всеми условиями ниже. Если вы не согласны — не пользуйтесь VoidGram и удалите приложение.\n\n1. Неофициальный клиент\nVoidGram — неофициальный клиент Telegram. Он не связан с Telegram FZ-LLC, Telegram Messenger Inc. и их партнёрами, не одобрен и не поддерживается ими. Названия и товарные знаки Telegram принадлежат их владельцам.\n\n2. «Как есть», без гарантий\nVoidGram предоставляется «как есть» и «как доступно», без каких-либо гарантий — явных или подразумеваемых, включая гарантии работоспособности, безопасности, точности, совместимости, пригодности для определённой цели и отсутствия ошибок. Приложение может работать нестабильно, терять данные или перестать работать в любой момент.\n\n3. Отказ от ответственности\nРазработчики, участники проекта и распространители VoidGram не несут НИКАКОЙ ответственности за любой прямой, косвенный, случайный, особый или последующий ущерб, связанный с использованием или невозможностью использования приложения. В том числе, но не только, за:\n• блокировку, ограничение, заморозку или удаление вашего аккаунта Telegram;\n• потерю, повреждение, утечку или раскрытие переписки, медиа, контактов и любых других данных;\n• действия других пользователей, ботов, плагинов и третьих лиц;\n• финансовые потери, включая звёзды, подарки, NFT и подписки;\n• последствия нарушения правил Telegram, законов вашей страны или прав третьих лиц.\nВся ответственность за использование VoidGram лежит только на вас.\n\n4. Правила Telegram\nНекоторые функции VoidGram (например, режим призрака, сохранение удалённых и изменённых сообщений, сохранение одноразовых медиа) могут противоречить Условиям использования Telegram API и Условиям обслуживания Telegram. Включая такие функции, вы делаете это на свой страх и риск и понимаете, что Telegram может ограничить ваш аккаунт.\n\n5. Конфиденциальность переписки\nVoidGram может сохранять на устройстве удалённые и изменённые сообщения, одноразовые фото, видео и голосовые сообщения, а также позволяет делать снимки экрана там, где обычный Telegram их запрещает. Поэтому переписку с пользователем VoidGram нельзя считать защищённой — ни в обычных, ни в секретных чатах, ни через одноразовые сообщения.\n\n6. Автоматическое предупреждение собеседников\nЧтобы ваши собеседники знали об этом, VoidGram автоматически отправляет от вашего имени предупреждающее сообщение:\n• в каждый личный чат — один раз, и закрепляет его. Вы не можете удалить или открепить это сообщение в VoidGram; удалить его может только ваш собеседник;\n• в каждую группу, где вы пишете, — один раз, без закрепления.\nСообщение отправляется перед вашим первым сообщением в этом чате. Принимая соглашение, вы соглашаетесь на эту отправку.\n\n7. Плагины и сторонний код\nПлагины, темы и скрипты пишут третьи лица. Разработчики VoidGram их не проверяют полностью и не отвечают за их работу, безопасность и последствия использования. Устанавливайте только то, чему доверяете.\n\n8. Данные\nНастройки, история и архивы VoidGram хранятся локально на вашем устройстве. Для значков и некоторых функций приложение обращается к серверу VoidGram. Разработчики не обязаны хранить, восстанавливать или передавать ваши данные.\n\n9. Законы\nВы обязуетесь использовать VoidGram только в рамках законов вашей страны. Запрещено использовать приложение для слежки, преследования, шантажа, распространения чужих личных данных и любых других незаконных действий.\n\n10. Изменения\nУсловия могут меняться. При существенных изменениях VoidGram снова попросит принять соглашение. Продолжая пользоваться приложением, вы принимаете действующую редакцию.\n\n11. Возраст\nПользуясь VoidGram, вы подтверждаете, что достигли возраста, с которого в вашей стране разрешено самостоятельно принимать такие условия, либо получили согласие родителей или законных представителей.\n\nВы дочитали до конца. Если вы согласны со всеми условиями — нажмите «Принимаю».";
 +
 +    private static final String TEXT_EN = "VoidGram User Agreement\n\nPlease read this agreement carefully to the end. The \"Accept\" button becomes available only after you scroll the text all the way down. By tapping \"Accept\" you confirm that you have read, understood and fully agree to every term below. If you do not agree, do not use VoidGram and delete the app.\n\n1. Unofficial client\nVoidGram is an unofficial Telegram client. It is not affiliated with, endorsed or supported by Telegram FZ-LLC, Telegram Messenger Inc. or their partners. Telegram names and trademarks belong to their owners.\n\n2. \"As is\", no warranty\nVoidGram is provided \"as is\" and \"as available\", without any warranty, express or implied, including warranties of operation, security, accuracy, compatibility, fitness for a particular purpose and freedom from errors. The app may be unstable, lose data or stop working at any time.\n\n3. No liability\nThe developers, contributors and distributors of VoidGram accept NO liability for any direct, indirect, incidental, special or consequential damage related to using or being unable to use the app, including but not limited to:\n• a ban, limit, freeze or deletion of your Telegram account;\n• loss, corruption, leak or disclosure of messages, media, contacts or any other data;\n• actions of other users, bots, plugins and third parties;\n• financial losses, including Stars, gifts, NFTs and subscriptions;\n• the consequences of breaking Telegram's rules, the laws of your country or the rights of others.\nYou alone are responsible for how you use VoidGram.\n\n4. Telegram's rules\nSome VoidGram features (for example Ghost Mode, keeping deleted and edited messages, keeping view-once media) may conflict with the Telegram API Terms of Service and Telegram's Terms of Service. You turn them on at your own risk and understand that Telegram may restrict your account.\n\n5. Privacy of conversations\nVoidGram can keep deleted and edited messages and view-once photos, videos and voice messages on the device, and allows screenshots where ordinary Telegram forbids them. A conversation with a VoidGram user therefore cannot be considered protected: not in ordinary chats, not in secret chats and not with view-once messages.\n\n6. Automatic notice to the people you talk to\nSo that the people you talk to know this, VoidGram automatically sends a warning message on your behalf:\n• to every private chat, once, and pins it. You cannot delete or unpin it in VoidGram; only the other person can delete it;\n• to every group you write in, once, without pinning.\nThe message is sent before your first message in that chat. By accepting this agreement you agree to it being sent.\n\n7. Plugins and third-party code\nPlugins, themes and scripts are written by third parties. The VoidGram developers do not fully review them and are not responsible for how they work, their safety or the consequences of using them. Install only what you trust.\n\n8. Data\nVoidGram settings, history and archives are stored locally on your device. For badges and some features the app contacts the VoidGram server. The developers are not obliged to store, restore or hand over your data.\n\n9. Law\nYou agree to use VoidGram only within the laws of your country. Using the app for surveillance, stalking, blackmail, spreading other people's personal data or any other unlawful activity is forbidden.\n\n10. Changes\nThese terms may change. After a substantial change VoidGram will ask you to accept the agreement again. By continuing to use the app you accept the current version.\n\n11. Age\nBy using VoidGram you confirm that you are old enough in your country to accept such terms yourself, or that you have the consent of your parents or legal guardians.\n\nYou have reached the end. If you agree to all of the terms, tap \"Accept\".";
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramBadges.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramBadges.java
+new file mode 100644
+index 0000000..d824b69
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramBadges.java
+@@ -0,0 +1,242 @@
++package org.telegram.messenger.voidgram;
++
++import android.os.Build;
++import android.util.Base64;
++
++import org.json.JSONArray;
++import org.json.JSONObject;
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.ApplicationLoader;
++import org.telegram.messenger.FileLog;
++import org.telegram.messenger.MessagesController;
++import org.telegram.messenger.NotificationCenter;
++import org.telegram.messenger.UserConfig;
++import org.telegram.messenger.Utilities;
++import org.telegram.tgnet.TLRPC;
++
++import java.io.ByteArrayOutputStream;
++import java.io.File;
++import java.io.FileInputStream;
++import java.io.FileOutputStream;
++import java.io.InputStream;
++import java.net.HttpURLConnection;
++import java.net.URL;
++import java.security.KeyFactory;
++import java.security.PublicKey;
++import java.security.Signature;
++import java.security.spec.X509EncodedKeySpec;
++import java.util.HashMap;
++
++/**
++ * VoidGram badges, as on iOS: the signed registry from the VoidGram badge server
++ * (badge.vinx.best). A registry is accepted only when the server's Ed25519 signature matches the
++ * key built into the app and it is no older than the one in use. A badge shows in the emoji status
++ * place next to the name, for people who wear no status of their own, and only in VoidGram.
++ */
++public final class VoidGramBadges {
++    private static final String URL_REGISTRY = "https://badge.vinx.best/badges.json";
++    private static final String PUBLIC_KEY = "jZQXVmhMI6elJzj4lH4iIKPuCHfyctUKqL76PUda3TA=";
++    /** DER prefix of an Ed25519 SubjectPublicKeyInfo; the raw 32-byte key follows. */
++    private static final byte[] X509_PREFIX = {0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00};
++
++    private static volatile HashMap<Long, Long> badges = new HashMap<>();
++    private static volatile HashMap<Long, String> labels = new HashMap<>();
++    private static double issuedAt;
++    private static boolean started;
++
++    private VoidGramBadges() {
++    }
++
++    public static boolean isEnabled() {
++        return !VoidGramDecoy.isActive() && VoidGram.prefs().getBoolean("badges_enabled", true);
++    }
++
++    public static void setEnabled(boolean value) {
++        VoidGram.prefs().edit().putBoolean("badges_enabled", value).apply();
++    }
++
++    public static Long badgeFor(long userId) {
++        return isEnabled() ? badges.get(userId) : null;
++    }
++
++    public static String labelFor(long userId) {
++        return isEnabled() ? labels.get(userId) : null;
++    }
++
++    /** Puts the VoidGram badge into the status place of a user who has none. */
++    public static void decorate(TLRPC.User user) {
++        if (user == null) {
++            return;
++        }
++        Long documentId = badgeFor(user.id);
++        if (documentId == null) {
++            return;
++        }
++        if (user.emoji_status != null && !(user.emoji_status instanceof TLRPC.TL_emojiStatusEmpty)) {
++            return;
++        }
++        TLRPC.TL_emojiStatus status = new TLRPC.TL_emojiStatus();
++        status.document_id = documentId;
++        user.emoji_status = status;
++    }
++
++    private static File cacheFile() {
++        return new File(ApplicationLoader.applicationContext.getFilesDir(), "voidgram_badges.json");
++    }
++
++    /** Loads the last signed copy, then re-reads the server now and every 15 minutes. */
++    public static synchronized void start() {
++        if (started) {
++            return;
++        }
++        started = true;
++        Utilities.globalQueue.postRunnable(() -> {
++            try {
++                File file = cacheFile();
++                File sig = new File(file.getPath() + ".sig");
++                if (file.exists() && sig.exists()) {
++                    accept(read(new FileInputStream(file)), new String(read(new FileInputStream(sig)), "UTF-8"), false);
++                }
++            } catch (Throwable e) {
++                FileLog.e(e);
++            }
++            refreshLoop();
++        });
++    }
++
++    private static void refreshLoop() {
++        Utilities.globalQueue.postRunnable(() -> {
++            refresh();
++            AndroidUtilities.runOnUIThread(VoidGramBadges::refreshLoop, 15 * 60 * 1000);
++        });
++    }
++
++    private static void refresh() {
++        HttpURLConnection connection = null;
++        try {
++            connection = (HttpURLConnection) new URL(URL_REGISTRY).openConnection();
++            connection.setConnectTimeout(15000);
++            connection.setReadTimeout(15000);
++            connection.setUseCaches(false);
++            if (connection.getResponseCode() != 200) {
++                return;
++            }
++            String signature = connection.getHeaderField("X-VoidGram-Signature");
++            byte[] data = read(connection.getInputStream());
++            if (signature != null) {
++                accept(data, signature, true);
++            }
++        } catch (Throwable e) {
++            FileLog.e(e);
++        } finally {
++            if (connection != null) {
++                connection.disconnect();
++            }
++        }
++    }
++
++    private static byte[] read(InputStream input) throws Exception {
++        try (InputStream in = input) {
++            ByteArrayOutputStream output = new ByteArrayOutputStream();
++            byte[] buffer = new byte[16384];
++            int count;
++            while ((count = in.read(buffer)) > 0 && output.size() < 8 * 1024 * 1024) {
++                output.write(buffer, 0, count);
++            }
++            return output.toByteArray();
++        }
++    }
++
++    private static boolean verify(byte[] data, String signature) {
++        // Ed25519 is in the platform from Android 13; older versions keep showing no badges.
++        if (Build.VERSION.SDK_INT < 33) {
++            return false;
++        }
++        try {
++            byte[] raw = Base64.decode(PUBLIC_KEY, Base64.DEFAULT);
++            byte[] der = new byte[X509_PREFIX.length + raw.length];
++            System.arraycopy(X509_PREFIX, 0, der, 0, X509_PREFIX.length);
++            System.arraycopy(raw, 0, der, X509_PREFIX.length, raw.length);
++            PublicKey key = KeyFactory.getInstance("Ed25519").generatePublic(new X509EncodedKeySpec(der));
++            Signature verifier = Signature.getInstance("Ed25519");
++            verifier.initVerify(key);
++            verifier.update(data);
++            return verifier.verify(Base64.decode(signature.trim(), Base64.DEFAULT));
++        } catch (Throwable e) {
++            FileLog.e(e);
++            return false;
++        }
++    }
++
++    private static void accept(byte[] data, String signature, boolean save) {
++        try {
++            if (!verify(data, signature)) {
++                return;
++            }
++            JSONObject json = new JSONObject(new String(data, "UTF-8"));
++            if (!"voidgram-badges".equals(json.optString("format"))) {
++                return;
++            }
++            double issued = json.optDouble("issuedAt", 0);
++            if (issued < issuedAt) {
++                return;
++            }
++            JSONArray array = json.optJSONArray("badges");
++            HashMap<Long, Long> parsedBadges = new HashMap<>();
++            HashMap<Long, String> parsedLabels = new HashMap<>();
++            double now = System.currentTimeMillis() / 1000.0;
++            if (array != null) {
++                for (int i = 0; i < array.length(); i++) {
++                    JSONObject badge = array.getJSONObject(i);
++                    long id = badge.optLong("id", 0);
++                    if (id == 0) {
++                        continue;
++                    }
++                    double expires = badge.optDouble("expiresAt", 0);
++                    if (expires > 0 && expires < now) {
++                        continue;
++                    }
++                    long documentId = badge.optLong("documentId", 0);
++                    if (documentId != 0) {
++                        parsedBadges.put(id, documentId);
++                    }
++                    String title = badge.optString("title", "");
++                    JSONObject label = badge.optJSONObject("label");
++                    if (label != null && !label.optString("text", "").isEmpty()) {
++                        title = label.optString("text");
++                    }
++                    if (!title.isEmpty()) {
++                        parsedLabels.put(id, title.length() > 160 ? title.substring(0, 160) : title);
++                    }
++                }
++            }
++            issuedAt = issued;
++            badges = parsedBadges;
++            labels = parsedLabels;
++            if (save) {
++                try (FileOutputStream out = new FileOutputStream(cacheFile())) {
++                    out.write(data);
++                }
++                try (FileOutputStream out = new FileOutputStream(cacheFile().getPath() + ".sig")) {
++                    out.write(signature.getBytes("UTF-8"));
++                }
++            }
++            AndroidUtilities.runOnUIThread(VoidGramBadges::applyToLoadedUsers);
++        } catch (Throwable e) {
++            FileLog.e(e);
++        }
++    }
++
++    private static void applyToLoadedUsers() {
++        for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
++            if (!UserConfig.getInstance(a).isClientActivated()) {
++                continue;
++            }
++            for (Long id : badges.keySet()) {
++                TLRPC.User user = MessagesController.getInstance(a).getUser(id);
++                decorate(user);
++            }
++            NotificationCenter.getInstance(a).postNotificationName(NotificationCenter.updateInterfaces, MessagesController.UPDATE_MASK_EMOJI_STATUS);
++        }
++    }
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChatNotice.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChatNotice.java
 new file mode 100644
@@ -3862,10 +4119,10 @@ index e8deeca..b09cc24 100644
          }
      }
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
-index 1dd2ffe..da32bd8 100644
+index 1dd2ffe..6cacdb9 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
-@@ -458,6 +458,10 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
+@@ -458,6 +458,11 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
          if (Build.VERSION.SDK_INT >= 24) {
              AndroidUtilities.isInMultiwindow = isInMultiWindowMode();
          }
@@ -3873,6 +4130,7 @@ index 1dd2ffe..da32bd8 100644
 +        AndroidUtilities.runOnUIThread(() -> org.telegram.messenger.voidgram.VoidGramAgreement.showIfNeeded(this), 400);
 +        // VoidGram decoy mode: launch splash (double tap opens the second space) or the code lock.
 +        AndroidUtilities.runOnUIThread(() -> org.telegram.messenger.voidgram.VoidGramDecoy.onLaunch(this), 50);
++        org.telegram.messenger.voidgram.VoidGramBadges.start();
          Theme.createCommonChatResources();
          Theme.createDialogsResources(this);
          if (SharedConfig.passcodeHash.length() != 0 && SharedConfig.appLocked) {
@@ -5430,10 +5688,10 @@ index 0000000..61aac10
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
 new file mode 100644
-index 0000000..2861004
+index 0000000..fd65444
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
-@@ -0,0 +1,221 @@
+@@ -0,0 +1,232 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.content.Context;
@@ -5474,6 +5732,7 @@ index 0000000..2861004
 +    private static final int ID_PEERS = 8;
 +    private static final int ID_DECOY = 9;
 +    private static final int ID_MUSIC = 10;
++    private static final int ID_BADGES = 11;
 +
 +    private FrameLayout musicRow;
 +    private TextView musicButton;
@@ -5507,6 +5766,10 @@ index 0000000..2861004
 +        items.add(UItem.asButton(ID_NIGHT, R.drawable.msg_theme, VoidGram.t("Ночной режим плеера", "Player night look"), VoidGramNightLook.modeTitle(VoidGramNightLook.mode())));
 +        items.add(UItem.asCheck(ID_MINI, VoidGram.t("Строка песни в мини-плеере", "Lyrics line in the mini player")).setChecked(VoidGramLyrics.isMiniEnabled()));
 +        items.add(UItem.asShadow(VoidGram.t("Текст песни, свой текст и его правка — в меню плеера (⋮).", "Lyrics, your own text and edits are in the player menu (⋮).")));
++
++        items.add(UItem.asHeader(VoidGram.t("Оформление", "Appearance")));
++        items.add(UItem.asCheck(ID_BADGES, VoidGram.t("Значки VoidGram", "VoidGram badges")).setChecked(org.telegram.messenger.voidgram.VoidGramBadges.isEnabled()));
++        items.add(UItem.asShadow(VoidGram.t("Значки и подписи с сервера VoidGram, рядом с именем у тех, у кого нет своего статуса. Видны только в VoidGram. Иконки приложения VoidGram — в Настройках → Оформление → Иконка.", "Badges and labels from the VoidGram server, next to the name of people without their own status. Visible only in VoidGram. VoidGram app icons are in Settings → Appearance → App icon.")));
 +
 +        items.add(UItem.asHeader(VoidGram.t("Другое", "Other")));
 +        items.add(UItem.asButton(ID_AGREEMENT, R.drawable.msg2_policy, VoidGram.t("Пользовательское соглашение", "User agreement")));
@@ -5634,6 +5897,12 @@ index 0000000..2861004
 +                break;
 +            case ID_MINI:
 +                VoidGramLyrics.setMiniEnabled(!VoidGramLyrics.isMiniEnabled());
++                if (listView != null && listView.adapter != null) {
++                    listView.adapter.update(true);
++                }
++                break;
++            case ID_BADGES:
++                org.telegram.messenger.voidgram.VoidGramBadges.setEnabled(!org.telegram.messenger.voidgram.VoidGramBadges.isEnabled());
 +                if (listView != null && listView.adapter != null) {
 +                    listView.adapter.update(true);
 +                }
