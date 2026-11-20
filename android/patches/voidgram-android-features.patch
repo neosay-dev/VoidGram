@@ -191,6 +191,21 @@ index 15ffee8..afc4c51 100644
      int32_t checkSocketError(int32_t *error);
      void closeSocket(int32_t reason, int32_t error);
      void openConnectionInternal(bool ipv6);
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/FlagSecureReason.java b/TMessagesProj/src/main/java/org/telegram/messenger/FlagSecureReason.java
+index 9b56bbf..277f5d9 100644
+--- a/TMessagesProj/src/main/java/org/telegram/messenger/FlagSecureReason.java
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/FlagSecureReason.java
+@@ -74,6 +74,10 @@ public class FlagSecureReason {
+     }
+ 
+     public static boolean isSecuredNow(Window window) {
++        // VoidGram: screenshots allowed where Telegram forbids them (protected chats and media).
++        if (org.telegram.messenger.voidgram.VoidGramChats.allowScreenshots()) {
++            return false;
++        }
+         return currentSecureReasons != null && currentSecureReasons.get(window) != null;
+     }
+ 
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/LiteMode.java b/TMessagesProj/src/main/java/org/telegram/messenger/LiteMode.java
 index 37619e6..cf72f60 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/LiteMode.java
@@ -234,7 +249,7 @@ index 373e423..9fb14ba 100644
              return false;
          }
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java b/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java
-index ec76835..597c378 100644
+index ec76835..fa13c4c 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java
 @@ -9346,6 +9346,14 @@ public class MessagesController extends BaseController implements NotificationCe
@@ -323,6 +338,17 @@ index ec76835..597c378 100644
          LongSparseArray<ArrayList<Integer>> deletedMessagesFinal = deletedMessages;
          LongSparseArray<ArrayList<Integer>> deletedQuickRepliesMessagesFinal = deletedQuickReplyMessages;
          LongSparseArray<ArrayList<Integer>> scheduledDeletedMessagesFinal = scheduledDeletedMessages;
+@@ -21727,6 +21755,10 @@ public class MessagesController extends BaseController implements NotificationCe
+     }
+ 
+     public SponsoredMessagesInfo getSponsoredMessages(long dialogId) {
++        // VoidGram: no sponsored messages when ads are hidden.
++        if (org.telegram.messenger.voidgram.VoidGramChats.hideAds()) {
++            return null;
++        }
+         SponsoredMessagesInfo info = sponsoredMessages.get(dialogId);
+         if (info != null && (info.loading || Math.abs(SystemClock.elapsedRealtime() - info.loadTime) <= 5 * 60 * 1000)) {
+             return info;
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java b/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
 index 55452d3..1255973 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/SendMessagesHelper.java
@@ -786,6 +812,79 @@ index 0000000..ab39d04
 +
 +    public static String refusalText() {
 +        return VoidGram.t("Предупреждение VoidGram нельзя удалить или открепить. Удалить его может только собеседник.", "The VoidGram notice cannot be deleted or unpinned. Only the other person can delete it.");
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChats.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChats.java
+new file mode 100644
+index 0000000..51e89e5
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramChats.java
+@@ -0,0 +1,67 @@
++package org.telegram.messenger.voidgram;
++
++import android.text.format.DateFormat;
++
++import org.telegram.messenger.ApplicationLoader;
++import org.telegram.messenger.LocaleController;
++
++import java.text.SimpleDateFormat;
++import java.util.Date;
++import java.util.Locale;
++
++/** VoidGram chat and interface options (Settings → VoidGram → Chats). */
++public final class VoidGramChats {
++    private VoidGramChats() {
++    }
++
++    public static boolean timeSeconds() {
++        return VoidGram.prefs().getBoolean("chats_time_seconds", false);
++    }
++
++    public static void setTimeSeconds(boolean value) {
++        VoidGram.prefs().edit().putBoolean("chats_time_seconds", value).apply();
++        secondsFormat = null;
++    }
++
++    public static boolean hideAds() {
++        return VoidGram.prefs().getBoolean("chats_hide_ads", true);
++    }
++
++    public static void setHideAds(boolean value) {
++        VoidGram.prefs().edit().putBoolean("chats_hide_ads", value).apply();
++    }
++
++    public static boolean allowScreenshots() {
++        return VoidGram.prefs().getBoolean("chats_allow_screenshots", false);
++    }
++
++    public static void setAllowScreenshots(boolean value) {
++        VoidGram.prefs().edit().putBoolean("chats_allow_screenshots", value).apply();
++    }
++
++    public static boolean showIds() {
++        return VoidGram.prefs().getBoolean("chats_show_ids", true);
++    }
++
++    public static void setShowIds(boolean value) {
++        VoidGram.prefs().edit().putBoolean("chats_show_ids", value).apply();
++    }
++
++    private static SimpleDateFormat secondsFormat;
++
++    /** A message time, with seconds when asked for. */
++    public static String formatMessageTime(long millis) {
++        if (!timeSeconds()) {
++            return LocaleController.getInstance().getFormatterDay().format(millis);
++        }
++        SimpleDateFormat format = secondsFormat;
++        if (format == null) {
++            boolean is24 = DateFormat.is24HourFormat(ApplicationLoader.applicationContext);
++            format = new SimpleDateFormat(is24 ? "HH:mm:ss" : "h:mm:ss a", Locale.getDefault());
++            secondsFormat = format;
++        }
++        synchronized (format) {
++            return format.format(new Date(millis));
++        }
 +    }
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramDpi.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramDpi.java
@@ -2175,10 +2274,10 @@ index ab54ee3..995933f 100644
      public static native void native_moveDatacenter(int currentAccount, int datacenterId);
      public static native void native_setNetworkAvailable(int currentAccount, boolean value, int networkType, boolean slow);
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Cells/ChatMessageCell.java b/TMessagesProj/src/main/java/org/telegram/ui/Cells/ChatMessageCell.java
-index 5dc090f..46a5378 100644
+index 5dc090f..42ae0c5 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/Cells/ChatMessageCell.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/Cells/ChatMessageCell.java
-@@ -15560,6 +15560,15 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
+@@ -15560,14 +15560,23 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
       * before a cell lays it out (RichWidgetBlock#estimateSafeArea).
       */
      public static String timeString(MessageObject current, MessageObject message, boolean edited, int editDate) {
@@ -2194,20 +2293,50 @@ index 5dc090f..46a5378 100644
          if (current.notime || current.isSponsored() || current.isQuickReply() || current.isWelcomeMessage()) {
              return "";
          } else if (current.scheduled && current.messageOwner.date == 0x7FFFFFFE) {
+             return "";
+         } else if (current.realDate != 0) {
+-            return LocaleController.formatSmallDateChat(current.realDate) + ", " + LocaleController.getInstance().getFormatterDay().format((long) (current.realDate) * 1000);
++            return LocaleController.formatSmallDateChat(current.realDate) + ", " + org.telegram.messenger.voidgram.VoidGramChats.formatMessageTime((long) (current.realDate) * 1000);
+         } else if (current.isRepostPreview) {
+-            return LocaleController.formatSmallDateChat(message.messageOwner.date) + ", " + LocaleController.getInstance().getFormatterDay().format((long) (message.messageOwner.date) * 1000);
++            return LocaleController.formatSmallDateChat(message.messageOwner.date) + ", " + org.telegram.messenger.voidgram.VoidGramChats.formatMessageTime((long) (message.messageOwner.date) * 1000);
+         } else if (edited) {
+             if (AppGlobalConfig.getInstance(current.currentAccount).messagePrimaryEditedDate.get()) {
+                 if (editDate == 0 && current.isEditing()) {
+@@ -15575,7 +15584,7 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
+                 }
+                 return LocaleController.formatPmEditedDate(editDate);
+             }
+-            return getString(R.string.EditedMessage) + " " + LocaleController.getInstance().getFormatterDay().format((long) (message.messageOwner.date) * 1000);
++            return getString(R.string.EditedMessage) + " " + org.telegram.messenger.voidgram.VoidGramChats.formatMessageTime((long) (message.messageOwner.date) * 1000);
+         } else if (current.isSaved && current.messageOwner.fwd_from != null && (current.messageOwner.fwd_from.date != 0 || current.messageOwner.fwd_from.saved_date != 0)
+                 // A widget keeps its time alone in Saved Messages: the pill over its corner stays short.
+                 && !(MessageObject.getMedia(current.messageOwner) instanceof TLRPC.TL_messageMediaWidget)) {
+@@ -15585,7 +15594,7 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
+             }
+             return LocaleController.formatSeenDate(date);
+         }
+-        return LocaleController.getInstance().getFormatterDay().format((long) (message.messageOwner.date) * 1000);
++        return org.telegram.messenger.voidgram.VoidGramChats.formatMessageTime((long) (message.messageOwner.date) * 1000);
+     }
+ 
+     void measureTime(MessageObject messageObject) {
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
-index a54b134..282ae49 100644
+index a54b134..d5c99e7 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
-@@ -1246,6 +1246,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -1246,6 +1246,10 @@ public class ChatActivity extends BaseFragment implements
      public final static int OPTION_DELETE = 1;
      public final static int OPTION_FORWARD = 2;
      public final static int OPTION_COPY = 3;
 +    /** VoidGram: earlier texts of an edited message. */
 +    public final static int OPTION_VOIDGRAM_EDIT_HISTORY = 9101;
++    /** VoidGram: copy the message and chat ids. */
++    public final static int OPTION_VOIDGRAM_COPY_ID = 9102;
      public final static int OPTION_SAVE_TO_GALLERY = 4;
      public final static int OPTION_APPLY_LOCALIZATION_OR_THEME = 5;
      public final static int OPTION_SHARE = 6;
-@@ -1707,6 +1709,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -1707,6 +1711,8 @@ public class ChatActivity extends BaseFragment implements
      private final static int view_as_topics = 59;
  
      private final static int search = 40;
@@ -2216,7 +2345,7 @@ index a54b134..282ae49 100644
  
      private final static int topic_close = 60;
      private final static int open_forum = 61;
-@@ -2835,6 +2839,11 @@ public class ChatActivity extends BaseFragment implements
+@@ -2835,6 +2841,11 @@ public class ChatActivity extends BaseFragment implements
          }
  
          dialog_id_Long = dialog_id;
@@ -2228,7 +2357,7 @@ index a54b134..282ae49 100644
  
          transitionAnimationGlobalIndex = NotificationCenter.getGlobalInstance().setAnimationInProgress(transitionAnimationGlobalIndex, new int[0]);
  
-@@ -3336,8 +3345,16 @@ public class ChatActivity extends BaseFragment implements
+@@ -3336,8 +3347,16 @@ public class ChatActivity extends BaseFragment implements
          }
      }
  
@@ -2245,7 +2374,7 @@ index a54b134..282ae49 100644
          super.onFragmentDestroy();
          if (messageMetricsView != null) {
              messageMetricsView.finish();
-@@ -3988,6 +4005,12 @@ public class ChatActivity extends BaseFragment implements
+@@ -3988,6 +4007,12 @@ public class ChatActivity extends BaseFragment implements
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/help", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
                  } else if (id == bot_settings) {
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/settings", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
@@ -2258,7 +2387,7 @@ index a54b134..282ae49 100644
                  } else if (id == search) {
                      openSearchWithText(isSupportedTags() ? "" : null);
                  } else if (id == translate) {
-@@ -4398,6 +4421,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -4398,6 +4423,9 @@ public class ChatActivity extends BaseFragment implements
              if (searchItem != null) {
                  headerItem.lazilyAddSubItem(search, R.drawable.msg_search, LocaleController.getString(R.string.Search));
              }
@@ -2268,7 +2397,7 @@ index a54b134..282ae49 100644
              if (ChatObject.isBoostSupported(currentChat) && (getUserConfig().isPremium() || ChatObject.isBoosted(chatInfo) || ChatObject.hasAdminRights(currentChat))) {
                  RLottieDrawable drawable = new RLottieDrawable(R.raw.boosts, dp(24), dp(24));
                  headerItem.lazilyAddSubItem(boost_group, drawable, LocaleController.getString(ChatObject.isChannelAndNotMegaGroup(currentChat) ? R.string.BoostingBoostChannelMenu : R.string.BoostingBoostGroupMenu));
-@@ -31957,6 +31983,12 @@ public class ChatActivity extends BaseFragment implements
+@@ -31957,6 +31985,17 @@ public class ChatActivity extends BaseFragment implements
                  icons.add(R.drawable.msg_calendar2);
              }
  
@@ -2278,15 +2407,27 @@ index a54b134..282ae49 100644
 +                options.add(OPTION_VOIDGRAM_EDIT_HISTORY);
 +                icons.add(R.drawable.msg_edit);
 +            }
++            if (message != null && message.getId() > 0 && org.telegram.messenger.voidgram.VoidGramChats.showIds()) {
++                items.add("ID " + message.getId());
++                options.add(OPTION_VOIDGRAM_COPY_ID);
++                icons.add(R.drawable.msg_copy);
++            }
              if (options.isEmpty() && optionsView == null) {
                  return false;
              }
-@@ -34293,6 +34325,10 @@ public class ChatActivity extends BaseFragment implements
+@@ -34293,6 +34332,17 @@ public class ChatActivity extends BaseFragment implements
          }
          boolean preserveDim = false;
          switch (option) {
 +            case OPTION_VOIDGRAM_EDIT_HISTORY: {
 +                org.telegram.messenger.voidgram.VoidGramHistory.showEdits(this, selectedObject);
++                break;
++            }
++            case OPTION_VOIDGRAM_COPY_ID: {
++                long fromId = selectedObject.getFromChatId();
++                String ids = "message " + selectedObject.getId() + "\nchat " + dialog_id + (fromId != 0 ? "\nfrom " + fromId : "");
++                AndroidUtilities.addToClipboard(ids);
++                BulletinFactory.of(ChatActivity.this).createCopyBulletin(org.telegram.messenger.voidgram.VoidGram.t("ID скопированы", "IDs copied")).show();
 +                break;
 +            }
              case OPTION_RETRY: {
@@ -2429,6 +2570,54 @@ index 1dd2ffe..71d988a 100644
          Theme.createCommonChatResources();
          Theme.createDialogsResources(this);
          if (SharedConfig.passcodeHash.length() != 0 && SharedConfig.appLocked) {
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/PhotoViewer.java b/TMessagesProj/src/main/java/org/telegram/ui/PhotoViewer.java
+index 1e4ad20..7788ee2 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/PhotoViewer.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/PhotoViewer.java
+@@ -17453,11 +17453,11 @@ public class PhotoViewer implements NotificationCenter.NotificationCenterDelegat
+                 WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR |
+                 WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM |
+                 WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS;
+-            if (chatActivity != null && chatActivity.getCurrentEncryptedChat() != null ||
++            if (!org.telegram.messenger.voidgram.VoidGramChats.allowScreenshots() && (chatActivity != null && chatActivity.getCurrentEncryptedChat() != null ||
+                 avatarsDialogId != 0 && MessagesController.getInstance(currentAccount).isPeerNoForwards(avatarsDialogId) ||
+                 messageObject != null && (MessagesController.getInstance(currentAccount).isPeerNoForwards(messageObject.getDialogId()) ||
+                 (messageObject.messageOwner != null && messageObject.messageOwner.noforwards)) || messageObject != null && messageObject.hasRevealedExtendedMedia() ||
+-                isPageBlocksNoForwards(pageBlocksAdapter)
++                isPageBlocksNoForwards(pageBlocksAdapter))
+             ) {
+                 windowLayoutParams.flags |= WindowManager.LayoutParams.FLAG_SECURE;
+                 AndroidUtilities.logFlagSecure();
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/SecretMediaViewer.java b/TMessagesProj/src/main/java/org/telegram/ui/SecretMediaViewer.java
+index 5e211b7..3bad9c9 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/SecretMediaViewer.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/SecretMediaViewer.java
+@@ -965,7 +965,9 @@ public class SecretMediaViewer implements NotificationCenter.NotificationCenterD
+                 WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR |
+                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+                 WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS;
+-        windowLayoutParams.flags |= WindowManager.LayoutParams.FLAG_SECURE;
++        if (!org.telegram.messenger.voidgram.VoidGramChats.allowScreenshots()) {
++            windowLayoutParams.flags |= WindowManager.LayoutParams.FLAG_SECURE;
++        }
+         AndroidUtilities.logFlagSecure();
+         centerImage.setParentView(containerView);
+         centerImage.setForceCrossfade(true);
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/SecretVoicePlayer.java b/TMessagesProj/src/main/java/org/telegram/ui/SecretVoicePlayer.java
+index 49921be..9e87b97 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/SecretVoicePlayer.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/SecretVoicePlayer.java
+@@ -240,7 +240,9 @@ public class SecretVoicePlayer extends Dialog {
+             WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS |
+             WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION;
+         if (!BuildVars.DEBUG_PRIVATE_VERSION) {
+-            params.flags |= WindowManager.LayoutParams.FLAG_SECURE;
++            if (!org.telegram.messenger.voidgram.VoidGramChats.allowScreenshots()) {
++                params.flags |= WindowManager.LayoutParams.FLAG_SECURE;
++            }
+             AndroidUtilities.logFlagSecure();
+         }
+         params.flags |= WindowManager.LayoutParams.FLAG_FULLSCREEN;
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
 index e2b917b..050a7c7 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
@@ -2453,6 +2642,69 @@ index e2b917b..050a7c7 100644
              case 1:
                  presentSettingFragment(new UserInfoActivity());
                  break;
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java
+new file mode 100644
+index 0000000..465ffe7
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java
+@@ -0,0 +1,57 @@
++package org.telegram.ui.voidgram;
++
++import android.view.View;
++
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramChats;
++import org.telegram.ui.Components.UItem;
++import org.telegram.ui.Components.UniversalAdapter;
++import org.telegram.ui.Components.UniversalFragment;
++
++import java.util.ArrayList;
++
++/** VoidGram → Chats: timestamps, ads, screenshots, ids. */
++public class VoidGramChatsActivity extends UniversalFragment {
++    private static final int ID_SECONDS = 1;
++    private static final int ID_ADS = 2;
++    private static final int ID_SCREENSHOTS = 3;
++    private static final int ID_IDS = 4;
++
++    @Override
++    protected CharSequence getTitle() {
++        return VoidGram.t("Чаты", "Chats");
++    }
++
++    @Override
++    protected void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
++        items.add(UItem.asHeader(VoidGram.t("Сообщения", "Messages")));
++        items.add(UItem.asCheck(ID_SECONDS, VoidGram.t("Секунды во времени сообщений", "Seconds in message times")).setChecked(VoidGramChats.timeSeconds()));
++        items.add(UItem.asCheck(ID_IDS, VoidGram.t("ID в меню сообщения", "IDs in the message menu")).setChecked(VoidGramChats.showIds()));
++        items.add(UItem.asShadow(VoidGram.t("«ID» копирует номер сообщения, чата и автора.", "\"ID\" copies the message, chat and author numbers.")));
++        items.add(UItem.asHeader(VoidGram.t("Каналы", "Channels")));
++        items.add(UItem.asCheck(ID_ADS, VoidGram.t("Скрывать рекламу", "Hide sponsored messages")).setChecked(VoidGramChats.hideAds()));
++        items.add(UItem.asShadow(null));
++        items.add(UItem.asHeader(VoidGram.t("Защищённый контент", "Protected content")));
++        items.add(UItem.asCheck(ID_SCREENSHOTS, VoidGram.t("Разрешить скриншоты везде", "Allow screenshots everywhere")).setChecked(VoidGramChats.allowScreenshots()));
++        items.add(UItem.asShadow(VoidGram.t("Снимает запрет скриншотов в защищённых чатах, секретных чатах и одноразовых медиа. Собеседник об этом не узнает — пользуйтесь честно.", "Lifts the screenshot ban in protected chats, secret chats and view-once media. The other side is not told — use it fairly.")));
++    }
++
++    @Override
++    protected void onClick(UItem item, View view, int position, float x, float y) {
++        switch (item.id) {
++            case ID_SECONDS: VoidGramChats.setTimeSeconds(!VoidGramChats.timeSeconds()); break;
++            case ID_ADS: VoidGramChats.setHideAds(!VoidGramChats.hideAds()); break;
++            case ID_SCREENSHOTS: VoidGramChats.setAllowScreenshots(!VoidGramChats.allowScreenshots()); break;
++            case ID_IDS: VoidGramChats.setShowIds(!VoidGramChats.showIds()); break;
++            default: return;
++        }
++        if (listView != null && listView.adapter != null) {
++            listView.adapter.update(true);
++        }
++    }
++
++    @Override
++    protected boolean onLongClick(UItem item, View view, int position, float x, float y) {
++        return false;
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramDpiActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramDpiActivity.java
 new file mode 100644
 index 0000000..44df62b
@@ -3216,10 +3468,10 @@ index 0000000..61aac10
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
 new file mode 100644
-index 0000000..282c92a
+index 0000000..68bc20a
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
-@@ -0,0 +1,201 @@
+@@ -0,0 +1,206 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.content.Context;
@@ -3256,6 +3508,7 @@ index 0000000..282c92a
 +    private static final int ID_MINI = 4;
 +    private static final int ID_AGREEMENT = 5;
 +    private static final int ID_GHOST = 6;
++    private static final int ID_CHATS = 7;
 +
 +    private FrameLayout musicRow;
 +    private TextView musicButton;
@@ -3270,7 +3523,8 @@ index 0000000..282c92a
 +    protected void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
 +        items.add(UItem.asHeader(VoidGram.t("Приватность", "Privacy")));
 +        items.add(UItem.asButton(ID_GHOST, R.drawable.msg2_secret, VoidGram.t("Призрак и история", "Ghost and history"), org.telegram.messenger.voidgram.VoidGramGhost.isEnabled(currentAccount) ? VoidGram.t("Призрак вкл.", "Ghost on") : VoidGram.t("Выкл.", "Off")));
-+        items.add(UItem.asShadow(VoidGram.t("Режим призрака, удалённые сообщения и история изменений.", "Ghost Mode, deleted messages and edit history.")));
++        items.add(UItem.asButton(ID_CHATS, R.drawable.msg2_discussion, VoidGram.t("Чаты", "Chats")));
++        items.add(UItem.asShadow(VoidGram.t("Режим призрака, удалённые сообщения, история изменений, реклама, скриншоты, секунды и ID.", "Ghost Mode, deleted messages, edit history, ads, screenshots, seconds and IDs.")));
 +
 +        items.add(UItem.asHeader(VoidGram.t("Сеть", "Network")));
 +        items.add(UItem.asButton(ID_DPI, R.drawable.msg2_data, VoidGram.t("Обход блокировок", "Bypass blocking"), VoidGramDpi.isEnabled() ? VoidGramDpi.presetTitle(VoidGramDpi.preset()) : VoidGram.t("Выкл.", "Off")));
@@ -3386,6 +3640,9 @@ index 0000000..282c92a
 +    @Override
 +    protected void onClick(UItem item, View view, int position, float x, float y) {
 +        switch (item.id) {
++            case ID_CHATS:
++                presentFragment(new VoidGramChatsActivity());
++                break;
 +            case ID_GHOST:
 +                presentFragment(new VoidGramGhostActivity());
 +                break;
