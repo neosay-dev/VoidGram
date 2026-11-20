@@ -1238,7 +1238,7 @@ index 2b152e6a..05e441ca 100644
      private func showLock() {
 diff --git a/submodules/TelegramUI/Sources/AyuLicenseAgreement.swift b/submodules/TelegramUI/Sources/AyuLicenseAgreement.swift
 new file mode 100644
-index 00000000..f1fe2b83
+index 00000000..7e5c3ddb
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuLicenseAgreement.swift
 @@ -0,0 +1,308 @@
@@ -1387,7 +1387,7 @@ index 00000000..f1fe2b83
 +    }
 +}
 +
-+final class AyuLicenseAgreementView: UIView, UIScrollViewDelegate {
++final class AyuLicenseAgreementView: UIView, UITextViewDelegate {
 +    var accepted: (() -> Void)?
 +
 +    private let russian: Bool
