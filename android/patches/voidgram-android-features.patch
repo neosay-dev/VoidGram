@@ -2143,6 +2143,148 @@ index 0000000..1e6ea0f
 +        }
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPeerArchive.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPeerArchive.java
+new file mode 100644
+index 0000000..dc79878
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPeerArchive.java
+@@ -0,0 +1,136 @@
++package org.telegram.messenger.voidgram;
++
++import android.content.ContentValues;
++import android.content.Context;
++import android.database.Cursor;
++import android.database.sqlite.SQLiteDatabase;
++import android.database.sqlite.SQLiteOpenHelper;
++
++import org.telegram.messenger.ApplicationLoader;
++import org.telegram.messenger.ContactsController;
++import org.telegram.messenger.FileLog;
++import org.telegram.messenger.UserConfig;
++import org.telegram.messenger.UserObject;
++import org.telegram.messenger.Utilities;
++import org.telegram.tgnet.TLRPC;
++
++import java.util.ArrayList;
++
++/**
++ * VoidGram peer archive, as on iOS: every opened chat's id, name and username are kept, so a saved
++ * id still resolves to a name after the account or channel is deleted.
++ */
++public final class VoidGramPeerArchive {
++    public static final class Entry {
++        public final long dialogId;
++        public final String title;
++        public final String username;
++        public final int seen;
++
++        Entry(long dialogId, String title, String username, int seen) {
++            this.dialogId = dialogId;
++            this.title = title;
++            this.username = username;
++            this.seen = seen;
++        }
++    }
++
++    private static final class Db extends SQLiteOpenHelper {
++        Db(Context context, int account) {
++            super(context, "voidgram_peers_" + account + ".db", null, 1);
++        }
++
++        @Override
++        public void onCreate(SQLiteDatabase db) {
++            db.execSQL("CREATE TABLE peers (dialog INTEGER PRIMARY KEY, title TEXT, username TEXT, seen INTEGER)");
++        }
++
++        @Override
++        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
++        }
++    }
++
++    private static final Db[] databases = new Db[UserConfig.MAX_ACCOUNT_COUNT];
++
++    private VoidGramPeerArchive() {
++    }
++
++    private static synchronized Db db(int account) {
++        if (databases[account] == null) {
++            databases[account] = new Db(ApplicationLoader.applicationContext, account);
++        }
++        return databases[account];
++    }
++
++    public static void record(int account, TLRPC.User user, TLRPC.Chat chat) {
++        final long dialogId;
++        final String title;
++        final String username;
++        if (user != null) {
++            if (UserObject.isDeleted(user)) {
++                return;
++            }
++            dialogId = user.id;
++            title = ContactsController.formatName(user.first_name, user.last_name);
++            username = UserObject.getPublicUsername(user);
++        } else if (chat != null) {
++            dialogId = -chat.id;
++            title = chat.title;
++            username = org.telegram.messenger.ChatObject.getPublicUsername(chat);
++        } else {
++            return;
++        }
++        final int now = (int) (System.currentTimeMillis() / 1000);
++        Utilities.globalQueue.postRunnable(() -> {
++            try {
++                ContentValues values = new ContentValues();
++                values.put("dialog", dialogId);
++                values.put("title", title);
++                values.put("username", username);
++                values.put("seen", now);
++                db(account).getWritableDatabase().insertWithOnConflict("peers", null, values, SQLiteDatabase.CONFLICT_REPLACE);
++            } catch (Throwable e) {
++                FileLog.e(e);
++            }
++        });
++    }
++
++    /** Entries whose name, username or id contain `query` (all of them for an empty query), newest first. */
++    public static ArrayList<Entry> search(int account, String query, int limit) {
++        ArrayList<Entry> result = new ArrayList<>();
++        Cursor cursor = null;
++        try {
++            String q = query == null ? "" : query.trim().replace("@", "");
++            String like = "%" + q.replace("%", "").replace("_", "") + "%";
++            cursor = db(account).getReadableDatabase().rawQuery("SELECT dialog, title, username, seen FROM peers WHERE ? = '' OR title LIKE ? OR username LIKE ? OR CAST(dialog AS TEXT) LIKE ? ORDER BY seen DESC LIMIT " + limit, new String[]{q, like, like, like});
++            while (cursor.moveToNext()) {
++                result.add(new Entry(cursor.getLong(0), cursor.getString(1), cursor.getString(2), cursor.getInt(3)));
++            }
++        } catch (Throwable e) {
++            FileLog.e(e);
++        } finally {
++            if (cursor != null) {
++                cursor.close();
++            }
++        }
++        return result;
++    }
++
++    public static boolean isEnabled() {
++        return VoidGram.prefs().getBoolean("peer_archive", true);
++    }
++
++    public static void setEnabled(boolean value) {
++        VoidGram.prefs().edit().putBoolean("peer_archive", value).apply();
++    }
++
++    public static void clear(int account) {
++        Utilities.globalQueue.postRunnable(() -> {
++            try {
++                db(account).getWritableDatabase().delete("peers", null, null);
++            } catch (Throwable e) {
++                FileLog.e(e);
++            }
++        });
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPowerSaving.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramPowerSaving.java
 new file mode 100644
 index 0000000..1c47394
@@ -2458,7 +2600,7 @@ index 5dc090f..42ae0c5 100644
  
      void measureTime(MessageObject messageObject) {
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
-index a54b134..916b85d 100644
+index a54b134..5af1667 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java
 @@ -1246,6 +1246,10 @@ public class ChatActivity extends BaseFragment implements
@@ -2481,11 +2623,15 @@ index a54b134..916b85d 100644
  
      private final static int topic_close = 60;
      private final static int open_forum = 61;
-@@ -2835,6 +2841,11 @@ public class ChatActivity extends BaseFragment implements
+@@ -2835,6 +2841,15 @@ public class ChatActivity extends BaseFragment implements
          }
  
          dialog_id_Long = dialog_id;
 +        org.telegram.messenger.voidgram.VoidGramHistory.addListener(voidgramHistoryListener);
++        // VoidGram: keep the chat's name, so its id still resolves after it is deleted.
++        if (org.telegram.messenger.voidgram.VoidGramPeerArchive.isEnabled()) {
++            org.telegram.messenger.voidgram.VoidGramPeerArchive.record(currentAccount, currentUser, currentChat);
++        }
 +        // VoidGram: put the privacy notice back on top if its pin was removed.
 +        if (DialogObject.isUserDialog(dialog_id)) {
 +            org.telegram.messenger.voidgram.VoidGramChatNotice.ensurePinned(currentAccount, dialog_id);
@@ -2493,7 +2639,7 @@ index a54b134..916b85d 100644
  
          transitionAnimationGlobalIndex = NotificationCenter.getGlobalInstance().setAnimationInProgress(transitionAnimationGlobalIndex, new int[0]);
  
-@@ -3336,8 +3347,16 @@ public class ChatActivity extends BaseFragment implements
+@@ -3336,8 +3351,16 @@ public class ChatActivity extends BaseFragment implements
          }
      }
  
@@ -2510,7 +2656,7 @@ index a54b134..916b85d 100644
          super.onFragmentDestroy();
          if (messageMetricsView != null) {
              messageMetricsView.finish();
-@@ -3988,6 +4007,12 @@ public class ChatActivity extends BaseFragment implements
+@@ -3988,6 +4011,12 @@ public class ChatActivity extends BaseFragment implements
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/help", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
                  } else if (id == bot_settings) {
                      getSendMessagesHelper().sendMessage(SendMessagesHelper.SendMessageParams.of("/settings", dialog_id, null, null, null, false, null, null, null, true, 0, 0, null, false));
@@ -2523,7 +2669,7 @@ index a54b134..916b85d 100644
                  } else if (id == search) {
                      openSearchWithText(isSupportedTags() ? "" : null);
                  } else if (id == translate) {
-@@ -4398,6 +4423,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -4398,6 +4427,9 @@ public class ChatActivity extends BaseFragment implements
              if (searchItem != null) {
                  headerItem.lazilyAddSubItem(search, R.drawable.msg_search, LocaleController.getString(R.string.Search));
              }
@@ -2533,7 +2679,7 @@ index a54b134..916b85d 100644
              if (ChatObject.isBoostSupported(currentChat) && (getUserConfig().isPremium() || ChatObject.isBoosted(chatInfo) || ChatObject.hasAdminRights(currentChat))) {
                  RLottieDrawable drawable = new RLottieDrawable(R.raw.boosts, dp(24), dp(24));
                  headerItem.lazilyAddSubItem(boost_group, drawable, LocaleController.getString(ChatObject.isChannelAndNotMegaGroup(currentChat) ? R.string.BoostingBoostChannelMenu : R.string.BoostingBoostGroupMenu));
-@@ -21371,7 +21399,8 @@ public class ChatActivity extends BaseFragment implements
+@@ -21371,7 +21403,8 @@ public class ChatActivity extends BaseFragment implements
          if (postponedScroll) {
              postponedScrollToLastMessageQueryIndex = 0;
          }
@@ -2543,7 +2689,7 @@ index a54b134..916b85d 100644
          layOutWidgetsForSideMenu(messArr);
  
          boolean universalNotify = false;
-@@ -22807,8 +22836,9 @@ public class ChatActivity extends BaseFragment implements
+@@ -22807,8 +22840,9 @@ public class ChatActivity extends BaseFragment implements
          } else if (id == NotificationCenter.didReceiveNewMessages) {
              FileLog.d("ChatActivity didReceiveNewMessages start");
              long did = (Long) args[0];
@@ -2554,7 +2700,7 @@ index a54b134..916b85d 100644
              if (did == dialog_id) {
                  boolean scheduled = (Boolean) args[2];
                  int mode = (Integer) args[3];
-@@ -31957,6 +31987,17 @@ public class ChatActivity extends BaseFragment implements
+@@ -31957,6 +31991,17 @@ public class ChatActivity extends BaseFragment implements
                  icons.add(R.drawable.msg_calendar2);
              }
  
@@ -2572,7 +2718,7 @@ index a54b134..916b85d 100644
              if (options.isEmpty() && optionsView == null) {
                  return false;
              }
-@@ -34293,6 +34334,17 @@ public class ChatActivity extends BaseFragment implements
+@@ -34293,6 +34338,17 @@ public class ChatActivity extends BaseFragment implements
          }
          boolean preserveDim = false;
          switch (option) {
@@ -3532,6 +3678,212 @@ index 0000000..1c86390
 +        return false;
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramPeerSearchActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramPeerSearchActivity.java
+new file mode 100644
+index 0000000..561c342
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramPeerSearchActivity.java
+@@ -0,0 +1,200 @@
++package org.telegram.ui.voidgram;
++
++import android.content.Context;
++import android.text.Editable;
++import android.text.InputType;
++import android.text.TextWatcher;
++import android.util.TypedValue;
++import android.view.View;
++import android.widget.EditText;
++import android.widget.FrameLayout;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.MessagesController;
++import org.telegram.messenger.Utilities;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramPeerArchive;
++import org.telegram.ui.ActionBar.AlertDialog;
++import org.telegram.ui.ActionBar.Theme;
++import org.telegram.ui.ChatActivity;
++import org.telegram.ui.Components.BulletinFactory;
++import org.telegram.ui.Components.LayoutHelper;
++import org.telegram.ui.Components.UItem;
++import org.telegram.ui.Components.UniversalAdapter;
++import org.telegram.ui.Components.UniversalFragment;
++
++import java.util.ArrayList;
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
++
++/** VoidGram → Find channels and people: @username, t.me links, ids, and the archive of opened chats. */
++public class VoidGramPeerSearchActivity extends UniversalFragment {
++    private static final int ID_OPEN_USERNAME = 1;
++    private static final int ID_OPEN_ID = 2;
++    private static final int ID_ARCHIVE = 3;
++    private static final int ID_CLEAR = 4;
++    private static final int ID_ENTRY_BASE = 1000;
++    private static final Pattern LINK = Pattern.compile("(?:https?://)?(?:t\\.me|telegram\\.me)/([A-Za-z0-9_]{4,32})", Pattern.CASE_INSENSITIVE);
++
++    private FrameLayout fieldRow;
++    private EditText field;
++    private String query = "";
++    private ArrayList<VoidGramPeerArchive.Entry> entries = new ArrayList<>();
++    private int searchGeneration;
++
++    @Override
++    protected CharSequence getTitle() {
++        return VoidGram.t("Поиск каналов и людей", "Find channels and people");
++    }
++
++    @Override
++    public boolean onFragmentCreate() {
++        reload();
++        return super.onFragmentCreate();
++    }
++
++    private View fieldRow() {
++        if (fieldRow != null) {
++            AndroidUtilities.removeFromParent(fieldRow);
++            return fieldRow;
++        }
++        Context context = getContext();
++        fieldRow = new FrameLayout(context);
++        fieldRow.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite));
++        field = new EditText(context);
++        field.setHint(VoidGram.t("@username, ссылка t.me, ID или имя", "@username, t.me link, ID or name"));
++        field.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
++        field.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
++        field.setHintTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteHintText));
++        field.setSingleLine(true);
++        field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
++        field.addTextChangedListener(new TextWatcher() {
++            @Override
++            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
++            }
++
++            @Override
++            public void onTextChanged(CharSequence s, int start, int before, int count) {
++            }
++
++            @Override
++            public void afterTextChanged(Editable s) {
++                query = s.toString().trim();
++                reload();
++            }
++        });
++        fieldRow.addView(field, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 16, 6, 16, 6));
++        return fieldRow;
++    }
++
++    private void reload() {
++        final int generation = ++searchGeneration;
++        final String q = query;
++        Utilities.globalQueue.postRunnable(() -> {
++            ArrayList<VoidGramPeerArchive.Entry> found = VoidGramPeerArchive.search(currentAccount, q, 100);
++            AndroidUtilities.runOnUIThread(() -> {
++                if (generation != searchGeneration) {
++                    return;
++                }
++                entries = found;
++                if (listView != null && listView.adapter != null) {
++                    listView.adapter.update(true);
++                }
++            });
++        });
++    }
++
++    private String username() {
++        Matcher matcher = LINK.matcher(query);
++        if (matcher.find()) {
++            return matcher.group(1);
++        }
++        String value = query.startsWith("@") ? query.substring(1) : query;
++        return value.matches("[A-Za-z][A-Za-z0-9_]{3,31}") ? value : null;
++    }
++
++    private Long numericId() {
++        try {
++            return query.matches("-?\\d{4,20}") ? Long.parseLong(query) : null;
++        } catch (NumberFormatException e) {
++            return null;
++        }
++    }
++
++    @Override
++    protected void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
++        items.add(UItem.asCustom(fieldRow()));
++        String username = username();
++        Long id = numericId();
++        if (username != null) {
++            items.add(UItem.asButton(ID_OPEN_USERNAME, VoidGram.t("Открыть @", "Open @") + username).accent());
++        }
++        if (id != null) {
++            items.add(UItem.asButton(ID_OPEN_ID, VoidGram.t("Открыть по ID ", "Open by ID ") + id).accent());
++        }
++        items.add(UItem.asShadow(VoidGram.t("Ссылки t.me и @username открываются напрямую. ID открывается, если чат уже встречался.", "t.me links and @usernames open directly. An ID opens when the chat has been seen before.")));
++        items.add(UItem.asHeader(VoidGram.t("Архив открытых чатов", "Archive of opened chats")));
++        for (int i = 0; i < entries.size(); i++) {
++            VoidGramPeerArchive.Entry entry = entries.get(i);
++            String value = entry.username != null && !entry.username.isEmpty() ? "@" + entry.username : String.valueOf(entry.dialogId);
++            items.add(UItem.asButton(ID_ENTRY_BASE + i, entry.title == null ? String.valueOf(entry.dialogId) : entry.title, value));
++        }
++        if (entries.isEmpty()) {
++            items.add(UItem.asShadow(VoidGram.t("Пока пусто: сюда попадают чаты, которые вы открываете.", "Empty for now: chats you open land here.")));
++        } else {
++            items.add(UItem.asShadow(null));
++        }
++        items.add(UItem.asCheck(ID_ARCHIVE, VoidGram.t("Вести архив", "Keep the archive")).setChecked(VoidGramPeerArchive.isEnabled()));
++        items.add(UItem.asButton(ID_CLEAR, VoidGram.t("Очистить архив", "Clear the archive")).red());
++        items.add(UItem.asShadow(VoidGram.t("Хранится только на этом устройстве. Имя удалённого аккаунта или канала остаётся по его ID.", "Stored on this device only. A deleted account's or channel's name stays under its ID.")));
++    }
++
++    private void openDialog(long dialogId, String fallbackTitle) {
++        MessagesController controller = getMessagesController();
++        boolean known = dialogId > 0 ? controller.getUser(dialogId) != null : controller.getChat(-dialogId) != null;
++        if (known) {
++            presentFragment(ChatActivity.of(dialogId));
++            return;
++        }
++        AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
++        builder.setTitle(fallbackTitle != null ? fallbackTitle : String.valueOf(dialogId));
++        builder.setMessage(VoidGram.t("Этот чат сейчас недоступен (удалён, скрыт или ещё не загружен). ID: ", "This chat is not available now (deleted, hidden or not loaded yet). ID: ") + dialogId);
++        builder.setPositiveButton(VoidGram.t("Скопировать ID", "Copy ID"), (dialog, which) -> {
++            AndroidUtilities.addToClipboard(String.valueOf(dialogId));
++            BulletinFactory.of(this).createCopyBulletin(VoidGram.t("ID скопирован", "ID copied")).show();
++        });
++        builder.setNegativeButton("OK", null);
++        showDialog(builder.create());
++    }
++
++    @Override
++    protected void onClick(UItem item, View view, int position, float x, float y) {
++        int id = item.id;
++        if (id == ID_OPEN_USERNAME) {
++            String username = username();
++            if (username != null) {
++                getMessagesController().openByUserName(username, this, 0);
++            }
++        } else if (id == ID_OPEN_ID) {
++            Long dialogId = numericId();
++            if (dialogId != null) {
++                openDialog(dialogId, null);
++            }
++        } else if (id == ID_ARCHIVE) {
++            VoidGramPeerArchive.setEnabled(!VoidGramPeerArchive.isEnabled());
++            listView.adapter.update(true);
++        } else if (id == ID_CLEAR) {
++            VoidGramPeerArchive.clear(currentAccount);
++            entries = new ArrayList<>();
++            listView.adapter.update(true);
++        } else if (id >= ID_ENTRY_BASE && id < ID_ENTRY_BASE + entries.size()) {
++            VoidGramPeerArchive.Entry entry = entries.get(id - ID_ENTRY_BASE);
++            openDialog(entry.dialogId, entry.title);
++        }
++    }
++
++    @Override
++    protected boolean onLongClick(UItem item, View view, int position, float x, float y) {
++        return false;
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramPowerSavingActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramPowerSavingActivity.java
 new file mode 100644
 index 0000000..61aac10
@@ -3659,10 +4011,10 @@ index 0000000..61aac10
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
 new file mode 100644
-index 0000000..68bc20a
+index 0000000..69a4eb9
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,211 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.content.Context;
@@ -3700,6 +4052,7 @@ index 0000000..68bc20a
 +    private static final int ID_AGREEMENT = 5;
 +    private static final int ID_GHOST = 6;
 +    private static final int ID_CHATS = 7;
++    private static final int ID_PEERS = 8;
 +
 +    private FrameLayout musicRow;
 +    private TextView musicButton;
@@ -3715,6 +4068,7 @@ index 0000000..68bc20a
 +        items.add(UItem.asHeader(VoidGram.t("Приватность", "Privacy")));
 +        items.add(UItem.asButton(ID_GHOST, R.drawable.msg2_secret, VoidGram.t("Призрак и история", "Ghost and history"), org.telegram.messenger.voidgram.VoidGramGhost.isEnabled(currentAccount) ? VoidGram.t("Призрак вкл.", "Ghost on") : VoidGram.t("Выкл.", "Off")));
 +        items.add(UItem.asButton(ID_CHATS, R.drawable.msg2_discussion, VoidGram.t("Чаты", "Chats")));
++        items.add(UItem.asButton(ID_PEERS, R.drawable.msg_search, VoidGram.t("Поиск каналов и людей", "Find channels and people")));
 +        items.add(UItem.asShadow(VoidGram.t("Режим призрака, удалённые сообщения, история изменений, реклама, скриншоты, секунды и ID.", "Ghost Mode, deleted messages, edit history, ads, screenshots, seconds and IDs.")));
 +
 +        items.add(UItem.asHeader(VoidGram.t("Сеть", "Network")));
@@ -3831,6 +4185,9 @@ index 0000000..68bc20a
 +    @Override
 +    protected void onClick(UItem item, View view, int position, float x, float y) {
 +        switch (item.id) {
++            case ID_PEERS:
++                presentFragment(new VoidGramPeerSearchActivity());
++                break;
 +            case ID_CHATS:
 +                presentFragment(new VoidGramChatsActivity());
 +                break;
