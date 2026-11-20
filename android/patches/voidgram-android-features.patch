@@ -233,6 +233,21 @@ index 37619e6..cf72f60 100644
          final int level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
          final int scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
          if (level >= 0 && scale > 0) {
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java b/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java
+index b1e2120..c4c07f6 100644
+--- a/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/MediaController.java
+@@ -5570,7 +5570,9 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
+         ignoreOnPause = false;
+     }
+ 
+-    public void stopRecording(final int send, boolean notify, int scheduleDate, boolean once, long payStars) {
++    public void stopRecording(final int sendRequested, boolean notify, int scheduleDate, boolean once, long payStars) {
++        // VoidGram: a finished voice message opens in preview instead of going out at once.
++        final int send = sendRequested == 1 && org.telegram.messenger.voidgram.VoidGramSending.previewVoice() && !(audioRecorderV2Controller != null && audioRecorderV2Controller.isPreviewing()) ? 2 : sendRequested;
+         if (audioRecorderV2Active) {
+             stopRecordingV2(send, notify, scheduleDate, once, payStars);
+             return;
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/MessageObject.java b/TMessagesProj/src/main/java/org/telegram/messenger/MessageObject.java
 index 373e423..9fb14ba 100644
 --- a/TMessagesProj/src/main/java/org/telegram/messenger/MessageObject.java
@@ -2529,6 +2544,73 @@ index 0000000..1c47394
 +        return snapMask;
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramSending.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramSending.java
+new file mode 100644
+index 0000000..db8c2e1
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramSending.java
+@@ -0,0 +1,61 @@
++package org.telegram.messenger.voidgram;
++
++import android.content.Context;
++
++import org.telegram.ui.ActionBar.AlertDialog;
++
++/**
++ * VoidGram sending options, as on iOS: confirm sticker and GIF sends, and show a preview of a
++ * voice message before it goes out. All off by default.
++ */
++public final class VoidGramSending {
++    /** Set while a confirmed send runs, so the confirmation is not asked again. */
++    public static boolean confirmed;
++
++    private VoidGramSending() {
++    }
++
++    public static boolean confirmStickers() {
++        return VoidGram.prefs().getBoolean("send_confirm_stickers", false);
++    }
++
++    public static void setConfirmStickers(boolean value) {
++        VoidGram.prefs().edit().putBoolean("send_confirm_stickers", value).apply();
++    }
++
++    public static boolean confirmGifs() {
++        return VoidGram.prefs().getBoolean("send_confirm_gifs", false);
++    }
++
++    public static void setConfirmGifs(boolean value) {
++        VoidGram.prefs().edit().putBoolean("send_confirm_gifs", value).apply();
++    }
++
++    public static boolean previewVoice() {
++        return VoidGram.prefs().getBoolean("send_preview_voice", false);
++    }
++
++    public static void setPreviewVoice(boolean value) {
++        VoidGram.prefs().edit().putBoolean("send_preview_voice", value).apply();
++    }
++
++    /** Asks before a send; `send` runs (with `confirmed` set) when the user agrees. */
++    public static void confirm(Context context, String question, Runnable send) {
++        if (context == null) {
++            send.run();
++            return;
++        }
++        AlertDialog.Builder builder = new AlertDialog.Builder(context);
++        builder.setTitle(question);
++        builder.setPositiveButton(VoidGram.t("Отправить", "Send"), (dialog, which) -> {
++            confirmed = true;
++            try {
++                send.run();
++            } finally {
++                confirmed = false;
++            }
++        });
++        builder.setNegativeButton(VoidGram.t("Отмена", "Cancel"), null);
++        builder.show();
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java b/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java
 index ab54ee3..995933f 100644
 --- a/TMessagesProj/src/main/java/org/telegram/tgnet/ConnectionsManager.java
@@ -2805,6 +2887,34 @@ index 3fa7042..81f56a7 100644
          if (castAvailable) {
              castItem = o.add();
              castItem.setTextAndIcon(getString(R.string.VideoPlayerChromecast), R.drawable.menu_video_chromecast);
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Components/ChatActivityEnterView.java b/TMessagesProj/src/main/java/org/telegram/ui/Components/ChatActivityEnterView.java
+index 266e570..24d73aa 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/Components/ChatActivityEnterView.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/Components/ChatActivityEnterView.java
+@@ -12420,6 +12420,11 @@ public class ChatActivityEnterView extends FrameLayout implements
+             }
+ 
+             public void onGifSelected(View view, Object gif, String query, Object parent, boolean notify, int scheduleDate, int scheduleRepeatPeriod, MediaController.PhotoEntry entry, boolean invertMedia) {
++                // VoidGram: ask before a GIF goes out.
++                if (org.telegram.messenger.voidgram.VoidGramSending.confirmGifs() && !org.telegram.messenger.voidgram.VoidGramSending.confirmed && parentActivity != null) {
++                    org.telegram.messenger.voidgram.VoidGramSending.confirm(parentActivity, org.telegram.messenger.voidgram.VoidGram.t("Отправить GIF?", "Send the GIF?"), () -> onGifSelected(view, gif, query, parent, notify, scheduleDate, scheduleRepeatPeriod, entry, invertMedia));
++                    return;
++                }
+                 if (replyingQuote != null && parentFragment != null && replyingQuote.outdated) {
+                     parentFragment.showQuoteMessageUpdate();
+                     return;
+@@ -12768,6 +12773,11 @@ public class ChatActivityEnterView extends FrameLayout implements
+     @Override
+     public void onStickerSelected(TLRPC.Document sticker, String query, Object parent, MessageObject.SendAnimationData sendAnimationData, boolean clearsInputField, boolean notify, int scheduleDate, int scheduleRepeatPeriod) {
+         if (isLiveComment) return;
++        // VoidGram: ask before a sticker goes out.
++        if (org.telegram.messenger.voidgram.VoidGramSending.confirmStickers() && !org.telegram.messenger.voidgram.VoidGramSending.confirmed && parentActivity != null) {
++            org.telegram.messenger.voidgram.VoidGramSending.confirm(parentActivity, org.telegram.messenger.voidgram.VoidGram.t("Отправить стикер?", "Send the sticker?"), () -> onStickerSelected(sticker, query, parent, sendAnimationData, clearsInputField, notify, scheduleDate, scheduleRepeatPeriod));
++            return;
++        }
+         if (replyingQuote != null && parentFragment != null && replyingQuote.outdated) {
+             parentFragment.showQuoteMessageUpdate();
+             return;
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Components/FragmentContextView.java b/TMessagesProj/src/main/java/org/telegram/ui/Components/FragmentContextView.java
 index e8deeca..b09cc24 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/Components/FragmentContextView.java
@@ -2947,10 +3057,10 @@ index e2b917b..050a7c7 100644
                  break;
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java
 new file mode 100644
-index 0000000..bdbce0d
+index 0000000..ee4a447
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramChatsActivity.java
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,102 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.view.View;
@@ -2972,6 +3082,9 @@ index 0000000..bdbce0d
 +    private static final int ID_FILTERS = 5;
 +    private static final int ID_FILTERS_OWN = 6;
 +    private static final int ID_FILTERS_EDIT = 7;
++    private static final int ID_CONFIRM_STICKERS = 8;
++    private static final int ID_CONFIRM_GIFS = 9;
++    private static final int ID_PREVIEW_VOICE = 10;
 +
 +    @Override
 +    protected CharSequence getTitle() {
@@ -2984,6 +3097,11 @@ index 0000000..bdbce0d
 +        items.add(UItem.asCheck(ID_SECONDS, VoidGram.t("Секунды во времени сообщений", "Seconds in message times")).setChecked(VoidGramChats.timeSeconds()));
 +        items.add(UItem.asCheck(ID_IDS, VoidGram.t("ID в меню сообщения", "IDs in the message menu")).setChecked(VoidGramChats.showIds()));
 +        items.add(UItem.asShadow(VoidGram.t("«ID» копирует номер сообщения, чата и автора.", "\"ID\" copies the message, chat and author numbers.")));
++        items.add(UItem.asHeader(VoidGram.t("Отправка", "Sending")));
++        items.add(UItem.asCheck(ID_CONFIRM_STICKERS, VoidGram.t("Спрашивать перед отправкой стикера", "Confirm sticker sends")).setChecked(org.telegram.messenger.voidgram.VoidGramSending.confirmStickers()));
++        items.add(UItem.asCheck(ID_CONFIRM_GIFS, VoidGram.t("Спрашивать перед отправкой GIF", "Confirm GIF sends")).setChecked(org.telegram.messenger.voidgram.VoidGramSending.confirmGifs()));
++        items.add(UItem.asCheck(ID_PREVIEW_VOICE, VoidGram.t("Прослушать голосовое перед отправкой", "Preview voice messages before sending")).setChecked(org.telegram.messenger.voidgram.VoidGramSending.previewVoice()));
++        items.add(UItem.asShadow(null));
 +        items.add(UItem.asHeader(VoidGram.t("Фильтры", "Filters")));
 +        items.add(UItem.asCheck(ID_FILTERS, VoidGram.t("Скрывать сообщения по шаблонам", "Hide messages by patterns")).setChecked(org.telegram.messenger.voidgram.VoidGramFilters.isEnabled()));
 +        items.add(UItem.asButton(ID_FILTERS_EDIT, VoidGram.t("Шаблоны", "Patterns"), String.valueOf(org.telegram.messenger.voidgram.VoidGramFilters.count())));
@@ -3007,6 +3125,9 @@ index 0000000..bdbce0d
 +            case ID_FILTERS: org.telegram.messenger.voidgram.VoidGramFilters.setEnabled(!org.telegram.messenger.voidgram.VoidGramFilters.isEnabled()); break;
 +            case ID_FILTERS_OWN: org.telegram.messenger.voidgram.VoidGramFilters.setOwnMessages(!org.telegram.messenger.voidgram.VoidGramFilters.ownMessages()); break;
 +            case ID_FILTERS_EDIT: editPatterns(); return;
++            case ID_CONFIRM_STICKERS: org.telegram.messenger.voidgram.VoidGramSending.setConfirmStickers(!org.telegram.messenger.voidgram.VoidGramSending.confirmStickers()); break;
++            case ID_CONFIRM_GIFS: org.telegram.messenger.voidgram.VoidGramSending.setConfirmGifs(!org.telegram.messenger.voidgram.VoidGramSending.confirmGifs()); break;
++            case ID_PREVIEW_VOICE: org.telegram.messenger.voidgram.VoidGramSending.setPreviewVoice(!org.telegram.messenger.voidgram.VoidGramSending.previewVoice()); break;
 +            default: return;
 +        }
 +        if (listView != null && listView.adapter != null) {
