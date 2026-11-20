@@ -3284,10 +3284,10 @@ index 0000000..7774582
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramHistory.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramHistory.java
 new file mode 100644
-index 0000000..02e2e04
+index 0000000..2d0efde
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramHistory.java
-@@ -0,0 +1,345 @@
+@@ -0,0 +1,427 @@
 +package org.telegram.messenger.voidgram;
 +
 +import android.content.ContentValues;
@@ -3555,6 +3555,88 @@ index 0000000..02e2e04
 +                    }
 +                });
 +            }
++        });
++    }
++
++    /** One row of the history feed: a deleted message, or an earlier text of an edited one. */
++    public static final class FeedEntry {
++        public long scope;
++        public int mid;
++        public int date;
++        public boolean deleted;
++        public String previousText;
++        public long dialogId;
++        public String text;
++    }
++
++    /**
++     * The newest deleted and edited messages across chats, with the chat and text found in
++     * Telegram's own database. Runs on the storage queue; done gets the list on the UI thread.
++     */
++    public static void loadFeed(int account, int limit, org.telegram.messenger.Utilities.Callback<ArrayList<FeedEntry>> done) {
++        Utilities.globalQueue.postRunnable(() -> {
++            final ArrayList<FeedEntry> entries = new ArrayList<>();
++            try {
++                SQLiteDatabase database = db(account).getReadableDatabase();
++                for (int table = 0; table < 2; table++) {
++                    android.database.Cursor cursor = table == 0
++                            ? database.rawQuery("SELECT dialog, mid, date, NULL FROM deleted ORDER BY date DESC LIMIT " + limit, null)
++                            : database.rawQuery("SELECT dialog, mid, date, text FROM edits ORDER BY date DESC LIMIT " + limit, null);
++                    try {
++                        while (cursor.moveToNext()) {
++                            FeedEntry entry = new FeedEntry();
++                            entry.scope = cursor.getLong(0);
++                            entry.mid = cursor.getInt(1);
++                            entry.date = cursor.getInt(2);
++                            entry.deleted = table == 0;
++                            entry.previousText = cursor.isNull(3) ? null : cursor.getString(3);
++                            entries.add(entry);
++                        }
++                    } finally {
++                        cursor.close();
++                    }
++                }
++            } catch (Throwable e) {
++                FileLog.e(e);
++            }
++            java.util.Collections.sort(entries, (a, b) -> Integer.compare(b.date, a.date));
++            while (entries.size() > limit) {
++                entries.remove(entries.size() - 1);
++            }
++            final MessagesStorage storage = MessagesStorage.getInstance(account);
++            storage.getStorageQueue().postRunnable(() -> {
++                for (FeedEntry entry : entries) {
++                    SQLiteCursor cursor = null;
++                    try {
++                        String where = entry.scope != 0 ? "uid = " + entry.scope + " AND mid = " + entry.mid : "mid = " + entry.mid;
++                        cursor = storage.getDatabase().queryFinalized("SELECT uid, data FROM messages_v2 WHERE " + where + " LIMIT 8");
++                        while (cursor.next()) {
++                            long uid = cursor.longValue(0);
++                            // Private chats and basic groups share one message counter; channels have their own.
++                            if (entry.scope == 0 && uid < 0 && org.telegram.messenger.ChatObject.isChannel(org.telegram.messenger.MessagesController.getInstance(account).getChat(-uid))) {
++                                continue;
++                            }
++                            entry.dialogId = uid;
++                            NativeByteBuffer data = cursor.byteBufferValue(1);
++                            if (data != null) {
++                                TLRPC.Message message = TLRPC.Message.TLdeserialize(data, data.readInt32(false), false);
++                                data.reuse();
++                                if (message != null) {
++                                    entry.text = message.message;
++                                }
++                            }
++                            break;
++                        }
++                    } catch (Throwable e) {
++                        FileLog.e(e);
++                    } finally {
++                        if (cursor != null) {
++                            cursor.dispose();
++                        }
++                    }
++                }
++                AndroidUtilities.runOnUIThread(() -> done.run(entries));
++            });
 +        });
 +    }
 +
@@ -8341,6 +8423,164 @@ index 0000000..ea91239
 +        return false;
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramHistoryFeedActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramHistoryFeedActivity.java
+new file mode 100644
+index 0000000..e6d2e84
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramHistoryFeedActivity.java
+@@ -0,0 +1,152 @@
++package org.telegram.ui.voidgram;
++
++import android.os.Bundle;
++import android.view.View;
++import android.widget.EditText;
++
++import org.telegram.messenger.UserObject;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.messenger.voidgram.VoidGramHistory;
++import org.telegram.tgnet.TLRPC;
++import org.telegram.ui.ActionBar.AlertDialog;
++import org.telegram.ui.ActionBar.Theme;
++import org.telegram.ui.ChatActivity;
++import org.telegram.ui.Components.UItem;
++import org.telegram.ui.Components.UniversalAdapter;
++import org.telegram.ui.Components.UniversalFragment;
++
++import java.text.DateFormat;
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.Locale;
++
++/** Every saved deleted and edited message across chats, with search and filters, as on iOS. */
++public class VoidGramHistoryFeedActivity extends UniversalFragment {
++    private static final int ID_ALL = 1;
++    private static final int ID_DELETED = 2;
++    private static final int ID_EDITED = 3;
++    private static final int ID_SEARCH = 4;
++    private static final int ID_ENTRY_BASE = 1000;
++
++    private ArrayList<VoidGramHistory.FeedEntry> entries;
++    private final ArrayList<VoidGramHistory.FeedEntry> shown = new ArrayList<>();
++    private int filter = ID_ALL;
++    private String query = "";
++
++    @Override
++    protected CharSequence getTitle() {
++        return VoidGram.t("Удалённые и изменённые", "Deleted and edited");
++    }
++
++    @Override
++    public boolean onFragmentCreate() {
++        VoidGramHistory.loadFeed(currentAccount, 500, result -> {
++            entries = result;
++            if (listView != null && listView.adapter != null) {
++                listView.adapter.update(true);
++            }
++        });
++        return super.onFragmentCreate();
++    }
++
++    private String chatTitle(long dialogId) {
++        if (dialogId > 0) {
++            TLRPC.User user = getMessagesController().getUser(dialogId);
++            return user != null ? UserObject.getUserName(user) : "#" + dialogId;
++        } else if (dialogId < 0) {
++            TLRPC.Chat chat = getMessagesController().getChat(-dialogId);
++            return chat != null ? chat.title : "#" + dialogId;
++        }
++        return "?";
++    }
++
++    @Override
++    protected void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
++        items.add(UItem.asRadio(ID_ALL, VoidGram.t("Все", "All")).setChecked(filter == ID_ALL));
++        items.add(UItem.asRadio(ID_DELETED, VoidGram.t("Удалённые", "Deleted")).setChecked(filter == ID_DELETED));
++        items.add(UItem.asRadio(ID_EDITED, VoidGram.t("Изменённые", "Edited")).setChecked(filter == ID_EDITED));
++        items.add(UItem.asButton(ID_SEARCH, org.telegram.messenger.R.drawable.msg_search, VoidGram.t("Поиск", "Search"), query.isEmpty() ? "" : query));
++        items.add(UItem.asShadow(null));
++        shown.clear();
++        if (entries == null) {
++            items.add(UItem.asShadow(VoidGram.t("Загрузка…", "Loading…")));
++            return;
++        }
++        String needle = query.toLowerCase(Locale.getDefault());
++        DateFormat format = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT);
++        for (VoidGramHistory.FeedEntry entry : entries) {
++            if (filter == ID_DELETED && !entry.deleted || filter == ID_EDITED && entry.deleted) {
++                continue;
++            }
++            String text = entry.deleted ? entry.text : entry.previousText;
++            String chat = chatTitle(entry.dialogId != 0 ? entry.dialogId : entry.scope);
++            if (!needle.isEmpty() && (text == null || !text.toLowerCase(Locale.getDefault()).contains(needle)) && !chat.toLowerCase(Locale.getDefault()).contains(needle)) {
++                continue;
++            }
++            String body = text == null || text.isEmpty() ? VoidGram.t("[медиа]", "[media]") : text.replace('\n', ' ');
++            if (body.length() > 60) {
++                body = body.substring(0, 60) + "…";
++            }
++            shown.add(entry);
++            items.add(UItem.asButton(ID_ENTRY_BASE + shown.size() - 1, (entry.deleted ? "🗑 " : "✏️ ") + chat + ": " + body, format.format(new Date(entry.date * 1000L))));
++            if (shown.size() >= 300) {
++                break;
++            }
++        }
++        if (shown.isEmpty()) {
++            items.add(UItem.asShadow(VoidGram.t("Ничего нет. Удалённые сообщения и история изменений сохраняются, когда это включено в «Призрак и история».", "Nothing here. Deleted messages and edit history are kept when this is on in \"Ghost and history\".")));
++        } else {
++            items.add(UItem.asShadow(VoidGram.t("Нажмите, чтобы открыть сообщение в чате.", "Tap to open the message in its chat.")));
++        }
++    }
++
++    private void update() {
++        if (listView != null && listView.adapter != null) {
++            listView.adapter.update(true);
++        }
++    }
++
++    @Override
++    protected void onClick(UItem item, View view, int position, float x, float y) {
++        if (item.id == ID_ALL || item.id == ID_DELETED || item.id == ID_EDITED) {
++            filter = item.id;
++            update();
++        } else if (item.id == ID_SEARCH) {
++            EditText field = new EditText(getContext());
++            field.setText(query);
++            field.setSingleLine(true);
++            field.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
++            AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
++            builder.setTitle(VoidGram.t("Поиск", "Search"));
++            builder.setView(field);
++            builder.setPositiveButton("OK", (d, w) -> {
++                query = field.getText().toString().trim();
++                update();
++            });
++            builder.setNeutralButton(VoidGram.t("Сбросить", "Clear"), (d, w) -> {
++                query = "";
++                update();
++            });
++            showDialog(builder.create());
++        } else if (item.id >= ID_ENTRY_BASE && item.id - ID_ENTRY_BASE < shown.size()) {
++            VoidGramHistory.FeedEntry entry = shown.get(item.id - ID_ENTRY_BASE);
++            long dialogId = entry.dialogId != 0 ? entry.dialogId : entry.scope;
++            if (dialogId == 0) {
++                return;
++            }
++            Bundle args = new Bundle();
++            if (dialogId > 0) {
++                args.putLong("user_id", dialogId);
++            } else {
++                args.putLong("chat_id", -dialogId);
++            }
++            args.putInt("message_id", entry.mid);
++            presentFragment(new ChatActivity(args));
++        }
++    }
++
++    @Override
++    protected boolean onLongClick(UItem item, View view, int position, float x, float y) {
++        return false;
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramInterfaceActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramInterfaceActivity.java
 new file mode 100644
 index 0000000..ba34018
@@ -10339,10 +10579,10 @@ index 0000000..70cdf0b
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
 new file mode 100644
-index 0000000..e833169
+index 0000000..6a246ea
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramSettingsActivity.java
-@@ -0,0 +1,323 @@
+@@ -0,0 +1,328 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.content.Context;
@@ -10388,6 +10628,7 @@ index 0000000..e833169
 +    private static final int ID_IMPORT = 13;
 +    private static final int ID_TOOLS = 14;
 +    private static final int ID_INTERFACE = 15;
++    private static final int ID_FEED = 16;
 +    private static final int REQUEST_IMPORT = 9301;
 +
 +    private FrameLayout musicRow;
@@ -10403,6 +10644,7 @@ index 0000000..e833169
 +    protected void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
 +        items.add(UItem.asHeader(VoidGram.t("Приватность", "Privacy")));
 +        items.add(UItem.asButton(ID_GHOST, R.drawable.msg2_secret, VoidGram.t("Призрак и история", "Ghost and history"), org.telegram.messenger.voidgram.VoidGramGhost.isEnabled(currentAccount) ? VoidGram.t("Призрак вкл.", "Ghost on") : VoidGram.t("Выкл.", "Off")));
++        items.add(UItem.asButton(ID_FEED, R.drawable.msg_delete, VoidGram.t("Удалённые и изменённые", "Deleted and edited")));
 +        items.add(UItem.asButton(ID_CHATS, R.drawable.msg2_discussion, VoidGram.t("Чаты", "Chats")));
 +        items.add(UItem.asButton(ID_PEERS, R.drawable.msg_search, VoidGram.t("Поиск каналов и людей", "Find channels and people")));
 +        items.add(UItem.asButton(ID_DECOY, R.drawable.msg2_policy, VoidGram.t("Фейк-режим", "Decoy mode"), org.telegram.messenger.voidgram.VoidGramDecoy.isConfigured() ? VoidGram.t("Вкл.", "On") : VoidGram.t("Выкл.", "Off")));
@@ -10531,6 +10773,9 @@ index 0000000..e833169
 +    @Override
 +    protected void onClick(UItem item, View view, int position, float x, float y) {
 +        switch (item.id) {
++            case ID_FEED:
++                presentFragment(new VoidGramHistoryFeedActivity());
++                break;
 +            case ID_INTERFACE:
 +                presentFragment(new VoidGramInterfaceActivity());
 +                break;
