@@ -10065,6 +10065,176 @@ index 0000000..61aac10
 +        return false;
 +    }
 +}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramProxyTools.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramProxyTools.java
+new file mode 100644
+index 0000000..ff6ae7a
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramProxyTools.java
+@@ -0,0 +1,164 @@
++package org.telegram.ui.voidgram;
++
++import android.content.ClipData;
++import android.content.ClipboardManager;
++import android.content.Context;
++import android.content.SharedPreferences;
++import android.net.Uri;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.ApplicationLoader;
++import org.telegram.messenger.MessagesController;
++import org.telegram.messenger.NotificationCenter;
++import org.telegram.messenger.SharedConfig;
++import org.telegram.messenger.UserConfig;
++import org.telegram.messenger.voidgram.VoidGram;
++import org.telegram.tgnet.ConnectionsManager;
++import org.telegram.ui.ActionBar.AlertDialog;
++import org.telegram.ui.ActionBar.BaseFragment;
++import org.telegram.utils.proxy.ProxySettings;
++
++import java.util.ArrayList;
++
++/**
++ * Proxy tools on top of Telegram's own list, as on iOS: ping every saved proxy and switch to the
++ * fastest, and import many proxy links at once from the clipboard.
++ */
++public final class VoidGramProxyTools {
++    private VoidGramProxyTools() {
++    }
++
++    private static void present(BaseFragment fragment, String title, String message) {
++        if (fragment == null || fragment.getParentActivity() == null) {
++            return;
++        }
++        AlertDialog.Builder builder = new AlertDialog.Builder(fragment.getParentActivity());
++        builder.setTitle(title);
++        builder.setMessage(message);
++        builder.setPositiveButton("OK", null);
++        fragment.showDialog(builder.create());
++    }
++
++    /** Pings all saved proxies (up to 15 s), shows the results and turns on the fastest one. */
++    public static void pickFastest(BaseFragment fragment) {
++        SharedConfig.loadProxyList();
++        final ArrayList<SharedConfig.ProxyInfo> proxies = new ArrayList<>(SharedConfig.proxyList);
++        if (proxies.isEmpty()) {
++            present(fragment, VoidGram.t("Прокси", "Proxy"), VoidGram.t("Нет сохранённых прокси. Добавьте их в Данные и память → Прокси или импортируйте из буфера.", "No saved proxies. Add them in Data and Storage → Proxy or import from the clipboard."));
++            return;
++        }
++        AlertDialog progress = new AlertDialog(fragment.getParentActivity(), AlertDialog.ALERT_TYPE_SPINNER);
++        progress.show();
++        final long[] pings = new long[proxies.size()];
++        final int[] answered = new int[1];
++        final boolean[] done = new boolean[1];
++        final Runnable finish = () -> {
++            if (done[0]) {
++                return;
++            }
++            done[0] = true;
++            try {
++                progress.dismiss();
++            } catch (Throwable ignore) {
++            }
++            StringBuilder lines = new StringBuilder();
++            int best = -1;
++            for (int i = 0; i < proxies.size(); i++) {
++                ProxySettings settings = proxies.get(i).settings;
++                String name = settings.getAddress() + ":" + settings.getPort();
++                if (pings[i] > 0) {
++                    lines.append("✅ ").append(name).append(" — ").append(pings[i]).append(" ms\n");
++                    if (best < 0 || pings[i] < pings[best]) {
++                        best = i;
++                    }
++                } else {
++                    lines.append("❌ ").append(name).append('\n');
++                }
++            }
++            if (best < 0) {
++                present(fragment, VoidGram.t("Ни один прокси не отвечает", "No proxy answers"), lines.toString().trim());
++                return;
++            }
++            enable(proxies.get(best));
++            present(fragment, VoidGram.t("Включён самый быстрый: ", "Fastest enabled: ") + proxies.get(best).settings.getAddress(), lines.toString().trim());
++        };
++        int account = UserConfig.selectedAccount;
++        for (int i = 0; i < proxies.size(); i++) {
++            final int index = i;
++            SharedConfig.ProxyInfo info = proxies.get(i);
++            long request = ConnectionsManager.getInstance(account).checkProxy(info.settings, time -> AndroidUtilities.runOnUIThread(() -> {
++                pings[index] = time > 0 ? time : -1;
++                info.availableCheckTime = android.os.SystemClock.elapsedRealtime();
++                info.checking = false;
++                info.available = time > 0;
++                info.ping = Math.max(0, time);
++                answered[0]++;
++                if (answered[0] >= proxies.size()) {
++                    finish.run();
++                }
++            }));
++            if (request == 0) {
++                pings[index] = -1;
++                answered[0]++;
++            }
++        }
++        if (answered[0] >= proxies.size()) {
++            finish.run();
++        } else {
++            AndroidUtilities.runOnUIThread(finish, 15_000);
++        }
++    }
++
++    private static void enable(SharedConfig.ProxyInfo info) {
++        SharedPreferences.Editor editor = MessagesController.getGlobalMainSettings().edit();
++        info.settings.toSharedPreferences(editor);
++        editor.putBoolean("proxy_enabled", true);
++        editor.commit();
++        SharedConfig.currentProxy = info;
++        ConnectionsManager.setProxySettings(true, info.settings);
++        NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.proxySettingsChanged);
++    }
++
++    /** Every tg://proxy, tg://socks and t.me/proxy link in the clipboard is added. */
++    public static void importFromClipboard(BaseFragment fragment) {
++        String text = "";
++        try {
++            ClipboardManager clipboard = (ClipboardManager) ApplicationLoader.applicationContext.getSystemService(Context.CLIPBOARD_SERVICE);
++            ClipData data = clipboard != null ? clipboard.getPrimaryClip() : null;
++            if (data != null) {
++                for (int i = 0; i < data.getItemCount(); i++) {
++                    CharSequence item = data.getItemAt(i).coerceToText(ApplicationLoader.applicationContext);
++                    if (item != null) {
++                        text += item + "\n";
++                    }
++                }
++            }
++        } catch (Throwable ignore) {
++        }
++        int added = 0;
++        ArrayList<ProxySettings> seen = new ArrayList<>();
++        for (String candidate : text.split("[\\s,;\"'<>]+")) {
++            if (!(candidate.startsWith("tg://") || candidate.contains("t.me/proxy") || candidate.contains("t.me/socks") || candidate.contains("telegram.me/proxy"))) {
++                continue;
++            }
++            String link = candidate.startsWith("http") || candidate.startsWith("tg://") ? candidate : "https://" + candidate;
++            ProxySettings settings = null;
++            try {
++                settings = ProxySettings.fromUri(Uri.parse(link));
++            } catch (Throwable ignore) {
++            }
++            if (settings == null || !settings.isValid() || seen.contains(settings)) {
++                continue;
++            }
++            seen.add(settings);
++            SharedConfig.addProxy(new SharedConfig.ProxyInfo(settings));
++            added++;
++        }
++        if (added == 0) {
++            present(fragment, VoidGram.t("Импорт прокси", "Proxy import"), VoidGram.t("В буфере обмена нет ссылок на прокси (tg://proxy, t.me/proxy, tg://socks).", "No proxy links in the clipboard (tg://proxy, t.me/proxy, tg://socks)."));
++            return;
++        }
++        NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.proxySettingsChanged);
++        present(fragment, VoidGram.t("Импорт прокси", "Proxy import"), VoidGram.t("Добавлено прокси: ", "Proxies added: ") + added + ". " + VoidGram.t("Нажмите «Самый быстрый прокси», чтобы включить лучший.", "Tap \"Fastest proxy\" to turn on the best one."));
++    }
++}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramQuickSticker.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramQuickSticker.java
 new file mode 100644
 index 0000000..70cdf0b
@@ -10750,10 +10920,10 @@ index 0000000..e1c2c2e
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java
 new file mode 100644
-index 0000000..ddf1800
+index 0000000..50e111e
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramToolsActivity.java
-@@ -0,0 +1,231 @@
+@@ -0,0 +1,244 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.content.Context;
@@ -10792,6 +10962,8 @@ index 0000000..ddf1800
 +    private static final int ID_AI_MODEL = 12;
 +    private static final int ID_SHORTCUTS = 13;
 +    private static final int ID_SMART_FOLDERS = 14;
++    private static final int ID_PROXY_FASTEST = 15;
++    private static final int ID_PROXY_IMPORT = 16;
 +
 +    @Override
 +    protected CharSequence getTitle() {
@@ -10804,6 +10976,11 @@ index 0000000..ddf1800
 +        items.add(UItem.asButton(ID_SHORTCUTS, R.drawable.msg_edit, VoidGram.t("Шаблоны и сокращения", "Shortcuts and templates"), String.valueOf(org.telegram.messenger.voidgram.VoidGramShortcuts.list().size())));
 +        items.add(UItem.asButton(ID_SMART_FOLDERS, R.drawable.msg_folders, VoidGram.t("Умные папки", "Smart folders")));
 +        items.add(UItem.asShadow(null));
++
++        items.add(UItem.asHeader(VoidGram.t("Прокси", "Proxy")));
++        items.add(UItem.asButton(ID_PROXY_FASTEST, R.drawable.msg2_data, VoidGram.t("Самый быстрый прокси", "Fastest proxy")));
++        items.add(UItem.asButton(ID_PROXY_IMPORT, R.drawable.msg_link, VoidGram.t("Импорт прокси из буфера", "Import proxies from the clipboard")));
++        items.add(UItem.asShadow(VoidGram.t("Пингует все сохранённые прокси и включает самый быстрый. Импорт добавляет все ссылки tg://proxy, t.me/proxy и tg://socks из скопированного текста.", "Pings every saved proxy and turns on the fastest. Import adds every tg://proxy, t.me/proxy and tg://socks link in the copied text.")));
 +
 +        items.add(UItem.asHeader(VoidGram.t("Музыка", "Music")));
 +        items.add(UItem.asButton(ID_LASTFM, R.drawable.msg_media, VoidGramLastFm.isConnected() ? VoidGramLastFm.username() : VoidGram.t("Подключить Last.fm", "Connect Last.fm"), VoidGramLastFm.isConnected() ? VoidGram.t("вкл.", "on") : ""));
@@ -10866,6 +11043,12 @@ index 0000000..ddf1800
 +                VoidGramPremium.setLocal(!VoidGramPremium.isLocal());
 +                getNotificationCenter().postNotificationName(org.telegram.messenger.NotificationCenter.currentUserPremiumStatusChanged);
 +                update();
++                break;
++            case ID_PROXY_FASTEST:
++                VoidGramProxyTools.pickFastest(this);
++                break;
++            case ID_PROXY_IMPORT:
++                VoidGramProxyTools.importFromClipboard(this);
 +                break;
 +            case ID_SHORTCUTS:
 +                presentFragment(new VoidGramShortcutsActivity());
