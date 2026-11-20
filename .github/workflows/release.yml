@@ -32,6 +32,10 @@ on:
         description: ID of a run with voidgram-desktop-macos-universal (macOS build or "from a finished build", optional)
         required: false
         default: ''
+      android_run:
+        description: ID of a "VoidGram Android" run (optional)
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -77,6 +81,13 @@ jobs:
           github-token: ${{ github.token }}
           name: voidgram-desktop-macos-universal
           path: artifact/macos
+      - if: inputs.android_run != ''
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.android_run }}
+          github-token: ${{ github.token }}
+          name: voidgram-android
+          path: artifact/android
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -94,6 +105,7 @@ jobs:
             tipa=$(find artifact/ios -name '*.tipa' | head -n 1)
             if [ -n "$tipa" ]; then cp "$tipa" "files/VoidGram-${VERSION}-TrollStore.tipa"; fi
           fi
+          find artifact/android -type f -name '*.apk' -exec cp {} files/ \; 2>/dev/null || true
           find artifact/windows artifact/arch artifact/linux artifact/macos -type f \( -name '*.zip' -o -name '*.tar.zst' -o -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' \) -exec cp {} files/ \; 2>/dev/null || true
           # Generic tarballs carry their own install.sh; the release one is the current installer.
           if ls files/*.tar.zst files/*.deb files/*.rpm >/dev/null 2>&1; then
