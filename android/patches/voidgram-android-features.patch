@@ -4571,10 +4571,10 @@ index 0000000..2b3857c
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramInterface.java b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramInterface.java
 new file mode 100644
-index 0000000..8b10e27
+index 0000000..7f1b1df
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/messenger/voidgram/VoidGramInterface.java
-@@ -0,0 +1,195 @@
+@@ -0,0 +1,196 @@
 +package org.telegram.messenger.voidgram;
 +
 +import org.telegram.messenger.SendMessagesHelper;
@@ -4609,6 +4609,7 @@ index 0000000..8b10e27
 +    public static final String CLEAN_LINKS = "ui_clean_links";
 +    public static final String COMMA_AFTER_MENTION = "ui_comma_after_mention";
 +    public static final String BUBBLE_OUTLINE = "ui_bubble_outline";
++    public static final String HIDE_CONTACTS_TAB = "ui_hide_contacts_tab";
 +
 +    public static boolean is(String key) {
 +        return get(key);
@@ -8638,6 +8639,21 @@ index 1dd2ffe..1ee2795 100644
          WidgetMedia.onAppPaused(false);
          isResumed = true;
          PipCoordinator.getInstance().onActivityResume(this);
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/MainTabsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/MainTabsActivity.java
+index d1ac117..59af5b9 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/MainTabsActivity.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/MainTabsActivity.java
+@@ -367,6 +367,10 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
+             tabsView.setViewVisible(view, true, false);
+         }
+         checkUi_callTabVisible(getUserConfig().showCallsTab, false);
++        // VoidGram: the Contacts tab can be hidden.
++        if (org.telegram.messenger.voidgram.VoidGramInterface.is(org.telegram.messenger.voidgram.VoidGramInterface.HIDE_CONTACTS_TAB)) {
++            tabsView.setViewVisible(tabs[INDEX_CONTACTS], false, false);
++        }
+ 
+         selectTab(viewPager.getCurrentPosition(), false);
+ 
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/PhotoViewer.java b/TMessagesProj/src/main/java/org/telegram/ui/PhotoViewer.java
 index 1e4ad20..7788ee2 100644
 --- a/TMessagesProj/src/main/java/org/telegram/ui/PhotoViewer.java
@@ -10323,10 +10339,10 @@ index 0000000..e6d2e84
 +}
 diff --git a/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramInterfaceActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramInterfaceActivity.java
 new file mode 100644
-index 0000000..1a9d88a
+index 0000000..0c8c742
 --- /dev/null
 +++ b/TMessagesProj/src/main/java/org/telegram/ui/voidgram/VoidGramInterfaceActivity.java
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,144 @@
 +package org.telegram.ui.voidgram;
 +
 +import android.view.View;
@@ -10351,6 +10367,7 @@ index 0000000..1a9d88a
 +            VoidGramInterface.NO_LINK_WARNING,
 +            VoidGramInterface.CLEAN_LINKS,
 +            VoidGramInterface.BUBBLE_OUTLINE,
++            VoidGramInterface.HIDE_CONTACTS_TAB,
 +    };
 +
 +    private static final int ID_STREAMER = 100;
@@ -10379,8 +10396,9 @@ index 0000000..1a9d88a
 +        check(items, 3, VoidGram.t("Прятать клавиатуру при прокрутке", "Hide the keyboard on scroll"));
 +        check(items, 4, VoidGram.t("Запятая после упоминания", "Comma after a mention"));
 +        check(items, 8, VoidGram.t("Обводка сообщений", "Message outline"));
++        check(items, 9, VoidGram.t("Скрыть вкладку «Контакты»", "Hide the Contacts tab"));
 +        items.add(UItem.asCheck(ID_BLACK_HOLE, VoidGram.t("«Чёрная дыра» при очистке чата", "\"Black hole\" when clearing a chat")).setChecked(VoidGramBlackHole.isEnabled()));
-+        items.add(UItem.asShadow(VoidGram.t("Упоминание в начале сообщения вставляется как «@ник, ».", "A mention at the start of a message is inserted as \"@name, \".")));
++        items.add(UItem.asShadow(VoidGram.t("Упоминание в начале сообщения вставляется как «@ник, ». Вкладка «Контакты» скрывается после перезапуска; «Звонки» скрываются в настройках Telegram.", "A mention at the start of a message is inserted as \"@name, \". The Contacts tab hides after a restart; Calls hides in Telegram's own settings.")));
 +        items.add(UItem.asHeader(VoidGram.t("Эффекты", "Effects")));
 +        String effect = VoidGramOverlayEffects.effect();
 +        items.add(UItem.asButton(ID_EFFECT, VoidGram.t("Эффект поверх Telegram", "Effect over Telegram"), VoidGramOverlayEffects.title(effect)));
