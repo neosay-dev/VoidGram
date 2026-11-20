@@ -54,8 +54,9 @@ def main():
         subprocess.run(["git", "apply", "--recount", "--check", str(patch)], cwd=source, check=True)
         subprocess.run(["git", "apply", "--recount", str(patch)], cwd=source, check=True)
 
-    # Launcher icon and colours for the standalone APK.
+    # Launcher icons (VoidGram, Blue, Graphite) and colours: the standalone APK and the icon picker.
     shutil.copytree(ANDROID / "res", source / "TMessagesProj_AppStandalone/src/main/res", dirs_exist_ok=True)
+    shutil.copytree(ANDROID / "res-main", source / "TMessagesProj/src/main/res", dirs_exist_ok=True)
 
     # Easter egg (Settings → VoidGram → Other): @natsuk1n_dev's music, shared with iOS.
     raw = source / "TMessagesProj/src/main/res/raw"
@@ -78,6 +79,9 @@ def main():
         text = strings.read_text(encoding="utf-8")
         text = re.sub(r'(<string name="AppName">)[^<]*(</string>)', rf"\g<1>{APP_NAME}\g<2>", text)
         text = re.sub(r'(<string name="AppNameBeta">)[^<]*(</string>)', rf"\g<1>{APP_NAME} Beta\g<2>", text)
+        if strings.parent.name == "values":
+            for name, title in (("AppIconDefault", "VoidGram"), ("AppIconVintage", "VoidGram Blue"), ("AppIconAqua", "VoidGram Graphite")):
+                text = re.sub(rf'(<string name="{name}">)[^<]*(</string>)', rf"\g<1>{title}\g<2>", text)
         strings.write_text(text, encoding="utf-8")
 
     # VoidGram's own API credentials; no update prompts that would install Telegram's APK over it.
