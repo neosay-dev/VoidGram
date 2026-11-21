@@ -49606,10 +49606,18 @@ index 40cc5e2..8b38ffd 100644
  	});
  }
 diff --git a/Telegram/SourceFiles/mainwidget.cpp b/Telegram/SourceFiles/mainwidget.cpp
-index 96cf0ba..3787453 100644
+index 96cf0ba..163d2b2 100644
 --- a/Telegram/SourceFiles/mainwidget.cpp
 +++ b/Telegram/SourceFiles/mainwidget.cpp
-@@ -105,6 +105,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
+@@ -51,6 +51,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
+ #include "chat_helpers/tabbed_selector.h" // TabbedSelector::refreshStickers
+ #include "chat_helpers/message_field.h"
+ #include "info/info_memento.h"
++#include "info/info_content_widget.h"
+ #include "apiwrap.h"
+ #include "dialogs/dialogs_widget.h"
+ #include "history/history_widget.h"
+@@ -105,6 +106,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
  
  // AyuGram includes
  #include "ayu/features/forward/ayu_forward.h"
@@ -49618,7 +49626,7 @@ index 96cf0ba..3787453 100644
  
  
  namespace {
-@@ -292,6 +294,29 @@ MainWidget::MainWidget(
+@@ -292,6 +295,29 @@ MainWidget::MainWidget(
  	if (_dialogs) {
  		setupConnectingWidget();
  	}
@@ -49648,6 +49656,82 @@ index 96cf0ba..3787453 100644
  
  	_history->cancelRequests(
  	) | rpl::on_next([=] {
+@@ -1872,6 +1898,28 @@ bool MainWidget::saveSectionInStack(
+ void MainWidget::showSection(
+ 		std::shared_ptr<Window::SectionMemento> memento,
+ 		const SectionShow &params) {
++	// VoidGram: your own settings open in the left column in place of the chat list, as on iOS; other
++	// people's profiles keep opening in place of the chat.
++	if (_dialogs && !isOneColumn()) {
++		const auto info = dynamic_cast<Info::Memento*>(memento.get());
++		if (info && info->stackSize() && info->content()->settingsSelf()) {
++			if (_vgLeftSettings
++				&& _vgLeftSettings->showInternal(memento.get(), params)) {
++				return;
++			}
++			_vgLeftSettings.destroy();
++			_vgLeftSettings = memento->createWidget(
++				this,
++				_controller,
++				Window::Column::First,
++				_dialogs->geometry());
++			_vgLeftSettings->show();
++			_vgLeftSettings->raise();
++			_vgLeftSettings->setInnerFocus();
++			_controller->window().hideSettingsAndLayer();
++			return;
++		}
++	}
+ 	if (_mainSection && _mainSection->showInternal(
+ 			memento.get(),
+ 			params)) {
+@@ -2358,6 +2406,14 @@ void MainWidget::showNonPremiumLimitToast(bool download) {
+ }
+ 
+ bool MainWidget::showBackFromStack(const SectionShow &params) {
++	if (_vgLeftSettings) {
++		// Back from the root of the settings column closes it and shows the chat list again.
++		_vgLeftSettings.destroy();
++		if (_dialogs) {
++			_dialogs->setInnerFocus();
++		}
++		return true;
++	}
+ 	if (preventsCloseSection([=] { showBackFromStack(params); }, params)) {
+ 		return false;
+ 	}
+@@ -2751,6 +2807,8 @@ void MainWidget::updateControlsGeometry() {
+ 			mainSectionGeometry,
+ 			_contentScrollAddToY);
+ 		if (_hider) _hider->setGeometry(0, 0, dialogsWidth, height());
++		// One column has no room beside the chat: settings go back to opening the usual way.
++		_vgLeftSettings.destroy();
+ 	} else {
+ 		auto thirdSectionWidth = _thirdSection ? _thirdColumnWidth : 0;
+ 		if (_thirdSection) {
+@@ -2768,6 +2826,9 @@ void MainWidget::updateControlsGeometry() {
+ 				dialogsWidth,
+ 				width() - st::columnMinimalWidthMain);
+ 			_dialogs->setGeometryToLeft(0, 0, dialogsWidth, height());
++			if (_vgLeftSettings) {
++				_vgLeftSettings->setGeometry(_dialogs->geometry());
++			}
+ 		}
+ 		if (_sideShadow) {
+ 			_sideShadow->setGeometryToLeft(
+diff --git a/Telegram/SourceFiles/mainwidget.h b/Telegram/SourceFiles/mainwidget.h
+index 086a699..15d28ac 100644
+--- a/Telegram/SourceFiles/mainwidget.h
++++ b/Telegram/SourceFiles/mainwidget.h
+@@ -350,6 +350,8 @@ private:
+ 	const base::unique_qptr<Dialogs::Widget> _dialogs;
+ 	const base::unique_qptr<HistoryWidget> _history;
+ 	object_ptr<Window::SectionWidget> _mainSection = { nullptr };
++	// VoidGram: your own settings, shown in the left column over the chat list.
++	object_ptr<Window::SectionWidget> _vgLeftSettings = { nullptr };
+ 	object_ptr<Window::SectionWidget> _thirdSection = { nullptr };
+ 	std::shared_ptr<Window::SectionMemento> _thirdSectionFromStack;
+ 	std::unique_ptr<Window::ConnectionState> _connecting;
 diff --git a/Telegram/SourceFiles/platform/linux/specific_linux.cpp b/Telegram/SourceFiles/platform/linux/specific_linux.cpp
 index 13db856..d21de7a 100644
 --- a/Telegram/SourceFiles/platform/linux/specific_linux.cpp
