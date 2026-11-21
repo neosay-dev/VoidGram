@@ -54043,10 +54043,22 @@ index 0000000..5f4213c
 +
 +} // namespace VoidGram
 diff --git a/Telegram/SourceFiles/window/themes/window_themes_embedded.cpp b/Telegram/SourceFiles/window/themes/window_themes_embedded.cpp
-index 5d7145c..cc13d36 100644
+index 5d7145c..c280f1d 100644
 --- a/Telegram/SourceFiles/window/themes/window_themes_embedded.cpp
 +++ b/Telegram/SourceFiles/window/themes/window_themes_embedded.cpp
-@@ -265,14 +265,15 @@ std::vector<EmbeddedScheme> EmbeddedThemes() {
+@@ -205,6 +205,11 @@ style::colorizer ColorizerForTheme(const QString &absolutePath) {
+ 	if (i == end(schemes)) {
+ 		return {};
+ 	}
++	// VoidGram: its theme is Telegram iOS's palette as it is. It sits in the Night slot, so an accent saved
++	// for that slot (or the system accent) would recolour it: outgoing bubbles turned white.
++	if (absolutePath == u":/gui/voidgram.tdesktop-theme"_q) {
++		return {};
++	}
+ 	const auto &settings = Core::App().settings();
+ 	if (settings.systemAccentColorEnabled()) {
+ 		if (const auto accent = SystemAccentColor()) {
+@@ -265,14 +270,15 @@ std::vector<EmbeddedScheme> EmbeddedThemes() {
  		},
  		EmbeddedScheme{
  			EmbeddedType::Night,
