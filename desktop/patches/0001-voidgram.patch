@@ -47744,10 +47744,10 @@ index f727092..e5f2e32 100644
  </RCC>
 diff --git a/Telegram/Resources/voidgram.tdesktop-theme b/Telegram/Resources/voidgram.tdesktop-theme
 new file mode 100644
-index 0000000000000000000000000000000000000000..4ca7a0fde857a7b6e4eaa2935f9a65a3abaa5b20
+index 0000000000000000000000000000000000000000..65f838bff223dc02c9146d5296da5bebfc2521f8
 GIT binary patch
-literal 8583
-zcmWIWW@Zs#U|`^22v}PZTlA4%KU9H%VebM422lnEhUEO5{GwvLl9bfq?2`Nf-I9#d
+literal 8586
+zcmWIWW@Zs#U|`^2(3x2pyG}elJwkzjVgCXK22lnEhUEO5{GwvLl9bfq?2`Nf-I9#d
 z+|<3Xk;Qi`Ce>YEpU@-k*7aeVcWL<h(^0QJ_9WlF-8b#|jqQw{A)UEmk=~nhR@eVk
 zGA<NO*jTdVf?#gv34LJ)B}SEoBhG<OzaBpO?)a0lEcO44E5GYi?$EdTm%J%8b>^lw
 z*_+nRX8E@<`&IJPcpHU_><YIY@e3_odg7sA>7Q!#&G+Bb{X8b^STwhDin3?qn|HfY
@@ -47876,49 +47876,49 @@ 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
-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%0Dd1$f)T40bAd8Cn6!!bf
-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
+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
 
 literal 0
 HcmV?d00001
@@ -48915,6 +48915,53 @@ index 37c59e8..52e0a2e 100644
  	}
  
  	const auto wrapReplyToLink = [&](const QByteArray &text) {
+diff --git a/Telegram/SourceFiles/history/history_inner_widget.cpp b/Telegram/SourceFiles/history/history_inner_widget.cpp
+index df61c2a..55de6b0 100644
+--- a/Telegram/SourceFiles/history/history_inner_widget.cpp
++++ b/Telegram/SourceFiles/history/history_inner_widget.cpp
+@@ -4845,6 +4845,13 @@ void HistoryInner::collapseGapsUpdated() {
+ }
+ 
+ 
++void HistoryInner::setOverlayBottom(int height) {
++	if (_vgOverlayBottom != height) {
++		_vgOverlayBottom = height;
++		updateSize();
++	}
++}
++
+ void HistoryInner::changeItemsRevealHeight(int revealHeight) {
+ 	if (_revealHeight == revealHeight) {
+ 		return;
+@@ -4865,7 +4872,7 @@ void HistoryInner::updateSize() {
+ 	const auto itemsHeight = historyHeight() - _revealHeight + collapseGapTotal;
+ 	const auto aboutAboveHistory = _aboutView && _aboutView->aboveHistory();
+ 	const auto aboutBelowHistory = _aboutView && !aboutAboveHistory;
+-	auto newHistoryMarginBottom = st::historyPaddingBottom;
++	auto newHistoryMarginBottom = st::historyPaddingBottom + _vgOverlayBottom;
+ 	if (aboutBelowHistory) {
+ 		accumulate_max(newHistoryMarginBottom, _aboutView->height);
+ 	}
+diff --git a/Telegram/SourceFiles/history/history_inner_widget.h b/Telegram/SourceFiles/history/history_inner_widget.h
+index 326f7e5..c1a3f80 100644
+--- a/Telegram/SourceFiles/history/history_inner_widget.h
++++ b/Telegram/SourceFiles/history/history_inner_widget.h
+@@ -164,6 +164,7 @@ public:
+ 	void touchScrollUpdated(const QPoint &screenPos);
+ 
+ 	void setItemsRevealHeight(int revealHeight);
++	void setOverlayBottom(int height); // VoidGram
+ 	void changeItemsRevealHeight(int revealHeight);
+ 	void checkActivation();
+ 	void recountHistoryGeometry(bool initial = false);
+@@ -592,6 +593,7 @@ private:
+ 	int _contentWidth = 0;
+ 	int _historyMarginTop = 0;
+ 	int _historyMarginBottom = 0;
++	int _vgOverlayBottom = 0; // VoidGram: the composer floats over this much of the scroll.
+ 	int _revealHeight = 0;
+ 	int _forumThreadBarWidth = 0;
+ 	Ui::PeerUserpicView _forumThreadBarUserpicView;
 diff --git a/Telegram/SourceFiles/history/history_item_helpers.cpp b/Telegram/SourceFiles/history/history_item_helpers.cpp
 index 199d6dc..c8fd51b 100644
 --- a/Telegram/SourceFiles/history/history_item_helpers.cpp
@@ -48929,7 +48976,7 @@ index 199d6dc..c8fd51b 100644
  	TextUtilities::ParseEntities(result, Ui::ItemTextNoMonoOptions().flags);
  	result.entities.push_front(
 diff --git a/Telegram/SourceFiles/history/history_widget.cpp b/Telegram/SourceFiles/history/history_widget.cpp
-index 520fd33..d297016 100644
+index 520fd33..a820269 100644
 --- a/Telegram/SourceFiles/history/history_widget.cpp
 +++ b/Telegram/SourceFiles/history/history_widget.cpp
 @@ -6,6 +6,7 @@ For license and copyright information please follow this link:
@@ -48940,49 +48987,169 @@ index 520fd33..d297016 100644
  
  #include "api/api_compose_with_ai.h"
  #include "api/api_editing.h"
-@@ -392,6 +393,8 @@ HistoryWidget::HistoryWidget(
+@@ -392,6 +393,23 @@ HistoryWidget::HistoryWidget(
  		return _list && _list->itemTop(view) >= 0;
  	}))
  , _topShadow(this) {
 +	// VoidGram: its icon buttons sit on glass capsules this widget paints (no glass circle under each).
 +	setProperty("voidgramGlassCapsules", true);
++	_vgGlass = Ui::CreateChild<Ui::RpWidget>(this);
++	_vgGlass->setAttribute(Qt::WA_TransparentForMouseEvents);
++	_vgGlass->hide();
++	_vgGlass->paintRequest() | rpl::on_next([=] {
++		auto p = QPainter(_vgGlass);
++		vgPaintComposerGlass(p);
++	}, _vgGlass->lifetime());
++	// Bottom to top: the messages, the glass, then the composer's own controls.
++	_vgGlass->lower();
++	_scroll->lower();
++	_scroll->scrolls() | rpl::on_next([=] {
++		if (_vgComposerUnder) {
++			_vgGlass->update();
++		}
++	}, _vgGlass->lifetime());
  	setAcceptDrops(true);
  	setVisualTabOrder(true);
  
-@@ -11348,6 +11351,33 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
+@@ -3468,6 +3486,13 @@ void HistoryWidget::showHistory(
+ 		_list = _scroll->setOwnedWidget(
+ 			object_ptr<HistoryInner>(this, _scroll, controller(), _history));
+ 		_pullToNext->reset(anim::type::instant);
++		// VoidGram: messages repainting under the composer refresh its glass.
++		base::install_event_filter(_list.data(), [=](not_null<QEvent*> e) {
++			if (e->type() == QEvent::Paint && _vgComposerUnder && !_vgGrabbing) {
++				_vgGlass->update();
++			}
++			return base::EventFilterResult::Continue;
++		});
+ 		_list->sendIntroSticker(
+ 		) | rpl::on_next([=](not_null<DocumentData*> sticker) {
+ 			sendExistingDocument(
+@@ -8678,6 +8703,31 @@ void HistoryWidget::updateHistoryGeometry(
+ 			newScrollHeight -= _kbScroll->height();
+ 		}
+ 	}
++	{
++		// VoidGram: with nothing between the messages and the field, the messages run on under the
++		// composer, which floats over them as glass.
++		const auto floats = !isSearching()
++			&& !isBlocked()
++			&& !isBotStart()
++			&& !isJoinChannel()
++			&& !isMuteUnmute()
++			&& !isReportMessages()
++			&& (editingMessage() || _canSendMessages)
++			&& !(_editMsgId || replyTo() || readyToForward() || _previewDrawPreview || _suggestOptions)
++			&& !_kbShown;
++		const auto under = floats ? (fieldHeight() + 2 * st::historySendPadding) : 0;
++		if (_vgComposerUnder != under) {
++			_vgComposerUnder = under;
++			update();
++		}
++		newScrollHeight += under;
++		if (_list) {
++			_list->setOverlayBottom(under);
++		}
++		_vgGlass->setGeometry(0, height() - under, width(), under);
++		_vgGlass->setVisible(under > 0);
++		_vgGlass->update();
++	}
+ 	if (newScrollHeight <= 0) {
+ 		return;
+ 	}
+@@ -11329,6 +11379,58 @@ void HistoryWidget::updateField() {
+ 	rtlupdate(0, fieldAreaTop, width(), height() - fieldAreaTop);
+ }
+ 
++std::vector<QRect> HistoryWidget::vgComposerCapsules() const {
++	// VoidGram: the composer as Telegram iOS 26 draws it: a capsule around the text field and a circle
++	// behind the attach and the send buttons.
++	auto result = std::vector<QRect>();
++	const auto fieldTop = _field->y() - st::historySendPadding + 4;
++	const auto fieldBottom = _field->y() + fieldHeight() + st::historySendPadding - 4;
++	const auto circle = [&](QWidget *button) {
++		if (!button || button->isHidden()) {
++			return;
++		}
++		const auto g = button->geometry();
++		const auto side = std::min(g.width(), fieldBottom - fieldTop);
++		result.push_back(QRect(g.x() + (g.width() - side) / 2, fieldBottom - side, side, side));
++	};
++	circle(_attachToggle.data());
++	circle(_send.get());
++	const auto left = (_attachToggle && !_attachToggle->isHidden())
++		? (_attachToggle->x() + _attachToggle->width() + 4)
++		: (_field->x() - st::historySendPadding);
++	const auto right = (_send && !_send->isHidden())
++		? (_send->x() - 4)
++		: (_field->x() + _field->width() + st::historySendPadding);
++	if (right > left) {
++		result.push_back(QRect(left, fieldTop, right - left, fieldBottom - fieldTop));
++	}
++	return result;
++}
++
++void HistoryWidget::vgPaintComposerGlass(QPainter &p) {
++	// The capsules float over the messages, as on iOS: each one is the messages under it, blurred and
++	// bent by the glass shader, with a rim. `p` paints _vgGlass, which covers the composer strip.
++	const auto dark = st::windowBg->c.lightness() < 128;
++	const auto origin = _vgGlass->pos();
++	_vgGrabbing = true;
++	for (const auto &capsule : vgComposerCapsules()) {
++		const auto inScroll = capsule.translated(-_scroll->pos());
++		auto backdrop = QImage(
++			capsule.size() * style::DevicePixelRatio(),
++			QImage::Format_ARGB32_Premultiplied);
++		backdrop.setDevicePixelRatio(style::DevicePixelRatio());
++		backdrop.fill(st::windowBg->c);
++		{
++			auto q = QPainter(&backdrop);
++			q.drawPixmap(0, 0, _scroll->grab(inScroll));
++		}
++		const auto local = capsule.translated(-origin);
++		p.drawImage(local, VoidGram::RenderLiquidGlass(backdrop, dark));
++		VoidGram::PaintGlassCapsule(p, local, dark);
++	}
++	_vgGrabbing = false;
++}
++
+ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
+ 	_repaintFieldScheduled = false;
+ 
+@@ -11347,7 +11449,14 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
+ 	}
  	p.setInactive(
  		controller()->isGifPausedAtLeastFor(Window::GifPauseReason::Any));
- 	p.fillRect(myrtlrect(0, backy, width(), backh), st::historyReplyBg);
-+	{
-+		// VoidGram: the composer as Telegram iOS 26 draws it: a capsule around the text field and a circle
-+		// behind the attach and the send buttons.
+-	p.fillRect(myrtlrect(0, backy, width(), backh), st::historyReplyBg);
++	if (!_vgComposerUnder) {
++		// The messages end above the composer here (a reply bar or a keyboard is shown): its own panel.
++		p.fillRect(myrtlrect(0, backy, width(), backh), st::historyReplyBg);
 +		const auto dark = st::windowBg->c.lightness() < 128;
-+		const auto fieldTop = _field->y() - st::historySendPadding + 4;
-+		const auto fieldBottom = _field->y() + fieldHeight() + st::historySendPadding - 4;
-+		const auto circle = [&](QWidget *button) {
-+			if (!button || button->isHidden()) {
-+				return;
-+			}
-+			const auto g = button->geometry();
-+			const auto side = std::min(g.width(), fieldBottom - fieldTop);
-+			VoidGram::PaintGlassCapsule(p, QRect(g.x() + (g.width() - side) / 2, fieldBottom - side, side, side), dark);
-+		};
-+		circle(_attachToggle.data());
-+		circle(_send.get());
-+		const auto left = (_attachToggle && !_attachToggle->isHidden())
-+			? (_attachToggle->x() + _attachToggle->width() + 4)
-+			: (_field->x() - st::historySendPadding);
-+		const auto right = (_send && !_send->isHidden())
-+			? (_send->x() - 4)
-+			: (_field->x() + _field->width() + st::historySendPadding);
-+		if (right > left) {
-+			const auto capsule = QRect(left, fieldTop, right - left, fieldBottom - fieldTop);
++		for (const auto &capsule : vgComposerCapsules()) {
 +			VoidGram::PaintGlassCapsule(p, capsule, dark);
 +		}
 +	}
  
  	const auto media = (!_previewDrawPreview && drawMsgText)
  		? drawMsgText->media()
+diff --git a/Telegram/SourceFiles/history/history_widget.h b/Telegram/SourceFiles/history/history_widget.h
+index f528c8b..77023d9 100644
+--- a/Telegram/SourceFiles/history/history_widget.h
++++ b/Telegram/SourceFiles/history/history_widget.h
+@@ -875,6 +875,13 @@ private:
+ 
+ 	object_ptr<HistoryView::TopBarWidget> _topBar;
+ 	object_ptr<Ui::ElasticScroll> _scroll;
++	// VoidGram: the composer floats over the last _vgComposerUnder pixels of the scroll; _vgGlass paints
++	// its glass capsules from the messages under them.
++	int _vgComposerUnder = 0;
++	Ui::RpWidget *_vgGlass = nullptr;
++	bool _vgGrabbing = false;
++	[[nodiscard]] std::vector<QRect> vgComposerCapsules() const;
++	void vgPaintComposerGlass(QPainter &p);
+ 	QPointer<HistoryInner> _list;
+ 	History *_migrated = nullptr;
+ 	History *_history = nullptr;
 diff --git a/Telegram/SourceFiles/history/view/history_view_message.cpp b/Telegram/SourceFiles/history/view/history_view_message.cpp
 index 9c0462e..ecdde3d 100644
 --- a/Telegram/SourceFiles/history/view/history_view_message.cpp
@@ -49600,7 +49767,7 @@ index 40cc5e2..8b38ffd 100644
  	});
  }
 diff --git a/Telegram/SourceFiles/mainwidget.cpp b/Telegram/SourceFiles/mainwidget.cpp
-index 96cf0ba..163d2b2 100644
+index 96cf0ba..1c6e91f 100644
 --- a/Telegram/SourceFiles/mainwidget.cpp
 +++ b/Telegram/SourceFiles/mainwidget.cpp
 @@ -51,6 +51,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
@@ -49627,7 +49794,7 @@ index 96cf0ba..163d2b2 100644
 +	VoidGram::AttachEffects(this);
 +	{
 +		// VoidGram: the iOS night theme is the app's look. Applied once per install; a theme the user picks later stays.
-+		const auto marker = cWorkingDir() + u"tdata/voidgram_theme_applied"_q;
++		const auto marker = cWorkingDir() + u"tdata/voidgram_theme_applied_2"_q; // _2: the theme gained a see-through composer.
 +		if (!QFile::exists(marker)) {
 +			const auto path = u":/gui/voidgram.tdesktop-theme"_q;
 +			crl::on_main(this, [=] {
