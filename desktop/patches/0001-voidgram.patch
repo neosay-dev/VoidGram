@@ -32646,6 +32646,402 @@ z*G~y?o3HGBvP7o3BGj$oaiVAIuSSzes(;1**!St4Q+oaVjPneSmp`|rp9<-1I90d7
 z{}+E}w&XhLoo?3`*DpJ=vg6f?ko8xWipT6(x?HAqT7Xz#1&2;=`fHWN?FTk_oPG3M
 q{+Gaw%{y)vl2HR8*IIx4AH;w8VfQa&Ykn`NHuZG%b6Mw<&;$Ui>Y2O%
 
+diff --git a/Telegram/Resources/icons/folders/folders_vg_calls.png b/Telegram/Resources/icons/folders/folders_vg_calls.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..dbd130be0271bbac2362ff3e77c91c0516e4042d
+GIT binary patch
+literal 622
+zcmeAS@N?(olHy`uVBq!ia0y~yU{C>J4kiW$hP)*H^9&43rk*a2Ar*7pPBqMa6(Dl_
+zyl>vh0Hch~#Vh0wd$P3iM13&k5G@Iv;Be6I?ve*@o)-vkOIm3*c?&vju;}1xVmYF6
+z@A5+%{mO0p_qu<n{lCqtvj5NdpYw|u*X??xHEEFs!-p?lw#4Y=-d=b8HN%2cua;Jv
+zO%ty5S{gL{kti3d%NHAej)#?UN_}q1=XS1I)w9v~@V)!@TLpgqotGoHK5FeD)iXD@
+zy<M-^n0veLXi~w841>QP(lkUq$x9|Xb?n}4ec0d}fAsq63=JLb=eOU^O*kWe^=(<I
+ziNM5J=JU@hPvl5`b4F5gs@Eh(USX#tmos;`I2?NTA!(xm&(GCYvltFo+J8K4|9#EX
+ztU$dL8Pihd)*q_-DC&B7%lY&EiY<>VI&QrGo}ZVeXLRMtj2ON4j&-ktRByjEV<<S+
+zU(sWD&hoj<4-bL$SF;osJ+@f)TItd0)29XBYv?nsH9i&+`gBh8G}nKBY@CEVuYXP2
+z7@;?P^2sOt^&i56L|P4(z5Z2UW4CH~jA2{indik)$IqrE&wBRuZEk@a!;!}yUzWUj
+z&db)EW0pNjEpbV{iws};OrK}-Jym`kcTxKI@uTD4$+M5{kI(p{y6IxZoFm<Ci}UmI
+zOCIl7=lxl)<-mQ_n~aH*j$78()=pje+i%kA+^tcp?FSY089sdYU@+5X3IDA*|CE)&
+zw5Co@D44;{aKYrP$=RDZ-|k8(+1cCA_nI_m<G%g->uYM>lvs5iP1=5Y?e*7j>!+W8
+k{%{NTw^ghE_3vY7`tZ++JBz!9fq{X+)78&qol`;+007=E<p2Nx
+
+literal 0
+HcmV?d00001
+
+diff --git a/Telegram/Resources/icons/folders/folders_vg_calls@2x.png b/Telegram/Resources/icons/folders/folders_vg_calls@2x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..3f60b238071caf8a6873338e2b6737ed64cc1961
+GIT binary patch
+literal 1273
+zcmeAS@N?(olHy`uVBq!ia0y~yVDJE84kiW$hFkqA0t^f+2RvOILn`LHo#n4l5-V|F
+ze)YQ-U$<{8H1sr#TySN|jRgT_rw$#OvMA?<hU(G{^IA7;*c2$XNTd0a`sP_Pj8r2%
+zB6^(K)P#MLOU~~7Uem3<{P#Kg;@W-R_icawFD!Y^YrFlG^FGfpe$HfI2nRpsJ8>Ko
+z_gjAX_1As-_PHquuD^c!)~!|l)*d{tV{O>$U%#yW&fUI!`?hUn3=b;f-W!-YaVWNk
+zh>OpkGbg}H)pJs+<l09cEtY<H_Ds#*e*W{yzQ<qq!nh?q{`+UQ^vmPN%8JP^o)zt6
+zIFPjQh3p!)w)Xbms6a1K*NG~gB1eDysxk<36cZJ_d-v|iO=q+W7(FLxER9<)-lJ+}
+zVd0_ao4!=<#KMJ&1`}rAetWFyv_jiYo>nJSRaKeel8b-ezjNn7%qfLqTt$V2f<2SA
+zWSGo~<O~#Xo%XcCCU5&~$Nj3&hhvM2iZ)3eE1a`PL#%u0-o3IsifUa+-<ma-n$7mD
+zwy|$x+Zdq1!Z77h4qLH|IA8mI$t(T~9N)Zp#l;}v`tw)65EDatdwXQxfBg#z&p!X$
+zB&p^pq<G|Q+5GwQg`K_#U2Zu1@W5B|&sNJcybL6Cw6%@TSh;an+S(q?o44-b;!1aS
+zc8OF$XEimo7ti-;-o0dFYs=eq`@!_-)7=*bx&}`AE}yY=^JeC@&4(^UMMQY`Nv%4T
+zw6Uv;>#&b5n_|o39jjKYiqL8ERXX_g@#Dq&_Q~zfcrCle%^-90=FKNP4+oX(zMHTk
+zh=oDNc=gp^A3jXDBX==3A%UUiMVsgA*RQ=TFQ-KIxh>}9<xN;q)}L@hT3TAi`xWb~
+zASn(O7DtA|vc^f(8k(AwH8nor6YBQwU$B6I=Xsmw>sPN1HTk@l5V1(E|M~Ux@e}4s
+zpZ`3~zvQ3J2HP`d&RqC%yr;UlI)2wftx12D<yFZXUwHf0t*9d9z~^f>Y!JBgMd(|a
+zxA*BMPoBJa^XA44iEnZjHf~M&e*WxPTRXdR51xJh{qc5*(}Ew#zP`Q3AA7!VIDPu`
+z)TvY7h*|A;7|ZIoW8Xf%yh$OYYwlmU!opy4ezHHqg6-SQW%w5R{1M*s;pflFk`j^C
+zSCTfq_+Z0udgZQNzd$KXdY^FjQ8zcYE8@Fi^u9Jc@zz-C?(Tl}?Ace+FCT<OM@#dt
+z1+$%+*0Of(+GEF#?b@}gxtUpJ=DP)xWY2j`GBGy~kBM2c`S#trv8R46i~IP&^_lb2
+zmMg4Gjql#Qv(If!Fy3(c?eyu>P0l(?ie;FE@q9D<`sK@u$8D9`y1HL~)|gzqb#~MA
+zy;E<!{q-wK-tgJ9*|T?V+T>&}ADnU3gHvpCUebbF={~-`EA8Lc`>P0D4CZ05=u7^6
+z^7ifMU%!oC=Qk7=m6wO78?xN)RNz>>dbLjJ{TT^szHZ;L<;B}CoY9qY{L&Q!e$1Pv
+z(KY4L&YhOEu|kQdnOmb`^}<zz6073H)bqA#EWLgEw$1tfz4uQ=`dqzw_4DV?`uh4h
+zRdecIJ@(3J@Ttzs)Kph*f4pP=7kiJ0R}2TzHuv`T|Ni@L%4>_qj~*@Bzkh!0x`%Q0
+z^8dmgT#K8e^5^2if|9bbZQHh8yLOGMX~OjB>Rpd6U%q_v=FM;4zCC;P?DubLMHbut
+gHCxo+pzWc2i+D|hsLiGf1_lNOPgg&ebxsLQ0I8OHBLDyZ
+
+literal 0
+HcmV?d00001
+
+diff --git a/Telegram/Resources/icons/folders/folders_vg_calls@3x.png b/Telegram/Resources/icons/folders/folders_vg_calls@3x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..1ed6e6ef773f0c5247ab0784df7068c81c1abb41
+GIT binary patch
+literal 1953
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/Telegram/Resources/icons/folders/folders_vg_contacts.png b/Telegram/Resources/icons/folders/folders_vg_contacts.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..e7408e77486e30248984517f239238fd4a42ad96
+GIT binary patch
+literal 844
+zcmeAS@N?(olHy`uVBq!ia0y~yU{C>J4kiW$hP)*H^9&5k!k#XUAr*7phHcDy<t1=8
+zcD<qI0wwzilR`o~g<YhdL@e`|Jg@#iaFUSXM2^mDPG0RXE)yL#wK#Y+Px#4TUdYII
+z<KE7rFV@K%u5NnqGIUN>X^qWeOKa<FCqIjaEj$`ayA}yJiMSg2et!Bi)o%X!Fm1&n
+zSzBkFf4+YG`em73yi31)pZVdb+v112^!^yfT+cO;dKq3fxwH6Q-gd)90!n?!iY;d*
+zCf<5$_WaL_niq1<YYZe997J3_CnX$F@m!?Q^|)d>OT)p01D5vZ{O>eBf1b{8Bgbr$
+zh-9sP^Qq;_)g>PWyx7IZaQm%Ut`tMXyz5z8-@Shyy>{C3%1Q1E;;w&HHd?vLYWCRz
+z?-W+2j*}@tT2q&-3DNRZ6IN_l!@s@2Z1&1kRT)Ny4UEJd?uuF~<YeL-EaH0E#K~i8
+z)ZNv4cJH<}iCll(dwQ$e&wcS4A}O06E(*~2v2VVaaQEx4Rn^LyV_*IHH7n@Ujehr?
+zF?!Qa8y-tBIwmp6{*a-Y=H6YqthQ`2;4zME4>g<Z>(sGoRo9{i>r7_*{xs<|;Nkb3
+zmS^xXWs-`cz?IjfnyatBj*pMOVZHm;-ihDm>@(o`{IjNwg~8;*-@kW1@9FODo;`cE
+z$^2vAzkk1Z^QPleU9s*njECwv7il;@GC4VcVMBz@H@AD26&`=I$ZZvH;xq7iS+$q1
+zDPeEi;}1t3P7z~1P+@a#cF+5uzjgl~K4d&A=wxurY<6$%?fm@w`Sa)Rd!N7kc8p$m
+zU0q#eWo31B_N-;gGFKc?zWDw-|ECE{)HwRCKP-sQoBrQ5UT=E)VMT@o=a2ged@46P
+zR`|w(Z`ujV=W~pYefV71sG`^s^vZ&7UgP65<#RcwH!&P2lzDUJ?r!Hi6-AZ#=dJsg
+z8K$L9T)fQAEim-zwp<2@Ubm@Us=6n5rh6?llImqRur1f-ll%SoH*)&>`)^#H>$f~?
+zwP?5NN=>outx;<)zg%!&)0+Ett{BPd@f@D;U%^qpXZhv+{{ELGQY?&<*1eW$bFBNz
+zuk?B0?;gY0>$~s1E802bdHK$mvfZ(<*Z()~UoGtS<NinX3C`m2)z=w8xrD*f)z4*}
+HQ$iB}(9x8L
+
+literal 0
+HcmV?d00001
+
+diff --git a/Telegram/Resources/icons/folders/folders_vg_contacts@2x.png b/Telegram/Resources/icons/folders/folders_vg_contacts@2x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..f5a852633a9e292de2f9be2040bc31043517f016
+GIT binary patch
+literal 1771
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/Telegram/Resources/icons/folders/folders_vg_contacts@3x.png b/Telegram/Resources/icons/folders/folders_vg_contacts@3x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..f9f613bebc5624950d6ebaf801ca5354e947ebcd
+GIT binary patch
+literal 2745
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/Telegram/Resources/icons/folders/folders_vg_settings.png b/Telegram/Resources/icons/folders/folders_vg_settings.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..e6cfd2ee2141d6c5b665705b178bf0f963a8c992
+GIT binary patch
+literal 831
+zcmeAS@N?(olHy`uVBq!ia0y~yU{C>J4kiW$hP)*H^9&5kY@RNTAr*7pPIL5r?Im*D
+z|IrqX(nNvMWJQe?jG9VQodS2ARN^{TE6%!EbkfuxoGM(MyY<#Sa0+j#V?U^r$GTLs
+zYg&*fm(T_^+2?nT7Brs^U%GeuhkJ|mKQ$=!^ZWPwPddY|FE2kcFVb*Z9O&d>H8;;h
+z>Sf6+0ij+u*T6SQC(d&+IE03t-XxLiC=lS48aYkHb6TobrT|Ni;pt5wp}gP!E4BzQ
+zSlHOOxEwYxn%R?k`)Zb`;OeWd-o49Hn{3F#EXdvJv}1p^OQ1@Ni;|$DfQakITKW3N
+zzw7qK{ok}mqf3EfqDPCsr|_?qea#)~*RTKm`*(41vCTA%uFab__dTwd*WR)2^}kA{
+z(9q96Ym8<-nW?9*pPrV+(6C-cR(9vQ-Me;iF?_7p6QQHD=&{Ag6r=g)i~sIAU~=|@
+zzG(N+fS$*Xlm8rf`}XalM@ouMUcJ(aG4b8p?ZeE>%#a|#mVD;(p3ctBpFe-@-fiuB
+zxvjnZ_17u^mVNKHN9nroG$kY^D$4a&&pR$*%%j|ML9k|C&`Ocyp6)=s>4G1B{<IY9
+zUb}Yf$7Ktq?AyQJ_?XvHA%-36PD^+%4XXLKOM{Og=eFCCl`A!UFAHqEnWOaR=TA!p
+z85x-e_L1@N^XJTQak;&%zT;+^(X?sPQX<biEjpX_`QN{JuiZHoPI<L!-^Ps_ckZ;b
+zv$HcZJ7#QnOse<T<HwJ0-;UOszI*4+l_6T<;^MMbMe6d`h6%GgeDZ`vFnX=n(kVev
+zded*ulai9Es;J;NUlw)q)2B^3r>m>0C#fhtI(?ek{><y!H*ZSH$k^E0%F4<<Ews0@
+z+qP}ny7lYb-Q2Ra-um{fY-!NT6>BDJn>BatTt<h50Y4VaT=#lz#<jNhyFR{rsVUa|
+za@W1nc{$eUOM^Twn|MyDvPox1h!o4;tj~8Szu~=1%lr4|92d+r_w)B>c2Jtgv9~Za
+zm9^?o@BE){es#JimDIWhRz3dp|6uL0rH^|5y`Oz++uM70t|ZnnELim_{p{wOI!bAq
+uZx$RiIV-ovai7Y+-`7Lu+x?fXV|*pNo^P$01t$Xo1B0ilpUXO@geCwB+lSx)
+
+literal 0
+HcmV?d00001
+
+diff --git a/Telegram/Resources/icons/folders/folders_vg_settings@2x.png b/Telegram/Resources/icons/folders/folders_vg_settings@2x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..17c22bc6192b77f831823c5935df423be814a1cc
+GIT binary patch
+literal 1970
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/Telegram/Resources/icons/folders/folders_vg_settings@3x.png b/Telegram/Resources/icons/folders/folders_vg_settings@3x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..abe1ac79e0009301d93578b12599a451c6c592ac
+GIT binary patch
+literal 3499
+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
+FCIHp3&U63(
+
+literal 0
+HcmV?d00001
+
 diff --git a/Telegram/Resources/icons/menu/add.png b/Telegram/Resources/icons/menu/add.png
 index d4c77a202c4fe31fcf48f38f030c8f0df0d2be25..9ac600fcd1c7ada63de53e4bc3a8115be9da99e9 100644
 GIT binary patch
@@ -48701,7 +49097,7 @@ index 9c0462e..ecdde3d 100644
  			Ui::NameTextOptions());
  	}
 diff --git a/Telegram/SourceFiles/history/view/history_view_top_bar_widget.cpp b/Telegram/SourceFiles/history/view/history_view_top_bar_widget.cpp
-index bb75eeb..4266726 100644
+index bb75eeb..bdf1904 100644
 --- a/Telegram/SourceFiles/history/view/history_view_top_bar_widget.cpp
 +++ b/Telegram/SourceFiles/history/view/history_view_top_bar_widget.cpp
 @@ -36,6 +36,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
@@ -48744,7 +49140,7 @@ index bb75eeb..4266726 100644
  	auto nameleft = _leftTaken;
  	auto statusleft = nameleft;
  	auto nametop = st::topBarArrowPadding.top();
-@@ -694,6 +713,27 @@ void TopBarWidget::paintTopBar(Painter &p) {
+@@ -694,6 +713,29 @@ void TopBarWidget::paintTopBar(Painter &p) {
  				TopBarNameText(namePeer, _activeChat),
  				Ui::NameTextOptions());
  		}
@@ -48766,13 +49162,15 @@ index bb75eeb..4266726 100644
 +			const auto inner = capsuleWidth - 2 * st::topBarArrowPadding.right();
 +			nameleft = capsuleLeft + st::topBarArrowPadding.right() + (inner - textWidth) / 2;
 +			namewidth = inner;
-+			statusleft = capsuleLeft + st::topBarArrowPadding.right();
-+			statuswidth = inner;
++			// The status sits centred under the name, as the name does.
++			const auto statusText = std::min(inner, _titlePeerText.maxWidth());
++			statusleft = capsuleLeft + st::topBarArrowPadding.right() + (inner - statusText) / 2;
++			statuswidth = inner - (inner - statusText) / 2;
 +		}
  		if (const auto info = namePeer->botVerifyDetails()) {
  			if (!_titleBadge.ready(info)) {
  				_titleBadge.set(
-@@ -1275,8 +1315,7 @@ void TopBarWidget::updateControlsGeometry() {
+@@ -1275,8 +1317,7 @@ void TopBarWidget::updateControlsGeometry() {
  				middle - infoSt.photoPosition.x(),
  				_narrowRatio);
  		}
@@ -48782,7 +49180,7 @@ index bb75eeb..4266726 100644
  	} else if (_activeChat.key.topic()
  		|| _activeChat.section == Section::ChatsList) {
  		_leftTaken += st::normalFont->spacew;
-@@ -1312,6 +1351,10 @@ void TopBarWidget::updateControlsGeometry() {
+@@ -1312,6 +1353,10 @@ void TopBarWidget::updateControlsGeometry() {
  	}
  
  	_rightTaken = 0;
@@ -48819,6 +49217,19 @@ index b25c8d2..6fcd601 100644
  			paintSingleBg(p, fill, color, opacity);
  			if (inbubble && !chosen) {
  				p.setOpacity(bubbleProgress);
+diff --git a/Telegram/SourceFiles/info/info.style b/Telegram/SourceFiles/info/info.style
+index ff79daf..e783f2d 100644
+--- a/Telegram/SourceFiles/info/info.style
++++ b/Telegram/SourceFiles/info/info.style
+@@ -365,7 +365,7 @@ infoLayerTopBar: InfoTopBar(infoTopBar) {
+ infoLayerTopBarMenuPosition: point(48px, 37px);
+ 
+ 
+-infoProfileTopBarHeightMax: 180px + infoLayerTopBarHeight;
++infoProfileTopBarHeightMax: 212px + infoLayerTopBarHeight; // VoidGram: room for the TON pill under the status.
+ 
+ infoProfileBirthdayConfettiSize: 360px;
+ infoProfileBirthdayDigitSize: 64px;
 diff --git a/Telegram/SourceFiles/info/info_memento.cpp b/Telegram/SourceFiles/info/info_memento.cpp
 index 452b761..b6526a3 100644
 --- a/Telegram/SourceFiles/info/info_memento.cpp
@@ -48898,7 +49309,7 @@ index fa2a473..731df6a 100644
  		Ui::PreloadUniqueGiftResellPrices(&_peer->session());
  	}
 diff --git a/Telegram/SourceFiles/info/profile/info_profile_actions.cpp b/Telegram/SourceFiles/info/profile/info_profile_actions.cpp
-index d3aa858..df1eae1 100644
+index d3aa858..458df72 100644
 --- a/Telegram/SourceFiles/info/profile/info_profile_actions.cpp
 +++ b/Telegram/SourceFiles/info/profile/info_profile_actions.cpp
 @@ -6,6 +6,9 @@ For license and copyright information please follow this link:
@@ -48919,7 +49330,7 @@ index d3aa858..df1eae1 100644
  #include "ui/wrap/vertical_layout.h"
  #include "window/window_controller.h" // Window::Controller::show.
  #include "window/window_peer_menu.h"
-@@ -1770,6 +1774,69 @@ Section DetailsFiller::makeInfo() {
+@@ -1770,6 +1774,60 @@ Section DetailsFiller::makeInfo() {
  			};
  			phoneLabel->setContextMenuHook(hook);
  		}
@@ -48956,16 +49367,7 @@ index d3aa858..df1eae1 100644
 +					return TextWithEntities{ names.join(u", "_q) };
 +				}),
 +				QString());
-+			result->add(VoidGram::MakeTonCard(
-+				result,
-+				(rpl::single(rpl::empty) | rpl::then(
-+					VoidGram::Registry::instance().changes() | rpl::to_empty
-+				)) | rpl::map([=](rpl::empty_value) {
-+					const auto entry = VoidGram::Registry::instance().find(bareId);
-+					return (entry && entry->cosmetics)
-+						? qint64(entry->cosmetics->tonNano)
-+						: qint64(0);
-+				})));
++			// VoidGram: the TON balance is a pill under the status in the header now (info_profile_top_bar.cpp).
 +			if (user->isSelf()) {
 +				// Your own VoidGram profile is edited here, not in the settings.
 +				const auto ru = Lang::Id().startsWith(u"ru"_q);
@@ -48990,10 +49392,10 @@ index d3aa858..df1eae1 100644
  			? tr::lng_info_about_label()
  			: tr::lng_info_bio_label();
 diff --git a/Telegram/SourceFiles/info/profile/info_profile_top_bar.cpp b/Telegram/SourceFiles/info/profile/info_profile_top_bar.cpp
-index e9183a3..c479462 100644
+index e9183a3..4ceb3c6 100644
 --- a/Telegram/SourceFiles/info/profile/info_profile_top_bar.cpp
 +++ b/Telegram/SourceFiles/info/profile/info_profile_top_bar.cpp
-@@ -108,10 +108,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
+@@ -108,10 +108,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
  #include "styles/style_menu_icons.h"
  
  #include <QtGui/QClipboard>
@@ -49005,10 +49407,11 @@ index e9183a3..c479462 100644
 +#include "voidgram/voidgram_frames.h"
 +#include "voidgram/voidgram_names.h"
 +#include "voidgram/voidgram_registry.h"
++#include "voidgram/voidgram_ton_card.h"
  #include "ayu/utils/telegram_helpers.h"
  
  
-@@ -404,7 +408,12 @@ TopBar::TopBar(
+@@ -404,7 +409,12 @@ TopBar::TopBar(
  			? 0
  			: st::infoProfileTopBarActionButtonsHeight);
  }())
@@ -49022,7 +49425,29 @@ index e9183a3..c479462 100644
  , _starsRating((_peer->isUser() && !_savedMessages)
  	? std::make_unique<Ui::StarsRating>(
  		this,
-@@ -464,6 +473,20 @@ TopBar::TopBar(
+@@ -458,12 +468,42 @@ TopBar::TopBar(
+ , _backToggles(std::move(descriptor.backToggles)) {
+ 	setObjectName(u"profileTopBar"_q);
+ 	_peer->updateFull();
++	if (const auto user = _peer->asUser(); user && !user->isBot() && !_savedMessages) {
++		const auto bareId = qint64(user->id.value & PeerId::kChatTypeMask);
++		_vgTonPill = VoidGram::MakeTonPill(
++			this,
++			(rpl::single(rpl::empty) | rpl::then(
++				VoidGram::Registry::instance().changes() | rpl::to_empty
++			)) | rpl::map([=](rpl::empty_value) {
++				const auto entry = VoidGram::Registry::instance().find(bareId);
++				return (entry && entry->cosmetics)
++					? qint64(entry->cosmetics->tonNano)
++					: qint64(0);
++			}));
++		_vgTonPill->widthValue() | rpl::on_next([=] {
++			updateLabelsPosition();
++		}, _vgTonPill->lifetime());
++	}
+ 	_communityEffect = (_source == Source::Community);
+ 	if (const auto broadcast = _peer->monoforumBroadcast()) {
+ 		broadcast->updateFull();
  	}
  	const auto controller = descriptor.controller;
  
@@ -49043,7 +49468,7 @@ index e9183a3..c479462 100644
  	if (_peer->isMegagroup() || _peer->isChat()) {
  		_statusLabel->setMembersLinkCallback([=, peer = _peer] {
  			const auto topic = _key.topic();
-@@ -1293,6 +1316,16 @@ void TopBar::setupUserpicButton(
+@@ -1293,6 +1333,16 @@ void TopBar::setupUserpicButton(
  		return;
  	}
  
@@ -49060,7 +49485,7 @@ index e9183a3..c479462 100644
  	const auto openPhoto = [=, peer = _peer] {
  		if (const auto id = peer->userpicPhotoId()) {
  			if (const auto photo = peer->owner().photo(id); photo->date()) {
-@@ -1962,6 +1995,10 @@ void TopBar::updateLabelsPosition() {
+@@ -1962,6 +2012,10 @@ void TopBar::updateLabelsPosition() {
  		if (_userpicButton) {
  			_userpicButton->setGeometry(userpicGeometry());
  		}
@@ -49071,7 +49496,27 @@ index e9183a3..c479462 100644
  
  		updateGiftButtonsGeometry(progressCurrent, userpicRect);
  	}
-@@ -2772,6 +2809,20 @@ void TopBar::resizeEvent(QResizeEvent *e) {
+@@ -2140,6 +2194,19 @@ void TopBar::updateStatusPosition(float64 progressCurrent) {
+ 		* std::clamp((progressCurrent) / 0.15, 0., 1.);
+ 
+ 	_status->moveToLeft(statusLeft + statusShift, statusTop);
++	if (const auto pill = _vgTonPill) {
++		pill->moveToLeft(
++			(width() - pill->width()) / 2,
++			statusTop + statusStyle().style.font->height + 10);
++		// Shown in the expanded header only, where there is room under the status.
++		pill->setAttribute(Qt::WA_TransparentForMouseEvents);
++		if (progressCurrent < 0.9) {
++			pill->lower();
++			pill->move(pill->x(), -pill->height() * 2);
++		} else {
++			pill->raise();
++		}
++	}
+ 
+ 	if (_showLastSeen->toggled()) {
+ 		_showLastSeen->moveToLeft(
+@@ -2772,6 +2839,20 @@ void TopBar::resizeEvent(QResizeEvent *e) {
  	RpWidget::resizeEvent(e);
  }
  
@@ -49093,7 +49538,7 @@ index e9183a3..c479462 100644
  	constexpr auto kMinScale = 0.25;
  	const auto progressCurrent = _progress.current();
 diff --git a/Telegram/SourceFiles/info/profile/info_profile_top_bar.h b/Telegram/SourceFiles/info/profile/info_profile_top_bar.h
-index a37e994..960d96f 100644
+index a37e994..edfc32a 100644
 --- a/Telegram/SourceFiles/info/profile/info_profile_top_bar.h
 +++ b/Telegram/SourceFiles/info/profile/info_profile_top_bar.h
 @@ -24,6 +24,10 @@ struct ColorProfileSet;
@@ -49115,7 +49560,15 @@ index a37e994..960d96f 100644
  	void setupBirthdayEffect();
  	void startUploadOverlay();
  	void setupActions(not_null<Window::SessionController*> controller);
-@@ -330,6 +335,7 @@ private:
+@@ -305,6 +310,7 @@ private:
+ 	bool _standaloneGroupReached = false;
+ 	object_ptr<Ui::FlatLabel> _status;
+ 	std::unique_ptr<StatusLabel> _statusLabel;
++	Ui::RpWidget *_vgTonPill = nullptr; // VoidGram: the TON balance under the status, as on the iPhone.
+ 	rpl::variable<int> _statusShift = 0;
+ 	rpl::producer<TextWithEntities> _customStatus;
+ 	object_ptr<Ui::FadeWrap<Ui::RoundButton>> _showLastSeen = { nullptr };
+@@ -330,6 +336,7 @@ private:
  	QRect _lastUserpicRect;
  
  	base::unique_qptr<Ui::AbstractButton> _userpicButton;
@@ -49412,6 +49865,19 @@ index 3ea2e08..1d080fa 100644
  	});
  	_tray.addAction(std::move(quitText), [] { Core::Quit(); });
  
+diff --git a/Telegram/SourceFiles/ui/filter_icons.style b/Telegram/SourceFiles/ui/filter_icons.style
+index e6e27df..93016aa 100644
+--- a/Telegram/SourceFiles/ui/filter_icons.style
++++ b/Telegram/SourceFiles/ui/filter_icons.style
+@@ -158,3 +158,8 @@ foldersSectionStickers: icon {{ "folders/svg/section_stickers-36x36", sideBarIco
+ foldersSectionChat: icon {{ "folders/svg/section_chat-36x36", sideBarIconFg }};
+ foldersSectionLanguage: icon {{ "folders/svg/section_language-36x36", sideBarIconFg }};
+ foldersSectionInfo: icon {{ "folders/svg/section_info-36x36", sideBarIconFg }};
++
++// VoidGram: the Contacts / Calls / Settings tabs at the foot of the folder rail, from Telegram iOS's tab bar.
++vgTabContacts: icon {{ "folders/folders_vg_contacts", sideBarIconFg }};
++vgTabCalls: icon {{ "folders/folders_vg_calls", sideBarIconFg }};
++vgTabSettings: icon {{ "folders/folders_vg_settings", sideBarIconFg }};
 diff --git a/Telegram/SourceFiles/voidgram/voidgram_effects.cpp b/Telegram/SourceFiles/voidgram/voidgram_effects.cpp
 new file mode 100644
 index 0000000..cccb62f
@@ -52838,10 +53304,10 @@ index 0000000..43617db
 +} // namespace VoidGram
 diff --git a/Telegram/SourceFiles/voidgram/voidgram_ton_card.cpp b/Telegram/SourceFiles/voidgram/voidgram_ton_card.cpp
 new file mode 100644
-index 0000000..cd20f66
+index 0000000..3cadf90
 --- /dev/null
 +++ b/Telegram/SourceFiles/voidgram/voidgram_ton_card.cpp
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,197 @@
 +// This file is part of VoidGram for Desktop, a fork of AyuGram Desktop.
 +// It is licensed under GPLv3 with the same exceptions as the rest of the code.
 +#include "voidgram/voidgram_ton_card.h"
@@ -52973,7 +53439,56 @@ index 0000000..cd20f66
 +
 +};
 +
++class TonPill final : public Ui::RpWidget {
++public:
++	TonPill(QWidget *parent, rpl::producer<qint64> nano) : RpWidget(parent) {
++		std::move(nano) | rpl::on_next([=](qint64 value) {
++			_nano = value;
++			_text = AmountText(value) + u" TON"_q;
++			resize(kPillHeight + 6 + pillFont()->width(_text) + 12, kPillHeight);
++			// The iPhone shows the pill only from 0.1 TON.
++			setVisible(value >= 100'000'000);
++			update();
++		}, lifetime());
++	}
++
++private:
++	static constexpr auto kPillHeight = 26;
++
++	[[nodiscard]] style::font pillFont() const {
++		return st::semiboldFont;
++	}
++
++	void paintEvent(QPaintEvent *e) override {
++		auto p = QPainter(this);
++		auto hq = PainterHighQualityEnabler(p);
++		p.setPen(Qt::NoPen);
++		p.setBrush(QColor(0x00, 0x98, 0xEA));
++		p.drawRoundedRect(QRectF(rect()), height() / 2., height() / 2.);
++		const auto mark = QRectF(5, 5, height() - 10, height() - 10);
++		p.setBrush(QColor(255, 255, 255, 46));
++		p.drawEllipse(mark);
++		PaintMark(p, mark.adjusted(2, 2, -2, -2));
++		p.setPen(Qt::white);
++		p.setFont(pillFont());
++		p.drawText(
++			QRect(int(mark.right()) + 6, 0, width(), height()),
++			Qt::AlignLeft | Qt::AlignVCenter,
++			_text);
++	}
++
++	qint64 _nano = 0;
++	QString _text;
++
++};
++
 +} // namespace
++
++not_null<Ui::RpWidget*> MakeTonPill(
++		not_null<QWidget*> parent,
++		rpl::producer<qint64> nano) {
++	return Ui::CreateChild<TonPill>(parent.get(), std::move(nano));
++}
 +
 +object_ptr<Ui::RpWidget> MakeTonCard(
 +		not_null<QWidget*> parent,
@@ -52992,10 +53507,10 @@ index 0000000..cd20f66
 +} // namespace VoidGram
 diff --git a/Telegram/SourceFiles/voidgram/voidgram_ton_card.h b/Telegram/SourceFiles/voidgram/voidgram_ton_card.h
 new file mode 100644
-index 0000000..bdf151a
+index 0000000..113ec23
 --- /dev/null
 +++ b/Telegram/SourceFiles/voidgram/voidgram_ton_card.h
-@@ -0,0 +1,18 @@
+@@ -0,0 +1,24 @@
 +// This file is part of VoidGram for Desktop, a fork of AyuGram Desktop.
 +// It is licensed under GPLv3 with the same exceptions as the rest of the code.
 +#pragma once
@@ -53010,6 +53525,12 @@ index 0000000..bdf151a
 +// A card with a TON balance, like the one in the iPhone profile: a blue gradient, the TON mark,
 +// a small caption and the amount large. `nano` is the balance in nanotons.
 +[[nodiscard]] object_ptr<Ui::RpWidget> MakeTonCard(
++	not_null<QWidget*> parent,
++	rpl::producer<qint64> nano);
++
++// The balance pill under the status in a profile's header, as on the iPhone: the TON mark and the amount
++// in a blue capsule. It sizes itself to its text and hides below 0.1 TON. The caller positions it.
++[[nodiscard]] not_null<Ui::RpWidget*> MakeTonPill(
 +	not_null<QWidget*> parent,
 +	rpl::producer<qint64> nano);
 +
@@ -53230,6 +53751,78 @@ index 5d7145c..cc13d36 100644
  		},
  		EmbeddedScheme{
  			EmbeddedType::NightGreen,
+diff --git a/Telegram/SourceFiles/window/window_filters_menu.cpp b/Telegram/SourceFiles/window/window_filters_menu.cpp
+index 0c49456..f76ebec 100644
+--- a/Telegram/SourceFiles/window/window_filters_menu.cpp
++++ b/Telegram/SourceFiles/window/window_filters_menu.cpp
+@@ -46,6 +46,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
+ #include "apiwrap.h"
+ #include "styles/style_widgets.h"
+ #include "styles/style_window.h"
++#include "styles/style_filter_icons.h"
++#include "boxes/peer_list_controllers.h"
++#include "calls/calls_box_controller.h"
+ #include "styles/style_menu_icons.h"
+ 
+ #include <QtGui/QtEvents>
+@@ -130,6 +133,29 @@ void FiltersMenu::setup() {
+ 	_outer.setAttribute(Qt::WA_OpaquePaintEvent);
+ 	_outer.show();
+ 
++	_vgTabs = Ui::CreateChild<Ui::VerticalLayout>(&_outer);
++	const auto addTab = [&](
++			tr::phrase<> text,
++			const style::icon &icon,
++			Fn<void()> callback) {
++		const auto button = _vgTabs->add(object_ptr<Ui::SideBarButton>(
++			_vgTabs,
++			TextWithEntities{ text(tr::now) },
++			st::windowFiltersButton));
++		button->setIconOverride(&icon, &icon);
++		button->setClickedCallback(std::move(callback));
++	};
++	addTab(tr::lng_menu_contacts, st::vgTabContacts, [=] {
++		_session->show(PrepareContactsBox(_session));
++	});
++	addTab(tr::lng_menu_calls, st::vgTabCalls, [=] {
++		::Calls::ShowCallsBox(_session);
++	});
++	addTab(tr::lng_menu_settings, st::vgTabSettings, [=] {
++		_session->showSettings();
++	});
++	_vgTabs->show();
++
+ 	// Keep the sidebar's Tab chain in visual order: the main menu button
+ 	// above the scroll area, and inside it the folders list (entered at
+ 	// its roving Tab-stop), the favorite link and the edit button - even
+@@ -150,8 +176,13 @@ void FiltersMenu::setup() {
+ 		_outer.setGeometry({ 0, 0, width, height });
+ 		_menu.resizeToWidth(width);
+ 		_menu.move(0, 0);
+-		_scroll.setGeometry(
+-			{ 0, _menu.height(), width, height - _menu.height() });
++		_vgTabs->resizeToWidth(width);
++		_vgTabs->moveToLeft(0, height - _vgTabs->height());
++		_scroll.setGeometry({
++			0,
++			_menu.height(),
++			width,
++			height - _menu.height() - _vgTabs->height() });
+ 		_container->resizeToWidth(width);
+ 		_container->move(0, 0);
+ 	}, _outer.lifetime());
+diff --git a/Telegram/SourceFiles/window/window_filters_menu.h b/Telegram/SourceFiles/window/window_filters_menu.h
+index 541acb3..b947c4c 100644
+--- a/Telegram/SourceFiles/window/window_filters_menu.h
++++ b/Telegram/SourceFiles/window/window_filters_menu.h
+@@ -82,6 +82,7 @@ private:
+ 	Ui::VerticalLayout *_list = nullptr;
+ 	std::unique_ptr<Ui::VerticalLayoutReorder> _reorder;
+ 	base::unique_qptr<Ui::SideBarButton> _setup;
++	Ui::VerticalLayout *_vgTabs = nullptr; // VoidGram: Contacts / Calls / Settings at the foot, as on iOS.
+ 	base::unique_qptr<Ui::SlideWrap<FolderFavoriteButton>> _favorite;
+ 	base::flat_map<FilterId, base::unique_qptr<Ui::SideBarButton>> _filters;
+ 	base::weak_qptr<Ui::SideBarButton> _tabStop;
 diff --git a/lib/xdg/com.ayugram.desktop.service b/lib/xdg/com.ayugram.desktop.service
 deleted file mode 100644
 index 52ec1b5..0000000
