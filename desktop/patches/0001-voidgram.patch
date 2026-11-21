@@ -49097,7 +49097,7 @@ index 9c0462e..ecdde3d 100644
  			Ui::NameTextOptions());
  	}
 diff --git a/Telegram/SourceFiles/history/view/history_view_top_bar_widget.cpp b/Telegram/SourceFiles/history/view/history_view_top_bar_widget.cpp
-index bb75eeb..bdf1904 100644
+index bb75eeb..2be0156 100644
 --- a/Telegram/SourceFiles/history/view/history_view_top_bar_widget.cpp
 +++ b/Telegram/SourceFiles/history/view/history_view_top_bar_widget.cpp
 @@ -36,6 +36,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
@@ -49108,7 +49108,15 @@ index bb75eeb..bdf1904 100644
  #include "ui/unread_badge.h"
  #include "ui/controls/button_context_menu.h"
  #include "ui/ui_utility.h"
-@@ -142,6 +143,8 @@ TopBarWidget::TopBarWidget(
+@@ -74,6 +75,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
+ 
+ // AyuGram includes
+ #include "ayu/ayu_settings.h"
++#include "ayu/utils/telegram_helpers.h"
+ #include "boxes/peers/edit_participants_box.h"
+ #include "data/data_chat_filters.h"
+ #include "history/admin_log/history_admin_log_section.h"
+@@ -142,6 +144,8 @@ TopBarWidget::TopBarWidget(
  , _admins(this, st::topBarAdmins)
  , _titlePeerText(st::windowMinWidth / 3)
  , _onlineUpdater([=] { updateOnlineDisplay(); }) {
@@ -49117,7 +49125,7 @@ index bb75eeb..bdf1904 100644
  	setAttribute(Qt::WA_OpaquePaintEvent);
  
  	_clear->setTextTransform(Ui::RoundButtonTextTransform::ToUpper);
-@@ -570,6 +573,22 @@ void TopBarWidget::paintTopBar(Painter &p) {
+@@ -570,6 +574,22 @@ void TopBarWidget::paintTopBar(Painter &p) {
  	if (!_activeChat.key || _narrowRatio == 1.) {
  		return;
  	}
@@ -49140,13 +49148,21 @@ index bb75eeb..bdf1904 100644
  	auto nameleft = _leftTaken;
  	auto statusleft = nameleft;
  	auto nametop = st::topBarArrowPadding.top();
-@@ -694,6 +713,29 @@ void TopBarWidget::paintTopBar(Painter &p) {
+@@ -694,6 +714,37 @@ void TopBarWidget::paintTopBar(Painter &p) {
  				TopBarNameText(namePeer, _activeChat),
  				Ui::NameTextOptions());
  		}
 +		{
 +			// VoidGram: the name and status sit centred in a capsule, as in Telegram iOS 26.
-+			const auto textWidth = std::min(namewidth, _title.maxWidth());
++			// The capsule holds the badges too: the VoidGram one in front, a status or check mark after.
++			const auto bare = getBareID(namePeer);
++			const auto badges = ((isExteraPeer(bare) || isSupporterPeer(bare))
++					? (st::dialogsExteraOfficialIcon.icon.width() + st::dialogsChatTypeSkip)
++					: 0)
++				+ ((namePeer->isVerified() || namePeer->isPremium() || namePeer->emojiStatusId())
++					? (st::emojiSize + st::dialogsChatTypeSkip)
++					: 0);
++			const auto textWidth = std::min(namewidth, _title.maxWidth() + badges);
 +			const auto capsuleWidth = std::min(
 +				std::max(textWidth, st::topBarHeight * 3) + 2 * st::topBarArrowPadding.right(),
 +				width() - _leftTaken - _rightTaken);
@@ -49170,7 +49186,41 @@ index bb75eeb..bdf1904 100644
  		if (const auto info = namePeer->botVerifyDetails()) {
  			if (!_titleBadge.ready(info)) {
  				_titleBadge.set(
-@@ -1275,8 +1317,7 @@ void TopBarWidget::updateControlsGeometry() {
+@@ -707,6 +758,25 @@ void TopBarWidget::paintTopBar(Painter &p) {
+ 			nameleft += skip + st::dialogsChatTypeSkip;
+ 			namewidth -= skip + st::dialogsChatTypeSkip;
+ 		}
++		{
++			// VoidGram: the VoidGram badge stands in front of the name, as on iOS.
++			const auto bare = getBareID(namePeer);
++			const auto hide = AyuSettings::getInstance().hidePremiumStatuses();
++			const auto icon = (hide || isCustomBadgePeer(bare))
++				? nullptr
++				: isExteraPeer(bare)
++				? &st::dialogsExteraOfficialIcon.icon
++				: isSupporterPeer(bare)
++				? &st::dialogsExteraSupporterIcon.icon
++				: nullptr;
++			if (icon) {
++				const auto skip = st::dialogsChatTypeSkip;
++				nameleft -= (icon->width() + skip) / 2;
++				icon->paint(p, nameleft, nametop, width());
++				nameleft += icon->width() + skip;
++				namewidth -= icon->width() + skip;
++			}
++		}
+ 		const auto badgeWidth = _titleBadge.drawGetWidth(p, {
+ 			.peer = namePeer,
+ 			.rectForName = QRect(
+@@ -728,6 +798,7 @@ void TopBarWidget::paintTopBar(Painter &p) {
+ 			.bothVerifyAndStatus = true,
+ 			.paused = _controller->isGifPausedAtLeastFor(
+ 				Window::GifPauseReason::Any),
++			.exteraBeforeName = true,
+ 		});
+ 		namewidth -= badgeWidth;
+ 
+@@ -1275,8 +1346,7 @@ void TopBarWidget::updateControlsGeometry() {
  				middle - infoSt.photoPosition.x(),
  				_narrowRatio);
  		}
@@ -49180,7 +49230,7 @@ index bb75eeb..bdf1904 100644
  	} else if (_activeChat.key.topic()
  		|| _activeChat.section == Section::ChatsList) {
  		_leftTaken += st::normalFont->spacew;
-@@ -1312,6 +1353,10 @@ void TopBarWidget::updateControlsGeometry() {
+@@ -1312,6 +1382,10 @@ void TopBarWidget::updateControlsGeometry() {
  	}
  
  	_rightTaken = 0;
@@ -49217,19 +49267,6 @@ index b25c8d2..6fcd601 100644
  			paintSingleBg(p, fill, color, opacity);
  			if (inbubble && !chosen) {
  				p.setOpacity(bubbleProgress);
-diff --git a/Telegram/SourceFiles/info/info.style b/Telegram/SourceFiles/info/info.style
-index ff79daf..e783f2d 100644
---- a/Telegram/SourceFiles/info/info.style
-+++ b/Telegram/SourceFiles/info/info.style
-@@ -365,7 +365,7 @@ infoLayerTopBar: InfoTopBar(infoTopBar) {
- infoLayerTopBarMenuPosition: point(48px, 37px);
- 
- 
--infoProfileTopBarHeightMax: 180px + infoLayerTopBarHeight;
-+infoProfileTopBarHeightMax: 212px + infoLayerTopBarHeight; // VoidGram: room for the TON pill under the status.
- 
- infoProfileBirthdayConfettiSize: 360px;
- infoProfileBirthdayDigitSize: 64px;
 diff --git a/Telegram/SourceFiles/info/info_memento.cpp b/Telegram/SourceFiles/info/info_memento.cpp
 index 452b761..b6526a3 100644
 --- a/Telegram/SourceFiles/info/info_memento.cpp
@@ -49392,10 +49429,10 @@ index d3aa858..458df72 100644
  			? tr::lng_info_about_label()
  			: tr::lng_info_bio_label();
 diff --git a/Telegram/SourceFiles/info/profile/info_profile_top_bar.cpp b/Telegram/SourceFiles/info/profile/info_profile_top_bar.cpp
-index e9183a3..4ceb3c6 100644
+index e9183a3..68e2a04 100644
 --- a/Telegram/SourceFiles/info/profile/info_profile_top_bar.cpp
 +++ b/Telegram/SourceFiles/info/profile/info_profile_top_bar.cpp
-@@ -108,10 +108,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
+@@ -108,10 +108,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
  #include "styles/style_menu_icons.h"
  
  #include <QtGui/QClipboard>
@@ -49407,11 +49444,10 @@ index e9183a3..4ceb3c6 100644
 +#include "voidgram/voidgram_frames.h"
 +#include "voidgram/voidgram_names.h"
 +#include "voidgram/voidgram_registry.h"
-+#include "voidgram/voidgram_ton_card.h"
  #include "ayu/utils/telegram_helpers.h"
  
  
-@@ -404,7 +409,12 @@ TopBar::TopBar(
+@@ -404,7 +408,12 @@ TopBar::TopBar(
  			? 0
  			: st::infoProfileTopBarActionButtonsHeight);
  }())
@@ -49425,29 +49461,7 @@ index e9183a3..4ceb3c6 100644
  , _starsRating((_peer->isUser() && !_savedMessages)
  	? std::make_unique<Ui::StarsRating>(
  		this,
-@@ -458,12 +468,42 @@ TopBar::TopBar(
- , _backToggles(std::move(descriptor.backToggles)) {
- 	setObjectName(u"profileTopBar"_q);
- 	_peer->updateFull();
-+	if (const auto user = _peer->asUser(); user && !user->isBot() && !_savedMessages) {
-+		const auto bareId = qint64(user->id.value & PeerId::kChatTypeMask);
-+		_vgTonPill = VoidGram::MakeTonPill(
-+			this,
-+			(rpl::single(rpl::empty) | rpl::then(
-+				VoidGram::Registry::instance().changes() | rpl::to_empty
-+			)) | rpl::map([=](rpl::empty_value) {
-+				const auto entry = VoidGram::Registry::instance().find(bareId);
-+				return (entry && entry->cosmetics)
-+					? qint64(entry->cosmetics->tonNano)
-+					: qint64(0);
-+			}));
-+		_vgTonPill->widthValue() | rpl::on_next([=] {
-+			updateLabelsPosition();
-+		}, _vgTonPill->lifetime());
-+	}
- 	_communityEffect = (_source == Source::Community);
- 	if (const auto broadcast = _peer->monoforumBroadcast()) {
- 		broadcast->updateFull();
+@@ -464,6 +473,20 @@ TopBar::TopBar(
  	}
  	const auto controller = descriptor.controller;
  
@@ -49468,7 +49482,7 @@ index e9183a3..4ceb3c6 100644
  	if (_peer->isMegagroup() || _peer->isChat()) {
  		_statusLabel->setMembersLinkCallback([=, peer = _peer] {
  			const auto topic = _key.topic();
-@@ -1293,6 +1333,16 @@ void TopBar::setupUserpicButton(
+@@ -1293,6 +1316,16 @@ void TopBar::setupUserpicButton(
  		return;
  	}
  
@@ -49485,7 +49499,7 @@ index e9183a3..4ceb3c6 100644
  	const auto openPhoto = [=, peer = _peer] {
  		if (const auto id = peer->userpicPhotoId()) {
  			if (const auto photo = peer->owner().photo(id); photo->date()) {
-@@ -1962,6 +2012,10 @@ void TopBar::updateLabelsPosition() {
+@@ -1962,6 +1995,10 @@ void TopBar::updateLabelsPosition() {
  		if (_userpicButton) {
  			_userpicButton->setGeometry(userpicGeometry());
  		}
@@ -49496,27 +49510,15 @@ index e9183a3..4ceb3c6 100644
  
  		updateGiftButtonsGeometry(progressCurrent, userpicRect);
  	}
-@@ -2140,6 +2194,19 @@ void TopBar::updateStatusPosition(float64 progressCurrent) {
- 		* std::clamp((progressCurrent) / 0.15, 0., 1.);
+@@ -2141,6 +2178,7 @@ void TopBar::updateStatusPosition(float64 progressCurrent) {
  
  	_status->moveToLeft(statusLeft + statusShift, statusTop);
-+	if (const auto pill = _vgTonPill) {
-+		pill->moveToLeft(
-+			(width() - pill->width()) / 2,
-+			statusTop + statusStyle().style.font->height + 10);
-+		// Shown in the expanded header only, where there is room under the status.
-+		pill->setAttribute(Qt::WA_TransparentForMouseEvents);
-+		if (progressCurrent < 0.9) {
-+			pill->lower();
-+			pill->move(pill->x(), -pill->height() * 2);
-+		} else {
-+			pill->raise();
-+		}
-+	}
  
++
  	if (_showLastSeen->toggled()) {
  		_showLastSeen->moveToLeft(
-@@ -2772,6 +2839,20 @@ void TopBar::resizeEvent(QResizeEvent *e) {
+ 			statusLeft
+@@ -2772,6 +2810,20 @@ void TopBar::resizeEvent(QResizeEvent *e) {
  	RpWidget::resizeEvent(e);
  }
  
@@ -49538,7 +49540,7 @@ index e9183a3..4ceb3c6 100644
  	constexpr auto kMinScale = 0.25;
  	const auto progressCurrent = _progress.current();
 diff --git a/Telegram/SourceFiles/info/profile/info_profile_top_bar.h b/Telegram/SourceFiles/info/profile/info_profile_top_bar.h
-index a37e994..edfc32a 100644
+index a37e994..960d96f 100644
 --- a/Telegram/SourceFiles/info/profile/info_profile_top_bar.h
 +++ b/Telegram/SourceFiles/info/profile/info_profile_top_bar.h
 @@ -24,6 +24,10 @@ struct ColorProfileSet;
@@ -49560,15 +49562,7 @@ index a37e994..edfc32a 100644
  	void setupBirthdayEffect();
  	void startUploadOverlay();
  	void setupActions(not_null<Window::SessionController*> controller);
-@@ -305,6 +310,7 @@ private:
- 	bool _standaloneGroupReached = false;
- 	object_ptr<Ui::FlatLabel> _status;
- 	std::unique_ptr<StatusLabel> _statusLabel;
-+	Ui::RpWidget *_vgTonPill = nullptr; // VoidGram: the TON balance under the status, as on the iPhone.
- 	rpl::variable<int> _statusShift = 0;
- 	rpl::producer<TextWithEntities> _customStatus;
- 	object_ptr<Ui::FadeWrap<Ui::RoundButton>> _showLastSeen = { nullptr };
-@@ -330,6 +336,7 @@ private:
+@@ -330,6 +335,7 @@ private:
  	QRect _lastUserpicRect;
  
  	base::unique_qptr<Ui::AbstractButton> _userpicButton;
@@ -49962,6 +49956,37 @@ index e6e27df..93016aa 100644
 +vgTabContacts: icon {{ "folders/folders_vg_contacts", sideBarIconFg }};
 +vgTabCalls: icon {{ "folders/folders_vg_calls", sideBarIconFg }};
 +vgTabSettings: icon {{ "folders/folders_vg_settings", sideBarIconFg }};
+diff --git a/Telegram/SourceFiles/ui/unread_badge.cpp b/Telegram/SourceFiles/ui/unread_badge.cpp
+index 2f0bde6..3ea0e60 100644
+--- a/Telegram/SourceFiles/ui/unread_badge.cpp
++++ b/Telegram/SourceFiles/ui/unread_badge.cpp
+@@ -277,10 +277,12 @@ int PeerBadge::drawGetWidth(Painter &p, Descriptor &&descriptor) {
+ 
+ 	const auto paintExteraCustom =
+ 		isCustomBadgePeer(getBareID(peer)) && !hidePremiumStatuses;
+-	const auto paintExteraDev = isExteraPeer(getBareID(peer))
++	const auto paintExteraDev = !descriptor.exteraBeforeName
++		&& isExteraPeer(getBareID(peer))
+ 		&& !paintExteraCustom
+ 		&& !hidePremiumStatuses;
+ 	const auto paintExteraSupporter = !paintExteraDev
++		&& !descriptor.exteraBeforeName
+ 		&& isSupporterPeer(getBareID(peer))
+ 		&& !paintExteraCustom
+ 		&& !hidePremiumStatuses;
+diff --git a/Telegram/SourceFiles/ui/unread_badge.h b/Telegram/SourceFiles/ui/unread_badge.h
+index e1098b8..ea75070 100644
+--- a/Telegram/SourceFiles/ui/unread_badge.h
++++ b/Telegram/SourceFiles/ui/unread_badge.h
+@@ -67,6 +67,8 @@ public:
+ 		bool prioritizeVerification = false;
+ 		bool bothVerifyAndStatus = false;
+ 		bool paused = false;
++		// VoidGram: the caller draws the VoidGram badge in front of the name, as on iOS.
++		bool exteraBeforeName = false;
+ 	};
+ 	int drawGetWidth(Painter &p, Descriptor &&descriptor);
+ 	[[nodiscard]] QRect emojiStatusRect() const;
 diff --git a/Telegram/SourceFiles/voidgram/voidgram_effects.cpp b/Telegram/SourceFiles/voidgram/voidgram_effects.cpp
 new file mode 100644
 index 0000000..cccb62f
