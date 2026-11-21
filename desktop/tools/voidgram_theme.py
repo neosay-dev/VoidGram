@@ -26,8 +26,7 @@ EXACT = {
     "dialogsDateFg": "#8d8e93", "dialogsDateFgActive": "#8d8e93", "dialogsDateFgOver": "#8d8e93",
     "dialogsUnreadBg": "#ffffff", "dialogsUnreadFg": "#000000", "dialogsUnreadBgMuted": "#666666",
     "dialogsUnreadBgActive": "#ffffff", "dialogsUnreadFgActive": "#000000",
-    "topBarBg": "#000000", "historyComposeAreaBg": "#00000000",  # see-through: the composer floats over the messages
-    "sideBarBg": "#000000",
+    "topBarBg": "#000000", "historyComposeAreaBg": "#000000",  # opaque: panels painted with it make holes otherwise; the field is see-through in code "sideBarBg": "#000000",
     "msgInBg": "#1d1d1d", "msgInBgSelected": "#2c2c2e", "msgOutBg": "#0a7cff", "msgOutBgSelected": "#0a6ad6",
     "msgOutTextFg": "#ffffff", "msgInTextFg": "#ffffff", "msgServiceBg": "#1c1c1dd8",
 }
