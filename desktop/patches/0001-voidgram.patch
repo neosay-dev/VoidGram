@@ -48916,13 +48916,20 @@ index 37c59e8..52e0a2e 100644
  
  	const auto wrapReplyToLink = [&](const QByteArray &text) {
 diff --git a/Telegram/SourceFiles/history/history_inner_widget.cpp b/Telegram/SourceFiles/history/history_inner_widget.cpp
-index df61c2a..55de6b0 100644
+index df61c2a..ec482bc 100644
 --- a/Telegram/SourceFiles/history/history_inner_widget.cpp
 +++ b/Telegram/SourceFiles/history/history_inner_widget.cpp
-@@ -4845,6 +4845,13 @@ void HistoryInner::collapseGapsUpdated() {
+@@ -4845,6 +4845,20 @@ void HistoryInner::collapseGapsUpdated() {
  }
  
  
++void HistoryInner::setOverlayTop(int height) {
++	if (_vgOverlayTop != height) {
++		_vgOverlayTop = height;
++		updateSize();
++	}
++}
++
 +void HistoryInner::setOverlayBottom(int height) {
 +	if (_vgOverlayBottom != height) {
 +		_vgOverlayBottom = height;
@@ -48933,7 +48940,7 @@ index df61c2a..55de6b0 100644
  void HistoryInner::changeItemsRevealHeight(int revealHeight) {
  	if (_revealHeight == revealHeight) {
  		return;
-@@ -4865,7 +4872,7 @@ void HistoryInner::updateSize() {
+@@ -4865,13 +4879,13 @@ void HistoryInner::updateSize() {
  	const auto itemsHeight = historyHeight() - _revealHeight + collapseGapTotal;
  	const auto aboutAboveHistory = _aboutView && _aboutView->aboveHistory();
  	const auto aboutBelowHistory = _aboutView && !aboutAboveHistory;
@@ -48942,23 +48949,32 @@ index df61c2a..55de6b0 100644
  	if (aboutBelowHistory) {
  		accumulate_max(newHistoryMarginBottom, _aboutView->height);
  	}
+ 	auto newHistoryMarginTop = std::max(
+ 		visibleHeight - itemsHeight - newHistoryMarginBottom,
+-		0);
++		_vgOverlayTop);
+ 	if (aboutAboveHistory) {
+ 		accumulate_max(newHistoryMarginTop, _aboutView->height);
+ 	}
 diff --git a/Telegram/SourceFiles/history/history_inner_widget.h b/Telegram/SourceFiles/history/history_inner_widget.h
-index 326f7e5..c1a3f80 100644
+index 326f7e5..35e3dff 100644
 --- a/Telegram/SourceFiles/history/history_inner_widget.h
 +++ b/Telegram/SourceFiles/history/history_inner_widget.h
-@@ -164,6 +164,7 @@ public:
+@@ -164,6 +164,8 @@ public:
  	void touchScrollUpdated(const QPoint &screenPos);
  
  	void setItemsRevealHeight(int revealHeight);
 +	void setOverlayBottom(int height); // VoidGram
++	void setOverlayTop(int height); // VoidGram
  	void changeItemsRevealHeight(int revealHeight);
  	void checkActivation();
  	void recountHistoryGeometry(bool initial = false);
-@@ -592,6 +593,7 @@ private:
+@@ -592,6 +594,8 @@ private:
  	int _contentWidth = 0;
  	int _historyMarginTop = 0;
  	int _historyMarginBottom = 0;
 +	int _vgOverlayBottom = 0; // VoidGram: the composer floats over this much of the scroll.
++	int _vgOverlayTop = 0; // VoidGram: the top bars float over this much of the scroll.
  	int _revealHeight = 0;
  	int _forumThreadBarWidth = 0;
  	Ui::PeerUserpicView _forumThreadBarUserpicView;
@@ -48976,7 +48992,7 @@ index 199d6dc..c8fd51b 100644
  	TextUtilities::ParseEntities(result, Ui::ItemTextNoMonoOptions().flags);
  	result.entities.push_front(
 diff --git a/Telegram/SourceFiles/history/history_widget.cpp b/Telegram/SourceFiles/history/history_widget.cpp
-index 520fd33..7fb3831 100644
+index 520fd33..a962469 100644
 --- a/Telegram/SourceFiles/history/history_widget.cpp
 +++ b/Telegram/SourceFiles/history/history_widget.cpp
 @@ -6,6 +6,7 @@ For license and copyright information please follow this link:
@@ -49021,7 +49037,7 @@ index 520fd33..7fb3831 100644
  	Ui::InputField::Mode::MultiLine,
  	tr::lng_message_ph())
  , _richDraftPreview(std::make_unique<HistoryView::Controls::RichDraftPreview>(
-@@ -392,6 +411,23 @@ HistoryWidget::HistoryWidget(
+@@ -392,6 +411,29 @@ HistoryWidget::HistoryWidget(
  		return _list && _list->itemTop(view) >= 0;
  	}))
  , _topShadow(this) {
@@ -49033,19 +49049,25 @@ index 520fd33..7fb3831 100644
 +	_vgGlass->paintRequest() | rpl::on_next([=] {
 +		auto p = QPainter(_vgGlass);
 +		vgPaintComposerGlass(p);
++		_vgGlassPending = false;
 +	}, _vgGlass->lifetime());
-+	// Bottom to top: the messages, the glass, then the composer's own controls.
++	// Bottom to top: the messages, the glass, then the bars' and the composer's own controls.
 +	_vgGlass->lower();
 +	_scroll->lower();
 +	_scroll->scrolls() | rpl::on_next([=] {
-+		if (_vgComposerUnder) {
-+			_vgGlass->update();
-+		}
++		vgRefreshGlass();
++	}, _vgGlass->lifetime());
++	// The messages run under the top bar and the bars below it too, which draw no background of their own.
++	setProperty("voidgramFloatingBars", true);
++	_topBars->setProperty("voidgramFloatingBars", true);
++	_topBar->setAttribute(Qt::WA_OpaquePaintEvent, false);
++	_topBar->vgCapsulesChanges() | rpl::on_next([=] {
++		vgRefreshGlass();
 +	}, _vgGlass->lifetime());
  	setAcceptDrops(true);
  	setVisualTabOrder(true);
  
-@@ -598,7 +634,7 @@ HistoryWidget::HistoryWidget(
+@@ -598,7 +640,7 @@ HistoryWidget::HistoryWidget(
  		showPremiumToast(document);
  		return false;
  	});
@@ -49054,21 +49076,45 @@ index 520fd33..7fb3831 100644
  
  	setupFastButtonMode();
  	initAiButton();
-@@ -3468,6 +3504,13 @@ void HistoryWidget::showHistory(
+@@ -3468,6 +3510,14 @@ void HistoryWidget::showHistory(
  		_list = _scroll->setOwnedWidget(
  			object_ptr<HistoryInner>(this, _scroll, controller(), _history));
  		_pullToNext->reset(anim::type::instant);
 +		// VoidGram: messages repainting under the composer refresh its glass.
 +		base::install_event_filter(_list.data(), [=](not_null<QEvent*> e) {
-+			if (e->type() == QEvent::Paint && _vgComposerUnder && !_vgGrabbing) {
-+				_vgGlass->update();
++			// Paints caused by our own repaint (the glass is over the list) arrive while it is pending.
++			if (e->type() == QEvent::Paint && !_vgGrabbing && !_vgGlassPending) {
++				vgRefreshGlass();
 +			}
 +			return base::EventFilterResult::Continue;
 +		});
  		_list->sendIntroSticker(
  		) | rpl::on_next([=](not_null<DocumentData*> sticker) {
  			sendExistingDocument(
-@@ -8678,6 +8721,31 @@ void HistoryWidget::updateHistoryGeometry(
+@@ -8366,8 +8416,11 @@ void HistoryWidget::updateControlsGeometry() {
+ 	_topBars->resize(
+ 		innerWidth,
+ 		scrollAreaTop - _topBars->y() + st::lineWidth);
+-	if (_scroll->y() != scrollAreaTop || _scroll->x() != tabsLeftSkip) {
+-		_scroll->moveToLeft(tabsLeftSkip, scrollAreaTop);
++	// VoidGram: the messages run on under the top bar and the bars below it (not beside forum tabs).
++	_vgOverlayTop = _subsectionTabs ? 0 : scrollAreaTop;
++	const auto scrollTop = scrollAreaTop - _vgOverlayTop;
++	if (_scroll->y() != scrollTop || _scroll->x() != tabsLeftSkip) {
++		_scroll->moveToLeft(tabsLeftSkip, scrollTop);
+ 		if (_autocomplete) {
+ 			_autocomplete->setBoundings(_scroll->geometry());
+ 		}
+@@ -8402,7 +8455,7 @@ void HistoryWidget::updateControlsGeometry() {
+ 		topShadowLeft,
+ 		_topBar->bottomNoMargins(),
+ 		width - topShadowLeft - topShadowRight,
+-		st::lineWidth);
++		_vgOverlayTop ? 0 : st::lineWidth); // no line over floating messages
+ }
+ 
+ void HistoryWidget::itemRemoved(not_null<const HistoryItem*> item) {
+@@ -8678,6 +8731,33 @@ void HistoryWidget::updateHistoryGeometry(
  			newScrollHeight -= _kbScroll->height();
  		}
  	}
@@ -49089,18 +49135,20 @@ index 520fd33..7fb3831 100644
 +			_vgComposerUnder = under;
 +			update();
 +		}
-+		newScrollHeight += under;
++		newScrollHeight += under + _vgOverlayTop;
 +		if (_list) {
 +			_list->setOverlayBottom(under);
++			_list->setOverlayTop(_vgOverlayTop);
 +		}
-+		_vgGlass->setGeometry(0, height() - under, width(), under);
-+		_vgGlass->setVisible(under > 0);
-+		_vgGlass->update();
++		_cornerButtons.setBottomSkip(under);
++		_vgGlass->setGeometry(rect());
++		_vgGlass->setVisible(_list != nullptr);
++		vgRefreshGlass();
 +	}
  	if (newScrollHeight <= 0) {
  		return;
  	}
-@@ -11329,6 +11397,58 @@ void HistoryWidget::updateField() {
+@@ -11329,6 +11409,81 @@ void HistoryWidget::updateField() {
  	rtlupdate(0, fieldAreaTop, width(), height() - fieldAreaTop);
  }
  
@@ -49132,13 +49180,36 @@ index 520fd33..7fb3831 100644
 +	return result;
 +}
 +
++void HistoryWidget::vgRefreshGlass() {
++	if (_vgGlass && !_vgGlassPending && !_vgGlass->isHidden()) {
++		_vgGlassPending = true;
++		_vgGlass->update();
++	}
++}
++
 +void HistoryWidget::vgPaintComposerGlass(QPainter &p) {
 +	// The capsules float over the messages, as on iOS: each one is the messages under it, blurred and
 +	// bent by the glass shader, with a rim. `p` paints _vgGlass, which covers the composer strip.
 +	const auto dark = st::windowBg->c.lightness() < 128;
 +	const auto origin = _vgGlass->pos();
++	auto capsules = _vgComposerUnder ? vgComposerCapsules() : std::vector<QRect>();
++	{
++		// Also beside forum tabs, where no messages are under them: the glass is then over the background.
++		for (const auto &capsule : _topBar->vgCapsules()) {
++			capsules.push_back(capsule.translated(_topBar->pos()));
++		}
++		// The pinned message and translate bars: full-width capsules, as in Telegram iOS.
++		for (const auto child : _topBars->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly)) {
++			if (child->property("voidgramGlassBar").toBool()
++				&& !child->isHidden()
++				&& child->height() > 8) {
++				capsules.push_back(child->geometry().translated(_topBars->pos()).marginsRemoved(
++					QMargins(8, 3, 8, 3)));
++			}
++		}
++	}
 +	_vgGrabbing = true;
-+	for (const auto &capsule : vgComposerCapsules()) {
++	for (const auto &capsule : capsules) {
 +		const auto inScroll = capsule.translated(-_scroll->pos());
 +		auto backdrop = QImage(
 +			capsule.size() * style::DevicePixelRatio(),
@@ -49159,7 +49230,7 @@ index 520fd33..7fb3831 100644
  void HistoryWidget::drawField(Painter &p, const QRect &rect) {
  	_repaintFieldScheduled = false;
  
-@@ -11347,7 +11467,14 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
+@@ -11347,7 +11502,14 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
  	}
  	p.setInactive(
  		controller()->isGifPausedAtLeastFor(Window::GifPauseReason::Any));
@@ -49176,10 +49247,10 @@ index 520fd33..7fb3831 100644
  	const auto media = (!_previewDrawPreview && drawMsgText)
  		? drawMsgText->media()
 diff --git a/Telegram/SourceFiles/history/history_widget.h b/Telegram/SourceFiles/history/history_widget.h
-index f528c8b..77023d9 100644
+index f528c8b..9cb26d0 100644
 --- a/Telegram/SourceFiles/history/history_widget.h
 +++ b/Telegram/SourceFiles/history/history_widget.h
-@@ -875,6 +875,13 @@ private:
+@@ -875,6 +875,16 @@ private:
  
  	object_ptr<HistoryView::TopBarWidget> _topBar;
  	object_ptr<Ui::ElasticScroll> _scroll;
@@ -49188,11 +49259,97 @@ index f528c8b..77023d9 100644
 +	int _vgComposerUnder = 0;
 +	Ui::RpWidget *_vgGlass = nullptr;
 +	bool _vgGrabbing = false;
++	bool _vgGlassPending = false;
++	int _vgOverlayTop = 0; // the top bar and the bars under it float over this much of the scroll
++	void vgRefreshGlass();
 +	[[nodiscard]] std::vector<QRect> vgComposerCapsules() const;
 +	void vgPaintComposerGlass(QPainter &p);
  	QPointer<HistoryInner> _list;
  	History *_migrated = nullptr;
  	History *_history = nullptr;
+diff --git a/Telegram/SourceFiles/history/view/history_view_corner_buttons.cpp b/Telegram/SourceFiles/history/view/history_view_corner_buttons.cpp
+index 6ba23a0..3b84bd4 100644
+--- a/Telegram/SourceFiles/history/view/history_view_corner_buttons.cpp
++++ b/Telegram/SourceFiles/history/view/history_view_corner_buttons.cpp
+@@ -354,6 +354,13 @@ void CornerButtons::updateJumpDownVisibility(std::optional<int> counter) {
+ 	}
+ }
+ 
++void CornerButtons::setBottomSkip(int skip) {
++	if (_bottomSkip != skip) {
++		_bottomSkip = skip;
++		updatePositions();
++	}
++}
++
+ void CornerButtons::updatePositions() {
+ 	const auto checkVisibility = [](CornerButton &button) {
+ 		const auto shouldBeHidden = !button.shown
+@@ -370,7 +377,7 @@ void CornerButtons::updatePositions() {
+ 
+ 	const auto columnWidth = st::historyToDown.width
+ 		+ 2 * st::historyToDownPosition.x();
+-	_column.resize(columnWidth, _parent->height());
++	_column.resize(columnWidth, (_parent->height() - _bottomSkip));
+ 	_column.moveToRight(0, 0, _parent->width());
+ 
+ 	const auto historyDownShown = shown(_down);
+@@ -385,7 +392,7 @@ void CornerButtons::updatePositions() {
+ 			historyDownShown);
+ 		_down.widget->moveToRight(
+ 			st::historyToDownPosition.x(),
+-			_parent->height() - top);
++			(_parent->height() - _bottomSkip) - top);
+ 	}
+ 	{
+ 		const auto right = anim::interpolate(
+@@ -396,7 +403,7 @@ void CornerButtons::updatePositions() {
+ 			0,
+ 			_down.widget->height() + skip,
+ 			historyDownShown);
+-		const auto top = _parent->height()
++		const auto top = (_parent->height() - _bottomSkip)
+ 			- _mentions.widget->height()
+ 			- st::historyToDownPosition.y()
+ 			- shift;
+@@ -415,7 +422,7 @@ void CornerButtons::updatePositions() {
+ 			0,
+ 			_mentions.widget->height() + skip,
+ 			unreadMentionsShown);
+-		const auto top = _parent->height()
++		const auto top = (_parent->height() - _bottomSkip)
+ 			- _reactions.widget->height()
+ 			- st::historyToDownPosition.y()
+ 			- shift;
+@@ -438,7 +445,7 @@ void CornerButtons::updatePositions() {
+ 			0,
+ 			_reactions.widget->height() + skip,
+ 			unreadReactionsShown);
+-		const auto top = _parent->height()
++		const auto top = (_parent->height() - _bottomSkip)
+ 			- _pollVotes.widget->height()
+ 			- st::historyToDownPosition.y()
+ 			- shift;
+diff --git a/Telegram/SourceFiles/history/view/history_view_corner_buttons.h b/Telegram/SourceFiles/history/view/history_view_corner_buttons.h
+index 3e734b5..516ba5e 100644
+--- a/Telegram/SourceFiles/history/view/history_view_corner_buttons.h
++++ b/Telegram/SourceFiles/history/view/history_view_corner_buttons.h
+@@ -86,6 +86,7 @@ public:
+ 	void updateVisibility(Type type, bool shown);
+ 	void updateUnreadThingsVisibility();
+ 	void updateJumpDownVisibility(std::optional<int> counter = {});
++	void setBottomSkip(int skip);
+ 	void updatePositions();
+ 
+ 	void finishAnimations();
+@@ -118,6 +119,7 @@ private:
+ 	void updateAccessibleDescription(CornerButton &button);
+ 
+ 	const not_null<QWidget*> _parent;
++	int _bottomSkip = 0; // VoidGram: the composer floats over this much of the list.
+ 	const Fn<bool(QEvent*)> _scrollViewportEvent;
+ 	const not_null<CornerButtonsDelegate*> _delegate;
+ 
 diff --git a/Telegram/SourceFiles/history/view/history_view_message.cpp b/Telegram/SourceFiles/history/view/history_view_message.cpp
 index 9c0462e..ecdde3d 100644
 --- a/Telegram/SourceFiles/history/view/history_view_message.cpp
@@ -49307,7 +49464,7 @@ index 9c0462e..ecdde3d 100644
  			Ui::NameTextOptions());
  	}
 diff --git a/Telegram/SourceFiles/history/view/history_view_top_bar_widget.cpp b/Telegram/SourceFiles/history/view/history_view_top_bar_widget.cpp
-index bb75eeb..2be0156 100644
+index bb75eeb..01c2ce6 100644
 --- a/Telegram/SourceFiles/history/view/history_view_top_bar_widget.cpp
 +++ b/Telegram/SourceFiles/history/view/history_view_top_bar_widget.cpp
 @@ -36,6 +36,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
@@ -49335,7 +49492,44 @@ index bb75eeb..2be0156 100644
  	setAttribute(Qt::WA_OpaquePaintEvent);
  
  	_clear->setTextTransform(Ui::RoundButtonTextTransform::ToUpper);
-@@ -570,6 +574,22 @@ void TopBarWidget::paintTopBar(Painter &p) {
+@@ -559,17 +563,58 @@ void TopBarWidget::paintEvent(QPaintEvent *e) {
+ 		: -st::topBarHeight;
+ 	const auto slidingTop = std::max(selectedButtonsTop, searchFieldTop);
+ 
+-	p.fillRect(QRect(0, 0, width(), st::topBarHeight), st::topBarBg);
++	// VoidGram: over floating messages only the plain bar is see-through; selection and search keep it solid.
++	const auto floating = vgFloating() && (slidingTop <= -st::topBarHeight);
++	if (!floating) {
++		p.fillRect(QRect(0, 0, width(), st::topBarHeight), st::topBarBg);
++	}
++	_vgCapsulesPainted.clear();
+ 	if (slidingTop < 0) {
+ 		p.translate(0, slidingTop + st::topBarHeight);
+ 		paintTopBar(p);
+ 	}
++	auto capsules = floating ? _vgCapsulesPainted : std::vector<QRect>();
++	if (capsules != _vgCapsules) {
++		_vgCapsules = std::move(capsules);
++		// Told after painting: the listener repaints the glass under this bar.
++		crl::on_main(this, [=] { _vgCapsulesChanges.fire({}); });
++	}
++}
++
++bool TopBarWidget::vgFloating() const {
++	const auto parent = parentWidget();
++	return parent && parent->property("voidgramFloatingBars").toBool();
++}
++
++void TopBarWidget::vgCapsule(QPainter &p, const QRect &rect) {
++	if (vgFloating()) {
++		// Drawn as glass by the chat under this bar; mapped by the painter's offset while sliding.
++		_vgCapsulesPainted.push_back(rect.translated(int(p.transform().dx()), int(p.transform().dy())));
++	} else {
++		VoidGram::PaintGlassCapsule(p, rect, st::windowBg->c.lightness() < 128);
++	}
+ }
+ 
+ void TopBarWidget::paintTopBar(Painter &p) {
  	if (!_activeChat.key || _narrowRatio == 1.) {
  		return;
  	}
@@ -49352,13 +49546,13 @@ index bb75eeb..2be0156 100644
 +		if (!group.isNull()) {
 +			const auto capsuleHeight = st::topBarHeight - 2 * st::topBarArrowPadding.top() / 2;
 +			group = QRect(group.x() - 4, (st::topBarHeight - capsuleHeight) / 2, group.width() + 8, capsuleHeight);
-+			VoidGram::PaintGlassCapsule(p, group, st::windowBg->c.lightness() < 128);
++			vgCapsule(p, group);
 +		}
 +	}
  	auto nameleft = _leftTaken;
  	auto statusleft = nameleft;
  	auto nametop = st::topBarArrowPadding.top();
-@@ -694,6 +714,37 @@ void TopBarWidget::paintTopBar(Painter &p) {
+@@ -694,6 +739,37 @@ void TopBarWidget::paintTopBar(Painter &p) {
  				TopBarNameText(namePeer, _activeChat),
  				Ui::NameTextOptions());
  		}
@@ -49384,7 +49578,7 @@ index bb75eeb..2be0156 100644
 +				(st::topBarHeight - capsuleHeight) / 2,
 +				capsuleWidth,
 +				capsuleHeight);
-+			VoidGram::PaintGlassCapsule(p, capsule, st::windowBg->c.lightness() < 128);
++			vgCapsule(p, capsule);
 +			const auto inner = capsuleWidth - 2 * st::topBarArrowPadding.right();
 +			nameleft = capsuleLeft + st::topBarArrowPadding.right() + (inner - textWidth) / 2;
 +			namewidth = inner;
@@ -49396,7 +49590,7 @@ index bb75eeb..2be0156 100644
  		if (const auto info = namePeer->botVerifyDetails()) {
  			if (!_titleBadge.ready(info)) {
  				_titleBadge.set(
-@@ -707,6 +758,25 @@ void TopBarWidget::paintTopBar(Painter &p) {
+@@ -707,6 +783,25 @@ void TopBarWidget::paintTopBar(Painter &p) {
  			nameleft += skip + st::dialogsChatTypeSkip;
  			namewidth -= skip + st::dialogsChatTypeSkip;
  		}
@@ -49422,7 +49616,7 @@ index bb75eeb..2be0156 100644
  		const auto badgeWidth = _titleBadge.drawGetWidth(p, {
  			.peer = namePeer,
  			.rectForName = QRect(
-@@ -728,6 +798,7 @@ void TopBarWidget::paintTopBar(Painter &p) {
+@@ -728,6 +823,7 @@ void TopBarWidget::paintTopBar(Painter &p) {
  			.bothVerifyAndStatus = true,
  			.paused = _controller->isGifPausedAtLeastFor(
  				Window::GifPauseReason::Any),
@@ -49430,7 +49624,7 @@ index bb75eeb..2be0156 100644
  		});
  		namewidth -= badgeWidth;
  
-@@ -1275,8 +1346,7 @@ void TopBarWidget::updateControlsGeometry() {
+@@ -1275,8 +1371,7 @@ void TopBarWidget::updateControlsGeometry() {
  				middle - infoSt.photoPosition.x(),
  				_narrowRatio);
  		}
@@ -49440,7 +49634,7 @@ index bb75eeb..2be0156 100644
  	} else if (_activeChat.key.topic()
  		|| _activeChat.section == Section::ChatsList) {
  		_leftTaken += st::normalFont->spacew;
-@@ -1312,6 +1382,10 @@ void TopBarWidget::updateControlsGeometry() {
+@@ -1312,6 +1407,10 @@ void TopBarWidget::updateControlsGeometry() {
  	}
  
  	_rightTaken = 0;
@@ -49451,6 +49645,94 @@ index bb75eeb..2be0156 100644
  	_menuToggle->moveToRight(_rightTaken, otherButtonsTop);
  	if (_menuToggle->isHidden()) {
  		_rightTaken += (_menuToggle->width() - _search->width());
+@@ -1355,7 +1454,7 @@ void TopBarWidget::finishAnimating() {
+ void TopBarWidget::setAnimatingMode(bool enabled) {
+ 	if (_animatingMode != enabled) {
+ 		_animatingMode = enabled;
+-		setAttribute(Qt::WA_OpaquePaintEvent, !_animatingMode);
++		setAttribute(Qt::WA_OpaquePaintEvent, !_animatingMode && !vgFloating());
+ 		finishAnimating();
+ 	} else if (!enabled) {
+ 		finishAnimating();
+diff --git a/Telegram/SourceFiles/history/view/history_view_top_bar_widget.h b/Telegram/SourceFiles/history/view/history_view_top_bar_widget.h
+index 854ff24..59e54bc 100644
+--- a/Telegram/SourceFiles/history/view/history_view_top_bar_widget.h
++++ b/Telegram/SourceFiles/history/view/history_view_top_bar_widget.h
+@@ -79,6 +79,15 @@ public:
+ 	}
+ 	void setAnimatingMode(bool enabled);
+ 
++	// VoidGram: in a chat whose messages run under it the bar paints no background; its capsules
++	// (in its own coordinates) are glass the chat draws under it.
++	[[nodiscard]] const std::vector<QRect> &vgCapsules() const {
++		return _vgCapsules;
++	}
++	[[nodiscard]] rpl::producer<> vgCapsulesChanges() const {
++		return _vgCapsulesChanges.events();
++	}
++
+ 	void setActiveChat(
+ 		ActiveChat activeChat,
+ 		SendActionPainter *sendAction);
+@@ -223,6 +232,11 @@ private:
+ 	rpl::lifetime _activeChatLifetime;
+ 
+ 	Ui::PeerBadge _titleBadge;
++	[[nodiscard]] bool vgFloating() const;
++	void vgCapsule(QPainter &p, const QRect &rect);
++	std::vector<QRect> _vgCapsules;
++	std::vector<QRect> _vgCapsulesPainted;
++	rpl::event_stream<> _vgCapsulesChanges;
+ 	Ui::Text::String _title;
+ 	int _titleNameVersion = 0;
+ 
+diff --git a/Telegram/SourceFiles/history/view/history_view_translate_bar.cpp b/Telegram/SourceFiles/history/view/history_view_translate_bar.cpp
+index 8470a55..c5b7028 100644
+--- a/Telegram/SourceFiles/history/view/history_view_translate_bar.cpp
++++ b/Telegram/SourceFiles/history/view/history_view_translate_bar.cpp
+@@ -247,8 +247,11 @@ TranslateBar::TranslateBar(
+ , _shadow(std::make_unique<Ui::PlainShadow>(parent)) {
+ 	_wrap.hide(anim::type::instant);
+ 	_shadow->hide();
++	// VoidGram: in a chat whose messages run under the bars, the bar is drawn on glass by the chat.
++	_floating = parent->property("voidgramFloatingBars").toBool();
++	_wrap.setProperty("voidgramGlassBar", _floating);
+ 
+-	_shadow->showOn(rpl::combine(
++	if (!_floating) _shadow->showOn(rpl::combine(
+ 		_wrap.shownValue(),
+ 		_wrap.heightValue(),
+ 		rpl::mappers::_1 && rpl::mappers::_2 > 0
+@@ -292,11 +295,15 @@ void TranslateBar::setup(not_null<History*> history) {
+ 	};
+ 	const auto button = static_cast<Ui::AbstractButton*>(_wrap.entity());
+ 	button->resize(0, st::historyTranslateBarHeight);
+-	button->setAttribute(Qt::WA_OpaquePaintEvent);
++	if (!_floating) {
++		button->setAttribute(Qt::WA_OpaquePaintEvent);
++	}
+ 
+ 	button->paintRequest(
+ 	) | rpl::on_next([=](QRect clip) {
+-		QPainter(button).fillRect(clip, st::historyComposeButtonBg);
++		if (!_floating) {
++			QPainter(button).fillRect(clip, st::historyComposeButtonBg);
++		}
+ 	}, button->lifetime());
+ 
+ 	button->setClickedCallback([=] {
+diff --git a/Telegram/SourceFiles/history/view/history_view_translate_bar.h b/Telegram/SourceFiles/history/view/history_view_translate_bar.h
+index a50c0fc..1650589 100644
+--- a/Telegram/SourceFiles/history/view/history_view_translate_bar.h
++++ b/Telegram/SourceFiles/history/view/history_view_translate_bar.h
+@@ -67,6 +67,7 @@ private:
+ 	const not_null<History*> _history;
+ 	Ui::SlideWrap<> _wrap;
+ 	std::unique_ptr<Ui::PlainShadow> _shadow;
++	bool _floating = false; // VoidGram: drawn on glass by the chat, no own background.
+ 	Fn<QRect(QRect)> _shadowGeometryPostprocess;
+ 	base::unique_qptr<Ui::PopupMenu> _menu;
+ 	rpl::variable<LanguageId> _overridenTo;
 diff --git a/Telegram/SourceFiles/history/view/reactions/history_view_reactions.cpp b/Telegram/SourceFiles/history/view/reactions/history_view_reactions.cpp
 index b25c8d2..6fcd601 100644
 --- a/Telegram/SourceFiles/history/view/reactions/history_view_reactions.cpp
@@ -50153,6 +50435,39 @@ index 3ea2e08..1d080fa 100644
  	});
  	_tray.addAction(std::move(quitText), [] { Core::Quit(); });
  
+diff --git a/Telegram/SourceFiles/ui/chat/pinned_bar.cpp b/Telegram/SourceFiles/ui/chat/pinned_bar.cpp
+index cc6e5f6..0ac7fbd 100644
+--- a/Telegram/SourceFiles/ui/chat/pinned_bar.cpp
++++ b/Telegram/SourceFiles/ui/chat/pinned_bar.cpp
+@@ -28,8 +28,11 @@ PinnedBar::PinnedBar(
+ , _customEmojiPaused(std::move(customEmojiPaused)) {
+ 	_wrap.hide(anim::type::instant);
+ 	_shadow->hide();
++	// VoidGram: in a chat whose messages run under the bars, the bar is drawn on glass by the chat.
++	const auto floating = parent->property("voidgramFloatingBars").toBool();
++	_wrap.setProperty("voidgramGlassBar", floating);
+ 
+-	_shadow->showOn(rpl::combine(
++	if (!floating) _shadow->showOn(rpl::combine(
+ 		_wrap.shownValue(),
+ 		_wrap.heightValue(),
+ 		rpl::mappers::_1 && rpl::mappers::_2 > 0
+@@ -39,9 +42,13 @@ PinnedBar::PinnedBar(
+ 
+ 	_wrap.entity()->paintRequest(
+ 	) | rpl::on_next([=](QRect clip) {
+-		QPainter(_wrap.entity()).fillRect(clip, st::historyPinnedBg);
++		if (!floating) {
++			QPainter(_wrap.entity()).fillRect(clip, st::historyPinnedBg);
++		}
+ 	}, lifetime());
+-	_wrap.setAttribute(Qt::WA_OpaquePaintEvent);
++	if (!floating) {
++		_wrap.setAttribute(Qt::WA_OpaquePaintEvent);
++	}
+ 
+ 	if (customEmojiPausedChanges) {
+ 		std::move(
 diff --git a/Telegram/SourceFiles/ui/filter_icons.style b/Telegram/SourceFiles/ui/filter_icons.style
 index e6e27df..93016aa 100644
 --- a/Telegram/SourceFiles/ui/filter_icons.style
