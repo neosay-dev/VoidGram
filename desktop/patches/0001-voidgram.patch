@@ -48992,18 +48992,19 @@ index 199d6dc..c8fd51b 100644
  	TextUtilities::ParseEntities(result, Ui::ItemTextNoMonoOptions().flags);
  	result.entities.push_front(
 diff --git a/Telegram/SourceFiles/history/history_widget.cpp b/Telegram/SourceFiles/history/history_widget.cpp
-index 520fd33..a962469 100644
+index 520fd33..3d68ecf 100644
 --- a/Telegram/SourceFiles/history/history_widget.cpp
 +++ b/Telegram/SourceFiles/history/history_widget.cpp
-@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
+@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
  https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
  */
  #include "history/history_widget.h"
++#include "mainwidget.h" // VoidGram: the chat background offset for the glass
 +#include "voidgram/voidgram_liquid_glass.h"
  
  #include "api/api_compose_with_ai.h"
  #include "api/api_editing.h"
-@@ -276,6 +277,24 @@ const auto kPsaAboutPrefix = "cloud_lng_about_psa_";
+@@ -276,6 +278,30 @@ const auto kPsaAboutPrefix = "cloud_lng_about_psa_";
  
  } // namespace
  
@@ -49018,6 +49019,12 @@ index 520fd33..a962469 100644
 +		auto st = st::historyComposeField;
 +		st.textBg = clear.color();
 +		st.textBgActive = clear.color();
++		// Larger text, as in Telegram iOS (17pt there).
++		const auto larger = [](const style::font &f) {
++			return style::font(style::ConvertScale(15, style::Scale()), f->flags(), f->family());
++		};
++		st.style.font = larger(st.style.font);
++		st.placeholderFont = larger(st.placeholderFont);
 +		return st;
 +	}();
 +	return result;
@@ -49028,7 +49035,7 @@ index 520fd33..a962469 100644
  HistoryWidget::HistoryWidget(
  	QWidget *parent,
  	not_null<Window::SessionController*> controller)
-@@ -349,7 +368,7 @@ HistoryWidget::HistoryWidget(
+@@ -349,7 +375,7 @@ HistoryWidget::HistoryWidget(
  , _forwardPanel(std::make_unique<ForwardPanel>([=] { updateField(); }))
  , _field(
  	this,
@@ -49037,7 +49044,7 @@ index 520fd33..a962469 100644
  	Ui::InputField::Mode::MultiLine,
  	tr::lng_message_ph())
  , _richDraftPreview(std::make_unique<HistoryView::Controls::RichDraftPreview>(
-@@ -392,6 +411,29 @@ HistoryWidget::HistoryWidget(
+@@ -392,6 +418,29 @@ HistoryWidget::HistoryWidget(
  		return _list && _list->itemTop(view) >= 0;
  	}))
  , _topShadow(this) {
@@ -49067,7 +49074,7 @@ index 520fd33..a962469 100644
  	setAcceptDrops(true);
  	setVisualTabOrder(true);
  
-@@ -598,7 +640,7 @@ HistoryWidget::HistoryWidget(
+@@ -598,7 +647,7 @@ HistoryWidget::HistoryWidget(
  		showPremiumToast(document);
  		return false;
  	});
@@ -49076,7 +49083,7 @@ index 520fd33..a962469 100644
  
  	setupFastButtonMode();
  	initAiButton();
-@@ -3468,6 +3510,14 @@ void HistoryWidget::showHistory(
+@@ -3468,6 +3517,14 @@ void HistoryWidget::showHistory(
  		_list = _scroll->setOwnedWidget(
  			object_ptr<HistoryInner>(this, _scroll, controller(), _history));
  		_pullToNext->reset(anim::type::instant);
@@ -49091,7 +49098,30 @@ index 520fd33..a962469 100644
  		_list->sendIntroSticker(
  		) | rpl::on_next([=](not_null<DocumentData*> sticker) {
  			sendExistingDocument(
-@@ -8366,8 +8416,11 @@ void HistoryWidget::updateControlsGeometry() {
+@@ -8330,8 +8387,9 @@ void HistoryWidget::updateControlsGeometry() {
+ 	const auto pinnedBarTop = requestsTop
+ 		+ (_requestsBar ? _requestsBar->height() : 0);
+ 	if (_pinnedBar) {
+-		_pinnedBar->move(0, pinnedBarTop);
+-		_pinnedBar->resizeToWidth(innerWidth);
++		// VoidGram: a capsule with 8px either side, its content inside it.
++		_pinnedBar->move(8, pinnedBarTop);
++		_pinnedBar->resizeToWidth(innerWidth - 16);
+ 	}
+ 	const auto sponsoredMessageBarTop = pinnedBarTop
+ 		+ (_pinnedBar ? _pinnedBar->height() : 0);
+@@ -8342,8 +8400,8 @@ void HistoryWidget::updateControlsGeometry() {
+ 	const auto translateTop = sponsoredMessageBarTop
+ 		+ (_sponsoredMessageBar ? _sponsoredMessageBar->height() : 0);
+ 	if (_translateBar) {
+-		_translateBar->move(0, translateTop);
+-		_translateBar->resizeToWidth(innerWidth);
++		_translateBar->move(8, translateTop);
++		_translateBar->resizeToWidth(innerWidth - 16);
+ 	}
+ 	const auto paysStatusTop = translateTop
+ 		+ (_translateBar ? _translateBar->height() : 0);
+@@ -8366,8 +8424,11 @@ void HistoryWidget::updateControlsGeometry() {
  	_topBars->resize(
  		innerWidth,
  		scrollAreaTop - _topBars->y() + st::lineWidth);
@@ -49105,7 +49135,7 @@ index 520fd33..a962469 100644
  		if (_autocomplete) {
  			_autocomplete->setBoundings(_scroll->geometry());
  		}
-@@ -8402,7 +8455,7 @@ void HistoryWidget::updateControlsGeometry() {
+@@ -8402,7 +8463,7 @@ void HistoryWidget::updateControlsGeometry() {
  		topShadowLeft,
  		_topBar->bottomNoMargins(),
  		width - topShadowLeft - topShadowRight,
@@ -49114,7 +49144,7 @@ index 520fd33..a962469 100644
  }
  
  void HistoryWidget::itemRemoved(not_null<const HistoryItem*> item) {
-@@ -8678,6 +8731,33 @@ void HistoryWidget::updateHistoryGeometry(
+@@ -8678,6 +8739,33 @@ void HistoryWidget::updateHistoryGeometry(
  			newScrollHeight -= _kbScroll->height();
  		}
  	}
@@ -49148,7 +49178,7 @@ index 520fd33..a962469 100644
  	if (newScrollHeight <= 0) {
  		return;
  	}
-@@ -11329,6 +11409,81 @@ void HistoryWidget::updateField() {
+@@ -11329,6 +11417,91 @@ void HistoryWidget::updateField() {
  	rtlupdate(0, fieldAreaTop, width(), height() - fieldAreaTop);
  }
  
@@ -49204,7 +49234,7 @@ index 520fd33..a962469 100644
 +				&& !child->isHidden()
 +				&& child->height() > 8) {
 +				capsules.push_back(child->geometry().translated(_topBars->pos()).marginsRemoved(
-+					QMargins(8, 3, 8, 3)));
++					QMargins(0, 3, 0, 3)));
 +			}
 +		}
 +	}
@@ -49217,8 +49247,18 @@ index 520fd33..a962469 100644
 +		backdrop.setDevicePixelRatio(style::DevicePixelRatio());
 +		backdrop.fill(st::windowBg->c);
 +		{
++			// The wallpaper, then the messages over it: grab() filled the gaps with Qt's light palette.
 +			auto q = QPainter(&backdrop);
-+			q.drawPixmap(0, 0, _scroll->grab(inScroll));
++			const auto fromy = controller()->content()->backgroundFromY();
++			q.translate(-capsule.x(), fromy - capsule.y());
++			Window::SectionWidget::PaintBackground(
++				q,
++				controller()->currentChatTheme(),
++				QSize(width(), controller()->content()->height()),
++				capsule.translated(0, -fromy),
++				true);
++			q.resetTransform();
++			_scroll->render(&q, QPoint(), QRegion(inScroll), QWidget::DrawChildren);
 +		}
 +		const auto local = capsule.translated(-origin);
 +		p.drawImage(local, VoidGram::RenderLiquidGlass(backdrop, dark));
@@ -49230,7 +49270,7 @@ index 520fd33..a962469 100644
  void HistoryWidget::drawField(Painter &p, const QRect &rect) {
  	_repaintFieldScheduled = false;
  
-@@ -11347,7 +11502,14 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
+@@ -11347,7 +11520,14 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
  	}
  	p.setInactive(
  		controller()->isGifPausedAtLeastFor(Window::GifPauseReason::Any));
@@ -49464,7 +49504,7 @@ index 9c0462e..ecdde3d 100644
  			Ui::NameTextOptions());
  	}
 diff --git a/Telegram/SourceFiles/history/view/history_view_top_bar_widget.cpp b/Telegram/SourceFiles/history/view/history_view_top_bar_widget.cpp
-index bb75eeb..01c2ce6 100644
+index bb75eeb..b6b0363 100644
 --- a/Telegram/SourceFiles/history/view/history_view_top_bar_widget.cpp
 +++ b/Telegram/SourceFiles/history/view/history_view_top_bar_widget.cpp
 @@ -36,6 +36,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
@@ -49645,7 +49685,39 @@ index bb75eeb..01c2ce6 100644
  	_menuToggle->moveToRight(_rightTaken, otherButtonsTop);
  	if (_menuToggle->isHidden()) {
  		_rightTaken += (_menuToggle->width() - _search->width());
-@@ -1355,7 +1454,7 @@ void TopBarWidget::finishAnimating() {
+@@ -1343,6 +1442,31 @@ void TopBarWidget::updateControlsGeometry() {
+ 		_rightTaken += _search->width() + st::topBarCallSkip;
+ 	}
+ 
++	// VoidGram: as in Telegram iOS 26 the action buttons are on the left, the avatar alone on the right.
++	if (vgFloating() && !_searchField) {
++		const auto buttons = std::initializer_list<QWidget*>{
++			_search.data(), _admins.data(), _recentActions.data(), _call.data(),
++			_groupCall.data(), _infoToggle.data(), _menuToggle.data() };
++		auto group = QRect();
++		for (const auto button : buttons) {
++			if (button && !button->isHidden()) {
++				group = group.isNull() ? button->geometry() : group.united(button->geometry());
++			}
++		}
++		if (!group.isNull()) {
++			const auto shift = _leftTaken + 4 - group.x();
++			for (const auto button : buttons) {
++				if (button) {
++					button->move(button->x() + shift, button->y());
++				}
++			}
++			_leftTaken += group.width() + 8 + st::topBarCallSkip;
++			_rightTaken = (_info && !_info->isHidden())
++				? (_info->width() + st::topBarArrowPadding.right())
++				: st::topBarArrowPadding.right();
++		}
++	}
++
+ 	updateMembersShowArea();
+ }
+ 
+@@ -1355,7 +1479,7 @@ void TopBarWidget::finishAnimating() {
  void TopBarWidget::setAnimatingMode(bool enabled) {
  	if (_animatingMode != enabled) {
  		_animatingMode = enabled;
