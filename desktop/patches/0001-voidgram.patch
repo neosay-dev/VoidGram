@@ -48992,7 +48992,7 @@ index 199d6dc..c8fd51b 100644
  	TextUtilities::ParseEntities(result, Ui::ItemTextNoMonoOptions().flags);
  	result.entities.push_front(
 diff --git a/Telegram/SourceFiles/history/history_widget.cpp b/Telegram/SourceFiles/history/history_widget.cpp
-index 520fd33..3d68ecf 100644
+index 520fd33..35228b2 100644
 --- a/Telegram/SourceFiles/history/history_widget.cpp
 +++ b/Telegram/SourceFiles/history/history_widget.cpp
 @@ -6,6 +6,8 @@ For license and copyright information please follow this link:
@@ -49178,7 +49178,7 @@ index 520fd33..3d68ecf 100644
  	if (newScrollHeight <= 0) {
  		return;
  	}
-@@ -11329,6 +11417,91 @@ void HistoryWidget::updateField() {
+@@ -11329,6 +11417,96 @@ void HistoryWidget::updateField() {
  	rtlupdate(0, fieldAreaTop, width(), height() - fieldAreaTop);
  }
  
@@ -49190,19 +49190,24 @@ index 520fd33..3d68ecf 100644
 +	const auto fieldBottom = _field->y() + fieldHeight() + st::historySendPadding - 4;
 +	const auto circle = [&](QWidget *button) {
 +		if (!button || button->isHidden()) {
-+			return;
++			return QRect();
 +		}
 +		const auto g = button->geometry();
++		// As tall as a one-line field, at the bottom while the field grows.
 +		const auto side = std::min(g.width(), fieldBottom - fieldTop);
-+		result.push_back(QRect(g.x() + (g.width() - side) / 2, fieldBottom - side, side, side));
++		const auto r = QRect(g.x() + (g.width() - side) / 2, fieldBottom - side, side, side);
++		result.push_back(r);
++		return r;
 +	};
-+	circle(_attachToggle.data());
-+	circle(_send.get());
-+	const auto left = (_attachToggle && !_attachToggle->isHidden())
-+		? (_attachToggle->x() + _attachToggle->width() + 4)
++	// The field capsule runs between the circles: the send button is wider than its circle, so its edge
++	// left the emoji button outside the capsule.
++	const auto attach = circle(_attachToggle.data());
++	const auto send = circle(_send.get());
++	const auto left = !attach.isNull()
++		? (attach.x() + attach.width() + 8)
 +		: (_field->x() - st::historySendPadding);
-+	const auto right = (_send && !_send->isHidden())
-+		? (_send->x() - 4)
++	const auto right = !send.isNull()
++		? (send.x() - 8)
 +		: (_field->x() + _field->width() + st::historySendPadding);
 +	if (right > left) {
 +		result.push_back(QRect(left, fieldTop, right - left, fieldBottom - fieldTop));
@@ -49270,7 +49275,7 @@ index 520fd33..3d68ecf 100644
  void HistoryWidget::drawField(Painter &p, const QRect &rect) {
  	_repaintFieldScheduled = false;
  
-@@ -11347,7 +11520,14 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
+@@ -11347,7 +11525,14 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
  	}
  	p.setInactive(
  		controller()->isGifPausedAtLeastFor(Window::GifPauseReason::Any));
@@ -52002,10 +52007,10 @@ index 0000000..e4cfc27
 +} // namespace VoidGram
 diff --git a/Telegram/SourceFiles/voidgram/voidgram_liquid_glass.cpp b/Telegram/SourceFiles/voidgram/voidgram_liquid_glass.cpp
 new file mode 100644
-index 0000000..5dc3e36
+index 0000000..721b589
 --- /dev/null
 +++ b/Telegram/SourceFiles/voidgram/voidgram_liquid_glass.cpp
-@@ -0,0 +1,256 @@
+@@ -0,0 +1,228 @@
 +// This file is part of VoidGram for Desktop, a fork of AyuGram Desktop.
 +// It is licensed under GPLv3 with the same exceptions as the rest of the code.
 +#include "voidgram/voidgram_liquid_glass.h"
@@ -52033,10 +52038,10 @@ index 0000000..5dc3e36
 +bool Capturing = false;
 +
 +[[nodiscard]] QImage Blurred(const QImage &image) {
-+	// A half-size round trip: a light frost that keeps what is behind readable, as in iOS 26.
++	// An eighth-size round trip: about the preview's blur(20px).
 +	const auto small = image.scaled(
-+		std::max(1, image.width() / 2),
-+		std::max(1, image.height() / 2),
++		std::max(1, image.width() / 8),
++		std::max(1, image.height() / 8),
 +		Qt::IgnoreAspectRatio,
 +		Qt::SmoothTransformation);
 +	return small.scaled(image.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
@@ -52138,26 +52143,17 @@ index 0000000..5dc3e36
 +	p.save();
 +	p.setRenderHint(QPainter::Antialiasing);
 +	p.setPen(Qt::NoPen);
-+	// The body: lighter at the top, as light falls through a drop.
-+	auto body = QLinearGradient(rect.topLeft(), rect.bottomLeft());
-+	body.setColorAt(0., dark ? QColor(255, 255, 255, 34) : QColor(255, 255, 255, 150));
-+	body.setColorAt(.55, dark ? QColor(255, 255, 255, 14) : QColor(255, 255, 255, 105));
-+	body.setColorAt(1., dark ? QColor(255, 255, 255, 22) : QColor(255, 255, 255, 125));
-+	p.setBrush(body);
++	// The preview's .glass: rgba(37,37,39,.68) over the blurred backdrop, one even 1px rim.
++	p.setBrush(dark ? QColor(37, 37, 39, 173) : QColor(255, 255, 255, 173));
 +	p.drawPath(path);
-+	// The rim: bright at the top left where the edge bends the light, faint elsewhere.
-+	auto rim = QLinearGradient(rect.topLeft(), rect.bottomRight());
-+	rim.setColorAt(0., QColor(255, 255, 255, dark ? 120 : 200));
-+	rim.setColorAt(.35, QColor(255, 255, 255, dark ? 18 : 60));
-+	rim.setColorAt(.75, QColor(255, 255, 255, dark ? 10 : 40));
-+	rim.setColorAt(1., QColor(255, 255, 255, dark ? 60 : 120));
 +	p.setBrush(Qt::NoBrush);
-+	p.setPen(QPen(QBrush(rim), 1.2));
-+	p.drawRoundedRect(QRectF(rect).adjusted(.6, .6, -.6, -.6), radius - .6, radius - .6);
++	p.setPen(QPen(dark ? QColor(255, 255, 255, 31) : QColor(0, 0, 0, 20), 1.));
++	p.drawRoundedRect(QRectF(rect).adjusted(.5, .5, -.5, -.5), radius - .5, radius - .5);
 +	p.restore();
 +}
 +
 +QImage RenderLiquidGlass(const QImage &backdrop, bool dark) {
++	(void)dark; // The tint is PaintGlassCapsule's.
 +	const auto w = backdrop.width();
 +	const auto h = backdrop.height();
 +	auto result = QImage(w, h, QImage::Format_ARGB32_Premultiplied);
@@ -52202,7 +52198,6 @@ index 0000000..5dc3e36
 +			mix([](QRgb c) { return qAlpha(c); }));
 +	};
 +
-+	const auto tint = dark ? qRgba(255, 255, 255, 18) : qRgba(255, 255, 255, 60);
 +	for (auto y = 0; y != h; ++y) {
 +		auto out = reinterpret_cast<QRgb*>(result.scanLine(y));
 +		for (auto x = 0; x != w; ++x) {
@@ -52215,21 +52210,9 @@ index 0000000..5dc3e36
 +			const auto bend = (1. - depth) * (1. - depth) * 0.28;
 +			const auto sx = x + (cx - x) * bend;
 +			const auto sy = y + (cy - y) * bend;
-+			auto c = sample(sx, sy);
-+			// Tint over the bent backdrop.
-+			const auto ta = qAlpha(tint) / 255.;
-+			auto r = qRed(c) * (1. - ta) + qRed(tint) * ta;
-+			auto g = qGreen(c) * (1. - ta) + qGreen(tint) * ta;
-+			auto b = qBlue(c) * (1. - ta) + qBlue(tint) * ta;
-+			// Specular: light from the top left, strongest on the rim.
-+			const auto rim = std::clamp(1. + d / (radius * 0.08), 0., 1.);
-+			const auto nx = (x - cx) / halfW;
-+			const auto ny = (y - cy) / halfH;
-+			const auto facing = std::clamp(-(nx * 0.6 + ny * 0.8), 0., 1.);
-+			const auto light = rim * (0.10 + 0.50 * facing) * (dark ? 0.8 : 1.);
-+			r += (255. - r) * light;
-+			g += (255. - g) * light;
-+			b += (255. - b) * light;
++			// The tint and the rim are PaintGlassCapsule's, over this: here only the bent backdrop.
++			const auto c = sample(sx, sy);
++			const auto r = double(qRed(c)), g = double(qGreen(c)), b = double(qBlue(c));
 +			// Antialiased edge.
 +			const auto coverage = std::clamp(0.5 - d, 0., 1.);
 +			out[x] = qRgba(
@@ -52239,12 +52222,6 @@ index 0000000..5dc3e36
 +				int(255 * coverage));
 +		}
 +	}
-+	// A faint outer rim, as the glass catches light all around.
-+	auto p = QPainter(&result);
-+	p.setRenderHint(QPainter::Antialiasing);
-+	p.setPen(QPen(QColor(255, 255, 255, dark ? 40 : 90), 1.));
-+	p.setBrush(Qt::NoBrush);
-+	p.drawRoundedRect(QRectF(0.5, 0.5, w - 1., h - 1.), radius - 0.5, radius - 0.5);
 +	return result;
 +}
 +
