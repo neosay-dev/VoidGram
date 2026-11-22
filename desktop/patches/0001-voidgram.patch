@@ -50164,7 +50164,7 @@ index 40cc5e2..8b38ffd 100644
  	});
  }
 diff --git a/Telegram/SourceFiles/mainwidget.cpp b/Telegram/SourceFiles/mainwidget.cpp
-index 96cf0ba..c1692e5 100644
+index 96cf0ba..0847623 100644
 --- a/Telegram/SourceFiles/mainwidget.cpp
 +++ b/Telegram/SourceFiles/mainwidget.cpp
 @@ -51,6 +51,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
@@ -50191,7 +50191,7 @@ index 96cf0ba..c1692e5 100644
 +	VoidGram::AttachEffects(this);
 +	{
 +		// VoidGram: the iOS night theme is the app's look. Applied once per install; a theme the user picks later stays.
-+		const auto marker = cWorkingDir() + u"tdata/voidgram_theme_applied_3"_q; // _3: undoes _2's see-through composer colour, which left holes.
++		const auto marker = cWorkingDir() + u"tdata/voidgram_theme_applied_4"_q; // _4: re-applies without the accent recolouring saved into the theme cache (white bubbles).
 +		if (!QFile::exists(marker)) {
 +			const auto path = u":/gui/voidgram.tdesktop-theme"_q;
 +			crl::on_main(this, [=] {
