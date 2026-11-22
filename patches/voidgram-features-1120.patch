@@ -773,11 +773,9 @@ index 00000000..e338c5b9
 +
 +    /// The account's own notice: it may not be deleted or unpinned from this app.
 +    public static func isProtected(_ message: Message, accountPeerId: PeerId) -> Bool {
-+        guard message.media.isEmpty, isNoticeText(message.text) else { return false }
-+        if let author = message.author {
-+            return author.id == accountPeerId
-+        }
-+        return !message.flags.contains(.Incoming)
++        // VoidGram: the notice is no longer sent (removed 2026-11-22); notices sent before can be
++        // deleted and unpinned like any other message.
++        return false
 +    }
 +
 +    // MARK: Sent chats
@@ -1332,25 +1330,19 @@ index 00000000..db78fff6
 +            5. Конфиденциальность переписки
 +            VoidGram может сохранять на устройстве удалённые и изменённые сообщения, одноразовые фото, видео и голосовые сообщения, а также позволяет делать снимки экрана там, где обычный Telegram их запрещает. Поэтому переписку с пользователем VoidGram нельзя считать защищённой — ни в обычных, ни в секретных чатах, ни через одноразовые сообщения.
 +
-+            6. Автоматическое предупреждение собеседников
-+            Чтобы ваши собеседники знали об этом, VoidGram автоматически отправляет от вашего имени предупреждающее сообщение:
-+            • в каждый личный чат — один раз, и закрепляет его. Вы не можете удалить или открепить это сообщение в VoidGram; удалить его может только ваш собеседник;
-+            • в каждую группу, где вы пишете, — один раз, без закрепления.
-+            Сообщение отправляется перед вашим первым сообщением в этом чате. Принимая соглашение, вы соглашаетесь на эту отправку.
-+
-+            7. Плагины и сторонний код
++            6. Плагины и сторонний код
 +            Плагины, темы и скрипты пишут третьи лица. Разработчики VoidGram их не проверяют полностью и не отвечают за их работу, безопасность и последствия использования. Устанавливайте только то, чему доверяете.
 +
-+            8. Данные
++            7. Данные
 +            Настройки, история и архивы VoidGram хранятся локально на вашем устройстве. Для значков и некоторых функций приложение обращается к серверу VoidGram. Разработчики не обязаны хранить, восстанавливать или передавать ваши данные.
 +
-+            9. Законы
++            8. Законы
 +            Вы обязуетесь использовать VoidGram только в рамках законов вашей страны. Запрещено использовать приложение для слежки, преследования, шантажа, распространения чужих личных данных и любых других незаконных действий.
 +
-+            10. Изменения
++            9. Изменения
 +            Условия могут меняться. При существенных изменениях VoidGram снова попросит принять соглашение. Продолжая пользоваться приложением, вы принимаете действующую редакцию.
 +
-+            11. Возраст
++            10. Возраст
 +            Пользуясь VoidGram, вы подтверждаете, что достигли возраста, с которого в вашей стране разрешено самостоятельно принимать такие условия, либо получили согласие родителей или законных представителей.
 +
 +            Вы дочитали до конца. Если вы согласны со всеми условиями — нажмите «Принимаю».
@@ -1382,25 +1374,19 @@ index 00000000..db78fff6
 +            5. Privacy of conversations
 +            VoidGram can keep deleted and edited messages and view-once photos, videos and voice messages on the device, and allows screenshots where ordinary Telegram forbids them. A conversation with a VoidGram user therefore cannot be considered protected: not in ordinary chats, not in secret chats and not with view-once messages.
 +
-+            6. Automatic notice to the people you talk to
-+            So that the people you talk to know this, VoidGram automatically sends a warning message on your behalf:
-+            • to every private chat, once, and pins it. You cannot delete or unpin it in VoidGram; only the other person can delete it;
-+            • to every group you write in, once, without pinning.
-+            The message is sent before your first message in that chat. By accepting this agreement you agree to it being sent.
-+
-+            7. Plugins and third-party code
++            6. Plugins and third-party code
 +            Plugins, themes and scripts are written by third parties. The VoidGram developers do not fully review them and are not responsible for how they work, their safety or the consequences of using them. Install only what you trust.
 +
-+            8. Data
++            7. Data
 +            VoidGram settings, history and archives are stored locally on your device. For badges and some features the app contacts the VoidGram server. The developers are not obliged to store, restore or hand over your data.
 +
-+            9. Law
++            8. Law
 +            You agree to use VoidGram only within the laws of your country. Using the app for surveillance, stalking, blackmail, spreading other people's personal data or any other unlawful activity is forbidden.
 +
-+            10. Changes
++            9. Changes
 +            These terms may change. After a substantial change VoidGram will ask you to accept the agreement again. By continuing to use the app you accept the current version.
 +
-+            11. Age
++            10. Age
 +            By using VoidGram you confirm that you are old enough in your country to accept such terms yourself, or that you have the consent of your parents or legal guardians.
 +
 +            You have reached the end. If you agree to all of the terms, tap "Accept".
@@ -2101,10 +2087,6 @@ index e73fc0a3..6004d012 100644
              |> deliverOnMainQueue).startStandalone(next: { peer in
                  if let peer { archive.record(peer) }
              })
-+            // VoidGram: put the privacy notice back on top if its pin was removed.
-+            if peerId.namespace == Namespaces.Peer.CloudUser {
-+                AyuChatNoticePins.ensurePinned(context: self.context, peerId: peerId)
-+            }
          }
  
          self.didAppear = true
@@ -2112,10 +2094,6 @@ index e73fc0a3..6004d012 100644
              if commit || !isScheduledMessages {
                  self.commitPurposefulAction()
                  
-+                // VoidGram: the privacy notice goes before the first own message in this chat.
-+                if !isScheduledMessages && !shouldDivert && !postpone {
-+                    self.ayuSendChatNoticeIfNeeded(peerId: peerId)
-+                }
                  let transformedMessages = self.transformEnqueueMessages(messages, postpone: postpone)
                  let multiReplyTargets = self.takeMultiReplyTargets(transformedMessages)
                  let _ = (enqueueMessages(account: self.context.account, peerId: peerId, messages: transformedMessages)
