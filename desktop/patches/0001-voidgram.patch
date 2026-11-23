@@ -48992,7 +48992,7 @@ index 199d6dc..c8fd51b 100644
  	TextUtilities::ParseEntities(result, Ui::ItemTextNoMonoOptions().flags);
  	result.entities.push_front(
 diff --git a/Telegram/SourceFiles/history/history_widget.cpp b/Telegram/SourceFiles/history/history_widget.cpp
-index 520fd33..35228b2 100644
+index 520fd33..471e356 100644
 --- a/Telegram/SourceFiles/history/history_widget.cpp
 +++ b/Telegram/SourceFiles/history/history_widget.cpp
 @@ -6,6 +6,8 @@ For license and copyright information please follow this link:
@@ -49004,7 +49004,7 @@ index 520fd33..35228b2 100644
  
  #include "api/api_compose_with_ai.h"
  #include "api/api_editing.h"
-@@ -276,6 +278,30 @@ const auto kPsaAboutPrefix = "cloud_lng_about_psa_";
+@@ -276,6 +278,41 @@ const auto kPsaAboutPrefix = "cloud_lng_about_psa_";
  
  } // namespace
  
@@ -49013,6 +49013,17 @@ index 520fd33..35228b2 100644
 +// VoidGram: the composer's text field is see-through, so the glass under it shows. A see-through theme
 +// colour does not do it: a field decides once, when it is made, whether it paints opaquely, and every
 +// other panel painted with that colour (the translate bar, the reply bar) became a hole in the window.
++// The emoji button filled its square with the composer colour, over the glass capsule it sits in.
++const style::EmojiButton &VoidGramEmojiButton() {
++	static const auto clear = style::owned_color(QColor(0, 0, 0, 0));
++	static const auto result = [] {
++		auto st = st::historyAttachEmoji;
++		st.bg = clear.color();
++		return st;
++	}();
++	return result;
++}
++
 +const style::InputField &VoidGramComposeField() {
 +	static const auto clear = style::owned_color(QColor(0, 0, 0, 0));
 +	static const auto result = [] {
@@ -49035,7 +49046,16 @@ index 520fd33..35228b2 100644
  HistoryWidget::HistoryWidget(
  	QWidget *parent,
  	not_null<Window::SessionController*> controller)
-@@ -349,7 +375,7 @@ HistoryWidget::HistoryWidget(
+@@ -337,7 +374,7 @@ HistoryWidget::HistoryWidget(
+ 	st::historyComposeButton)
+ , _reportMessages(this, QString(), st::historyComposeButton)
+ , _attachToggle(this, st::historyAttach)
+-, _tabbedSelectorToggle(this, st::historyAttachEmoji)
++, _tabbedSelectorToggle(this, VoidGramEmojiButton())
+ , _botKeyboardShow(this, st::historyBotKeyboardShow)
+ , _botKeyboardHide(this, st::historyBotKeyboardHide)
+ , _botCommandStart(this, st::historyBotCommandStart)
+@@ -349,7 +386,7 @@ HistoryWidget::HistoryWidget(
  , _forwardPanel(std::make_unique<ForwardPanel>([=] { updateField(); }))
  , _field(
  	this,
@@ -49044,7 +49064,7 @@ index 520fd33..35228b2 100644
  	Ui::InputField::Mode::MultiLine,
  	tr::lng_message_ph())
  , _richDraftPreview(std::make_unique<HistoryView::Controls::RichDraftPreview>(
-@@ -392,6 +418,29 @@ HistoryWidget::HistoryWidget(
+@@ -392,6 +429,29 @@ HistoryWidget::HistoryWidget(
  		return _list && _list->itemTop(view) >= 0;
  	}))
  , _topShadow(this) {
@@ -49074,7 +49094,7 @@ index 520fd33..35228b2 100644
  	setAcceptDrops(true);
  	setVisualTabOrder(true);
  
-@@ -598,7 +647,7 @@ HistoryWidget::HistoryWidget(
+@@ -598,7 +658,7 @@ HistoryWidget::HistoryWidget(
  		showPremiumToast(document);
  		return false;
  	});
@@ -49083,7 +49103,7 @@ index 520fd33..35228b2 100644
  
  	setupFastButtonMode();
  	initAiButton();
-@@ -3468,6 +3517,14 @@ void HistoryWidget::showHistory(
+@@ -3468,6 +3528,14 @@ void HistoryWidget::showHistory(
  		_list = _scroll->setOwnedWidget(
  			object_ptr<HistoryInner>(this, _scroll, controller(), _history));
  		_pullToNext->reset(anim::type::instant);
@@ -49098,7 +49118,7 @@ index 520fd33..35228b2 100644
  		_list->sendIntroSticker(
  		) | rpl::on_next([=](not_null<DocumentData*> sticker) {
  			sendExistingDocument(
-@@ -8330,8 +8387,9 @@ void HistoryWidget::updateControlsGeometry() {
+@@ -8330,8 +8398,9 @@ void HistoryWidget::updateControlsGeometry() {
  	const auto pinnedBarTop = requestsTop
  		+ (_requestsBar ? _requestsBar->height() : 0);
  	if (_pinnedBar) {
@@ -49110,7 +49130,7 @@ index 520fd33..35228b2 100644
  	}
  	const auto sponsoredMessageBarTop = pinnedBarTop
  		+ (_pinnedBar ? _pinnedBar->height() : 0);
-@@ -8342,8 +8400,8 @@ void HistoryWidget::updateControlsGeometry() {
+@@ -8342,8 +8411,8 @@ void HistoryWidget::updateControlsGeometry() {
  	const auto translateTop = sponsoredMessageBarTop
  		+ (_sponsoredMessageBar ? _sponsoredMessageBar->height() : 0);
  	if (_translateBar) {
@@ -49121,7 +49141,7 @@ index 520fd33..35228b2 100644
  	}
  	const auto paysStatusTop = translateTop
  		+ (_translateBar ? _translateBar->height() : 0);
-@@ -8366,8 +8424,11 @@ void HistoryWidget::updateControlsGeometry() {
+@@ -8366,8 +8435,11 @@ void HistoryWidget::updateControlsGeometry() {
  	_topBars->resize(
  		innerWidth,
  		scrollAreaTop - _topBars->y() + st::lineWidth);
@@ -49135,7 +49155,7 @@ index 520fd33..35228b2 100644
  		if (_autocomplete) {
  			_autocomplete->setBoundings(_scroll->geometry());
  		}
-@@ -8402,7 +8463,7 @@ void HistoryWidget::updateControlsGeometry() {
+@@ -8402,7 +8474,7 @@ void HistoryWidget::updateControlsGeometry() {
  		topShadowLeft,
  		_topBar->bottomNoMargins(),
  		width - topShadowLeft - topShadowRight,
@@ -49144,7 +49164,7 @@ index 520fd33..35228b2 100644
  }
  
  void HistoryWidget::itemRemoved(not_null<const HistoryItem*> item) {
-@@ -8678,6 +8739,33 @@ void HistoryWidget::updateHistoryGeometry(
+@@ -8678,6 +8750,33 @@ void HistoryWidget::updateHistoryGeometry(
  			newScrollHeight -= _kbScroll->height();
  		}
  	}
@@ -49178,7 +49198,7 @@ index 520fd33..35228b2 100644
  	if (newScrollHeight <= 0) {
  		return;
  	}
-@@ -11329,6 +11417,96 @@ void HistoryWidget::updateField() {
+@@ -11329,6 +11428,96 @@ void HistoryWidget::updateField() {
  	rtlupdate(0, fieldAreaTop, width(), height() - fieldAreaTop);
  }
  
@@ -49275,7 +49295,7 @@ index 520fd33..35228b2 100644
  void HistoryWidget::drawField(Painter &p, const QRect &rect) {
  	_repaintFieldScheduled = false;
  
-@@ -11347,7 +11525,14 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
+@@ -11347,7 +11536,14 @@ void HistoryWidget::drawField(Painter &p, const QRect &rect) {
  	}
  	p.setInactive(
  		controller()->isGifPausedAtLeastFor(Window::GifPauseReason::Any));
